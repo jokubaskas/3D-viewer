@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="lt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Atea 3D Matuoklis</title>
+  <meta name="description" content="Fotogrametrijos 3D modelių peržiūra ir matavimai: atstumai, aukščiai, plotai, tūriai, profiliai." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231F2326'/%3E%3Cpath d='M8 22 L16 8 L24 22 Z' fill='none' stroke='%23008B01' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='8' r='2.5' fill='white'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <div id="app">
+    <!-- Viršutinė juosta -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-logo" id="brand-logo" aria-label="ATEA"></span>
+        <span class="brand-sep"></span>
+        <span class="brand-title">3D Matuoklis</span>
+      </div>
+      <div class="topbar-file">
+        <button class="btn btn-primary" id="btn-open" title="Atidaryti modelį (Ctrl+O)">
+          <span data-icon="open"></span><span>Atidaryti</span>
+        </button>
+        <button class="btn btn-ghost" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
+          <span data-icon="folder"></span><span class="hide-sm">Aplankas</span>
+        </button>
+        <span class="file-name" id="file-name">Modelis neįkeltas</span>
+      </div>
+      <div class="topbar-right">
+        <span class="badge" id="scale-badge" hidden title="Modelis kalibruotas pagal žinomą atstumą"></span>
+        <label class="unit-select" title="Matavimo vienetai">
+          <span data-icon="ruler"></span>
+          <select id="unit-select">
+            <option value="m">m</option>
+            <option value="cm">cm</option>
+            <option value="mm">mm</option>
+            <option value="km">km</option>
+            <option value="ft">ft</option>
+          </select>
+        </label>
+        <button class="btn btn-ghost icon-only" id="btn-screenshot" title="Ekrano kopija su matavimais (P)"><span data-icon="camera"></span></button>
+        <button class="btn btn-ghost icon-only panel-toggle" id="btn-panel" title="Matavimų skydelis"><span data-icon="table"></span></button>
+        <button class="btn btn-ghost icon-only" id="btn-help" title="Pagalba ir spartieji klavišai (?)"><span data-icon="help"></span></button>
+      </div>
+      <input type="file" id="file-input" multiple hidden
+        accept=".obj,.mtl,.glb,.gltf,.bin,.ply,.stl,.fbx,.dae,.3mf,.las,.pcd,.xyz,.pts,.txt,.csv,.zip,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp,.tga,.ktx2" />
+      <input type="file" id="folder-input" webkitdirectory directory multiple hidden />
+      <input type="file" id="json-input" accept=".json" hidden />
+    </header>
+
+    <main class="workspace">
+      <!-- Įrankių juosta -->
+      <nav class="toolbar" id="toolbar" aria-label="Įrankiai"></nav>
+
+      <!-- 3D vaizdas -->
+      <section class="viewport" id="viewport">
+        <div class="empty-state" id="empty-state">
+          <div class="empty-card">
+            <div class="empty-icon" data-icon="cube"></div>
+            <h1>Matuokite fotogrametrijos modelius</h1>
+            <p>Atstumai, aukščiai, plotai, tūriai ir profiliai tiesiai 3D modelyje. Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
+            <div class="empty-actions">
+              <button class="btn btn-primary btn-lg" id="btn-open-2"><span data-icon="open"></span>Pasirinkti failus</button>
+              <button class="btn btn-outline btn-lg" id="btn-demo"><span data-icon="mountain"></span>Demonstracinis modelis</button>
+            </div>
+            <p class="muted small">OBJ modeliams pažymėkite kartu ir .mtl bei tekstūrų failus, arba atidarykite visą aplanką / ZIP.</p>
+          </div>
+        </div>
+        <div class="drop-overlay" id="drop-overlay"><div><span data-icon="open"></span>Paleiskite failus, kad atidarytumėte</div></div>
+
+        <!-- Vaizdo valdikliai -->
+        <div class="view-controls" id="view-controls">
+          <svg class="gizmo" id="gizmo" viewBox="-50 -50 100 100" aria-label="Ašys"></svg>
+          <div class="view-buttons">
+            <button class="vbtn" data-view="top" title="Vaizdas iš viršaus (7)">Virš.</button>
+            <button class="vbtn" data-view="front" title="Vaizdas iš priekio (1)">Priek.</button>
+            <button class="vbtn" data-view="right" title="Vaizdas iš šono (3)">Šonas</button>
+            <button class="vbtn" data-view="iso" title="Izometrinis vaizdas (5)">Izo</button>
+            <button class="vbtn" id="btn-ortho" title="Perspektyva / ortografinė projekcija (O)">Persp.</button>
+            <button class="vbtn" id="btn-fit" title="Rodyti visą modelį (F)"><span data-icon="fit"></span></button>
+          </div>
+        </div>
+
+        <!-- Užuomina apie aktyvų įrankį -->
+        <div class="tool-hint" id="tool-hint" hidden>
+          <div class="tool-hint-text">
+            <span class="tool-hint-title" id="tool-hint-title"></span>
+            <span class="tool-hint-body" id="tool-hint-body"></span>
+            <span class="tool-hint-live" id="tool-hint-live"></span>
+          </div>
+          <div class="tool-hint-actions">
+            <button class="btn btn-sm btn-ghost-dark" id="hint-undo" title="Atšaukti paskutinį tašką (Backspace)"><span data-icon="undo"></span>Taškas</button>
+            <button class="btn btn-sm btn-primary" id="hint-finish" title="Baigti (Enter / dvigubas spustelėjimas / dešinys pelės klavišas)"><span data-icon="check"></span>Baigti</button>
+            <button class="btn btn-sm btn-ghost-dark" id="hint-cancel" title="Nutraukti (Esc)"><span data-icon="close"></span></button>
+          </div>
+        </div>
+
+        <!-- Būsenos juosta -->
+        <div class="statusbar" id="statusbar">
+          <span id="status-coords">X — Y — Z —</span>
+          <span id="status-model"></span>
+        </div>
+
+        <div class="loading" id="loading" hidden>
+          <div class="loading-card">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loading-text">Įkeliama…</div>
+            <div class="progress"><div class="progress-bar" id="loading-bar"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dešinysis skydelis -->
+      <aside class="sidepanel" id="sidepanel">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="measurements" role="tab">Matavimai <span class="count" id="m-count">0</span></button>
+          <button class="tab" data-tab="model" role="tab">Modelis</button>
+          <button class="tab" data-tab="settings" role="tab">Nustatymai</button>
+        </div>
+
+        <div class="tab-pane active" data-pane="measurements">
+          <div class="pane-actions">
+            <button class="btn btn-sm btn-outline" id="btn-export-csv" title="Eksportuoti į CSV (Excel)"><span data-icon="table"></span>CSV</button>
+            <button class="btn btn-sm btn-outline" id="btn-export-json" title="Išsaugoti matavimus (JSON)"><span data-icon="save"></span>Išsaugoti</button>
+            <button class="btn btn-sm btn-outline" id="btn-import-json" title="Įkelti išsaugotus matavimus (JSON)"><span data-icon="upload"></span>Įkelti</button>
+            <button class="btn btn-sm btn-ghost danger" id="btn-clear" title="Ištrinti visus matavimus"><span data-icon="trash"></span></button>
+          </div>
+          <div class="m-list" id="m-list"></div>
+          <div class="m-empty" id="m-empty">
+            <p><b>Matavimų dar nėra.</b></p>
+            <p class="muted">Pasirinkite įrankį kairėje ir spustelėkite ant modelio. Pvz. <kbd>D</kbd> – atstumas, <kbd>A</kbd> – plotas, <kbd>V</kbd> – tūris.</p>
+          </div>
+        </div>
+
+        <div class="tab-pane" data-pane="model">
+          <section class="card">
+            <h3>Informacija</h3>
+            <dl class="kv" id="model-info"><dt>Modelis</dt><dd>—</dd></dl>
+          </section>
+          <section class="card">
+            <h3>Atvaizdavimas</h3>
+            <div class="seg" id="view-mode">
+              <button data-mode="texture" class="active" title="Originalios spalvos be šešėlių (fotogrametrijai)">Tekstūra</button>
+              <button data-mode="lit" title="Tekstūra su apšvietimu">Apšviesta</button>
+              <button data-mode="solid" title="Pilkas paviršius – geriau matosi reljefas">Reljefas</button>
+              <button data-mode="height" title="Spalvos pagal aukštį">Aukščiai</button>
+            </div>
+            <label class="row check"><input type="checkbox" id="opt-wireframe" /> Trikampių tinklelis</label>
+            <div class="row" id="row-contours">
+              <label class="check"><input type="checkbox" id="opt-contours" /> Horizontalės kas</label>
+              <input type="number" id="opt-contour-step" class="num" value="1" min="0.01" step="0.1" /> <span class="unit-label">m</span>
+            </div>
+            <label class="row">Taškų dydis <input type="range" id="opt-point-size" min="1" max="12" step="0.5" value="2.5" /></label>
+            <label class="row">Fonas
+              <select id="opt-background">
+                <option value="atea">Atea žalias</option>
+                <option value="graphite">Grafitas</option>
+                <option value="light">Šviesus</option>
+                <option value="white">Baltas</option>
+              </select>
+            </label>
+            <label class="row check"><input type="checkbox" id="opt-grid" /> Rodyti tinklelį po modeliu</label>
+          </section>
+          <section class="card">
+            <h3>Pjūvis pagal aukštį</h3>
+            <p class="muted small">Paslėpkite dalį modelio, pvz. medžius ar stogą, kad matytumėte ir matuotumėte, kas po jais.</p>
+            <label class="row">Apačia <input type="range" id="clip-min" min="0" max="1000" value="0" /></label>
+            <label class="row">Viršus <input type="range" id="clip-max" min="0" max="1000" value="1000" /></label>
+            <div class="row small muted" id="clip-readout">Pjūvis išjungtas</div>
+          </section>
+          <section class="card">
+            <h3>Orientacija</h3>
+            <div class="seg" id="up-axis">
+              <button data-up="z" title="Daugumai fotogrametrijos programų (Metashape, RealityCapture, Pix4D)">Z aukštyn</button>
+              <button data-up="y" title="GLTF ir daugeliui 3D programų">Y aukštyn</button>
+            </div>
+            <p class="muted small">Jei modelis pasviręs, naudokite įrankį <b>Išlyginti</b> <kbd>L</kbd> – pažymėkite 3+ taškus ant žemės.</p>
+            <button class="btn btn-sm btn-outline" id="btn-reset-level"><span data-icon="undo"></span>Atstatyti išlyginimą</button>
+          </section>
+        </div>
+
+        <div class="tab-pane" data-pane="settings">
+          <section class="card">
+            <h3>Mastelis ir vienetai</h3>
+            <label class="row">Modelio vienetai
+              <select id="opt-model-unit">
+                <option value="m">metrai</option>
+                <option value="cm">centimetrai</option>
+                <option value="mm">milimetrai</option>
+                <option value="ft">pėdos</option>
+                <option value="in">coliai</option>
+              </select>
+            </label>
+            <label class="row">Kalibravimo koef.
+              <input type="number" id="opt-scale" class="num wide" value="1" step="0.0001" min="0.000001" />
+            </label>
+            <p class="muted small">Modelis be georeferencijos? Naudokite įrankį <b>Mastelis</b> <kbd>S</kbd>: pažymėkite du taškus ir įveskite tikrą atstumą tarp jų.</p>
+            <button class="btn btn-sm btn-outline" id="btn-reset-scale"><span data-icon="undo"></span>Atstatyti mastelį</button>
+          </section>
+          <section class="card">
+            <h3>Matavimai</h3>
+            <label class="row">Tikslumas (skaitmenys po kablelio)
+              <select id="opt-precision">
+                <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option>
+              </select>
+            </label>
+            <label class="row check"><input type="checkbox" id="opt-snap" /> Prikabinti prie viršūnių</label>
+            <label class="row">Ploto / tūrio skaičiavimo tikslumas
+              <select id="opt-resolution">
+                <option value="120">Greitas</option>
+                <option value="250" selected>Standartinis</option>
+                <option value="450">Tikslus</option>
+                <option value="700">Labai tikslus</option>
+              </select>
+            </label>
+            <label class="row">Medžiagos tankis tūriui (t/m³)
+              <input type="number" id="opt-density" class="num" value="1.6" step="0.05" min="0" />
+            </label>
+            <label class="row">Etikečių dydis
+              <select id="opt-label-size">
+                <option value="sm">Mažos</option><option value="md" selected>Vidutinės</option><option value="lg">Didelės</option>
+              </select>
+            </label>
+            <label class="row check"><input type="checkbox" id="opt-labels" checked /> Rodyti etiketes</label>
+          </section>
+          <section class="card">
+            <h3>Apie</h3>
+            <p class="muted small">Atea 3D Matuoklis – fotogrametrijos modelių peržiūros ir matavimo įrankis. Visi duomenys apdorojami tik jūsų naršyklėje, niekur nesiunčiami.</p>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Profilio skydelis -->
+    <section class="profile-panel" id="profile-panel" hidden>
+      <header>
+        <span class="profile-title" id="profile-title">Aukščio profilis</span>
+        <span class="profile-stats" id="profile-stats"></span>
+        <button class="btn btn-sm btn-ghost-dark" id="profile-csv" title="Eksportuoti profilį į CSV"><span data-icon="table"></span>CSV</button>
+        <button class="btn btn-sm btn-ghost-dark icon-only" id="profile-close" title="Uždaryti"><span data-icon="close"></span></button>
+      </header>
+      <div class="profile-chart" id="profile-chart"></div>
+    </section>
+  </div>
+
+  <!-- Dialogai -->
+  <dialog class="dialog" id="dlg-calibrate">
+    <form method="dialog">
+      <h2>Mastelio kalibravimas</h2>
+      <p>Atstumas modelyje: <b id="cal-model-dist">—</b></p>
+      <label class="row">Tikras atstumas
+        <span class="input-unit"><input type="number" id="cal-real" step="any" min="0" required /><select id="cal-unit">
+          <option value="m">m</option><option value="cm">cm</option><option value="mm">mm</option><option value="ft">ft</option>
+        </select></span>
+      </label>
+      <p class="muted small">Visi matavimai bus perskaičiuoti pagal naują mastelį.</p>
+      <menu>
+        <button value="cancel" class="btn btn-ghost">Atšaukti</button>
+        <button value="ok" class="btn btn-primary" id="cal-ok">Taikyti</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog wide" id="dlg-help">
+    <form method="dialog">
+      <h2>Pagalba</h2>
+      <div class="help-grid">
+        <div>
+          <h4>Navigacija</h4>
+          <ul class="keys">
+            <li><span>Sukti</span><span>Kairys pelės klavišas</span></li>
+            <li><span>Stumti</span><span>Dešinys klavišas / Shift + kairys</span></li>
+            <li><span>Priartinti</span><span>Ratukas</span></li>
+            <li><span>Sukimosi centras</span><span>Dvigubas spustelėjimas</span></li>
+            <li><span>Visas modelis</span><kbd>F</kbd></li>
+            <li><span>Vaizdai</span><span><kbd>7</kbd> viršus <kbd>1</kbd> priekis <kbd>3</kbd> šonas <kbd>5</kbd> izo</span></li>
+            <li><span>Ortografinis vaizdas</span><kbd>O</kbd></li>
+          </ul>
+          <h4>Matuojant</h4>
+          <ul class="keys">
+            <li><span>Baigti</span><span><kbd>Enter</kbd> / dvigubas sp. / dešinys</span></li>
+            <li><span>Atšaukti tašką</span><span><kbd>Backspace</kbd> / <kbd>Ctrl+Z</kbd></span></li>
+            <li><span>Nutraukti įrankį</span><kbd>Esc</kbd></li>
+            <li><span>Uždaryti kontūrą</span><span>Spustelėkite pirmą tašką</span></li>
+            <li><span>Ištrinti pažymėtą</span><kbd>Delete</kbd></li>
+          </ul>
+        </div>
+        <div>
+          <h4>Įrankiai</h4>
+          <ul class="keys" id="help-tools"></ul>
+          <h4>Patarimai</h4>
+          <ul class="tips">
+            <li>Tūris skaičiuojamas tarp paviršiaus ir pagrindo plokštumos. Sandėliuojamoms krūvoms rinkitės <b>„Plokštuma per kontūrą“</b> ir žymėkite kontūrą ant žemės aplink krūvą.</li>
+            <li>Plotas pateikiamas dviem būdais: <b>horizontalus</b> (projekcija, kaip žemėlapyje) ir <b>paviršiaus</b> (pagal tikrą reljefą).</li>
+            <li>Modelis be mastelio? Naudokite <b>Mastelis</b> su žinomu atstumu (pvz. matavimo liniuote ar GCP taškais).</li>
+            <li>Matavimus galite išsaugoti JSON faile ir vėliau įkelti tam pačiam modeliui.</li>
+          </ul>
+        </div>
+      </div>
+      <menu><button value="ok" class="btn btn-primary">Supratau</button></menu>
+    </form>
+  </dialog>
+
+  <div class="toasts" id="toasts"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
