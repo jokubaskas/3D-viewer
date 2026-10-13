@@ -418,3 +418,24 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .chip.bad { background: rgba(255,107,94,.14); color: var(--danger); }
 .odm-page input[type=radio] { accent-color: var(--atea-green); margin: 0; }
 @media (max-width: 1000px) { .odm-body { grid-template-columns: 1fr; overflow-y: auto; } .odm-grid2 { grid-template-columns: 1fr; } .odm-side, .odm-main { overflow: visible; } }
+
+/* --- Kalbos perjungiklis (LT / EN) --- */
+.lang-switch {
+  position: relative; display: inline-grid; grid-template-columns: 1fr 1fr; align-items: center;
+  height: 32px; padding: 3px; border-radius: 99px; background: var(--surface-3); border: 1px solid var(--line);
+  cursor: pointer; user-select: none; margin-right: 4px;
+}
+.lang-switch button {
+  position: relative; z-index: 1; width: 40px; height: 100%; border: 0; background: transparent; border-radius: 99px;
+  font-size: 12px; font-weight: 800; letter-spacing: .6px; color: var(--muted); cursor: pointer; transition: color .25s;
+}
+.lang-switch button[aria-checked="true"] { color: #fff; }
+.lang-switch button:focus-visible { outline: 2px solid var(--atea-green-text); outline-offset: 1px; }
+.lang-thumb {
+  position: absolute; top: 3px; bottom: 3px; left: 3px; width: 40px; border-radius: 99px; background: var(--atea-green);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .35), inset 0 1px 0 rgba(255, 255, 255, .15);
+  transition: transform .28s cubic-bezier(.34, 1.4, .64, 1);
+}
+.lang-switch[data-lang="en"] .lang-thumb { transform: translateX(40px); }
+.lang-switch:hover .lang-thumb { background: var(--atea-green-hover); }
+@media (max-width: 820px) { .lang-switch button { width: 34px; } .lang-thumb { width: 34px; } .lang-switch[data-lang="en"] .lang-thumb { transform: translateX(34px); } }

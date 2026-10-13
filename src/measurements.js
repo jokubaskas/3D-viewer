@@ -8,6 +8,7 @@ import {
   horiz, polylineLength, polygonAreaXZ, polygonArea3D, centroid, fitPlaneY, angleAt, triangulate,
   sampleGrid, surfaceAreaFromGrid, volumeFromGrid, sampleProfile,
 } from './compute.js';
+import { t } from './i18n.js';
 
 /** Įrankių aprašai. min/max – taškų skaičius; auto – baigti automatiškai pasiekus max. */
 export const TOOLS = {
@@ -60,7 +61,7 @@ export class Measurement {
     this.id = name === '' ? 0 : nextId++; // '' – laikinas (peržiūros) matavimas
     this.type = type;
     this.points = points.map((p) => p.clone());
-    this.name = name || `${TOOLS[type].label} ${this.id}`;
+    this.name = name || `${t(TOOLS[type].label)} ${this.id}`;
     this.visible = true;
     this.data = null;
     this.status = 'ready';
@@ -207,9 +208,9 @@ export function describe(m, viewer, U, settings, live = false) {
     case 'scale': {
       out.value = U.fmtLen(d.d);
       out.details = [
-        ['Horizontalus', U.fmtLen(d.h)],
-        ['Aukščių skirtumas', U.fmtLen(d.v)],
-        ['Nuolydis', d.slope != null ? U.fmtPercent(Math.abs(d.slope)) : '—'],
+        [t('Horizontalus'), U.fmtLen(d.h)],
+        [t('Aukščių skirtumas'), U.fmtLen(d.v)],
+        [t('Nuolydis'), d.slope != null ? U.fmtPercent(Math.abs(d.slope)) : '—'],
       ];
       out.labels.push({ pos: mid(L[0], L[1]), text: out.value });
       break;
@@ -217,9 +218,9 @@ export function describe(m, viewer, U, settings, live = false) {
     case 'polyline': {
       out.value = U.fmtLen(d.length);
       out.details = [
-        ['Horizontalus ilgis', U.fmtLen(d.horizontal)],
-        ['Atkarpų', String(d.segments.length)],
-        ['Aukščių skirtumas', U.fmtLen(d.v)],
+        [t('Horizontalus ilgis'), U.fmtLen(d.horizontal)],
+        [t('Atkarpų'), String(d.segments.length)],
+        [t('Aukščių skirtumas'), U.fmtLen(d.v)],
       ];
       d.segments.forEach((s, i) => out.labels.push({ pos: mid(L[i], L[i + 1]), text: U.fmtLen(s), sub: true }));
       out.labels.push({ pos: L[L.length - 1].clone(), text: `Σ ${out.value}` });
@@ -228,11 +229,11 @@ export function describe(m, viewer, U, settings, live = false) {
     case 'height': {
       out.value = `Δ ${U.fmtLen(d.v)}`;
       out.details = [
-        ['Horizontalus atstumas', U.fmtLen(d.h)],
-        ['Tiesus atstumas', U.fmtLen(d.d)],
-        ['Nuolydis', d.slopePct != null ? `${U.fmtPercent(d.slopePct)} (${U.fmtAngle(d.slopeDeg)})` : '—'],
-        ['Apatinio aukštis', elev(W[0].y <= W[1].y ? W[0] : W[1])],
-        ['Viršutinio aukštis', elev(W[0].y <= W[1].y ? W[1] : W[0])],
+        [t('Horizontalus atstumas'), U.fmtLen(d.h)],
+        [t('Tiesus atstumas'), U.fmtLen(d.d)],
+        [t('Nuolydis'), d.slopePct != null ? `${U.fmtPercent(d.slopePct)} (${U.fmtAngle(d.slopeDeg)})` : '—'],
+        [t('Apatinio aukštis'), elev(W[0].y <= W[1].y ? W[0] : W[1])],
+        [t('Viršutinio aukštis'), elev(W[0].y <= W[1].y ? W[1] : W[0])],
       ];
       const c = new THREE.Vector3(W[1].x, W[0].y, W[1].z);
       out.labels.push({ pos: toLocal(mid(c, W[1])), text: `↕ ${U.fmtLen(Math.abs(d.v))}` });
@@ -241,7 +242,7 @@ export function describe(m, viewer, U, settings, live = false) {
     }
     case 'angle': {
       out.value = U.fmtAngle(d.angle);
-      out.details = [['Horizontalioje plokštumoje', U.fmtAngle(d.angleH)], ['Papildomas kampas', U.fmtAngle(Math.PI - d.angle)]];
+      out.details = [[t('Horizontalioje plokštumoje'), U.fmtAngle(d.angleH)], [t('Papildomas kampas'), U.fmtAngle(Math.PI - d.angle)]];
       out.labels.push({ pos: L[1].clone(), text: out.value });
       break;
     }
@@ -261,12 +262,12 @@ export function describe(m, viewer, U, settings, live = false) {
       out.value = `ΔH ${sgn(r.dz)} ${U.display}`;
       const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
       out.details = [
-        [geo ? 'ΔX (šiaurė)' : 'ΔX', `${sgn(geo ? r.dy : r.dx)} ${U.display}`],
-        [geo ? 'ΔY (rytai)' : 'ΔY', `${sgn(geo ? r.dx : r.dy)} ${U.display}`],
-        ['Δ plokštumoje', U.fmtDisp(Math.hypot(r.dx, r.dy), p3)],
-        ['Δ 3D', U.fmtDisp(Math.hypot(r.dx, r.dy, r.dz), p3)],
-        ['Žinomas taškas', (geo ? [r.known.y, r.known.x, r.known.z] : [r.known.x, r.known.y, r.known.z]).map((v) => U.num(v, p3)).join('; ')],
-        ['Modelyje', (geo ? [r.meas.y, r.meas.x, r.meas.z] : [r.meas.x, r.meas.y, r.meas.z]).map((v) => U.num(v, p3)).join('; ')],
+        [geo ? t('ΔX (šiaurė)') : 'ΔX', `${sgn(geo ? r.dy : r.dx)} ${U.display}`],
+        [geo ? t('ΔY (rytai)') : 'ΔY', `${sgn(geo ? r.dx : r.dy)} ${U.display}`],
+        [t('Δ plokštumoje'), U.fmtDisp(Math.hypot(r.dx, r.dy), p3)],
+        [t('Δ 3D'), U.fmtDisp(Math.hypot(r.dx, r.dy, r.dz), p3)],
+        [t('Žinomas taškas'), (geo ? [r.known.y, r.known.x, r.known.z] : [r.known.x, r.known.y, r.known.z]).map((v) => U.num(v, p3)).join('; ')],
+        [t('Modelyje'), (geo ? [r.meas.y, r.meas.x, r.meas.z] : [r.meas.x, r.meas.y, r.meas.z]).map((v) => U.num(v, p3)).join('; ')],
       ];
       out.labels.push({ pos: L[0].clone(), text: `${m.name}: ${out.value}` });
       break;
@@ -274,33 +275,33 @@ export function describe(m, viewer, U, settings, live = false) {
     case 'area': {
       out.value = U.fmtArea(d.area2d);
       out.details = [
-        ['Paviršiaus plotas (reljefas)', d.surface != null ? U.fmtArea(d.surface) : m.status === 'computing' ? 'skaičiuojama…' : '—'],
-        ['Plokštumos plotas (3D)', U.fmtArea(d.area3d)],
-        ['Perimetras', U.fmtLen(d.perimeter)],
+        [t('Paviršiaus plotas (reljefas)'), d.surface != null ? U.fmtArea(d.surface) : m.status === 'computing' ? t('skaičiuojama…') : '—'],
+        [t('Plokštumos plotas (3D)'), U.fmtArea(d.area3d)],
+        [t('Perimetras'), U.fmtLen(d.perimeter)],
       ];
-      if (U.toSquareMeters(d.area2d) >= 1000) out.details.unshift(['Hektarais', U.fmtHectares(d.area2d)]);
-      if (d.coverage != null && d.coverage < 0.97) out.details.push(['Paviršiaus padengimas', U.fmtPercent(d.coverage * 100)]);
+      if (U.toSquareMeters(d.area2d) >= 1000) out.details.unshift([t('Hektarais'), U.fmtHectares(d.area2d)]);
+      if (d.coverage != null && d.coverage < 0.97) out.details.push([t('Paviršiaus padengimas'), U.fmtPercent(d.coverage * 100)]);
       out.labels.push({ pos: centroidOnSurface(L), text: out.value });
       break;
     }
     case 'volume': {
       if (d.net == null) {
-        out.value = live ? U.fmtArea(d.area2d) : 'Skaičiuojama…';
-        out.labels.push({ pos: centroidOnSurface(L), text: live ? out.value : 'Skaičiuojama…' });
+        out.value = live ? U.fmtArea(d.area2d) : t('Skaičiuojama…');
+        out.labels.push({ pos: centroidOnSurface(L), text: live ? out.value : t('Skaičiuojama…') });
         break;
       }
       out.value = U.fmtVol(d.net);
       const density = m.options.density ?? settings.density;
       out.details = [
-        ['Pylimas (virš pagrindo)', U.fmtVol(d.fill)],
-        ['Iškasa (po pagrindu)', U.fmtVol(d.cut)],
-        ['Pagrindo plotas', U.fmtArea(d.area2d)],
-        ['Paviršiaus plotas', U.fmtArea(d.surface)],
-        ['Didžiausias aukštis', U.fmtLen(d.maxUp)],
+        [t('Pylimas (virš pagrindo)'), U.fmtVol(d.fill)],
+        [t('Iškasa (po pagrindu)'), U.fmtVol(d.cut)],
+        [t('Pagrindo plotas'), U.fmtArea(d.area2d)],
+        [t('Paviršiaus plotas'), U.fmtArea(d.surface)],
+        [t('Didžiausias aukštis'), U.fmtLen(d.maxUp)],
       ];
-      if (density > 0) out.details.push([`Masė (${U.num(density, 2)} t/m³)`, `${U.num(U.toCubicMeters(d.fill) * density, 1)} t`]);
-      if (d.coverage < 0.97) out.details.push(['Paviršiaus padengimas', U.fmtPercent(d.coverage * 100)]);
-      if (d.baseRms != null) out.details.push(['Pagrindo nuokrypis (RMS)', U.fmtLen(d.baseRms)]);
+      if (density > 0) out.details.push([t('Masė ({d} t/m³)', { d: U.num(density, 2) }), `${U.num(U.toCubicMeters(d.fill) * density, 1)} t`]);
+      if (d.coverage < 0.97) out.details.push([t('Paviršiaus padengimas'), U.fmtPercent(d.coverage * 100)]);
+      if (d.baseRms != null) out.details.push([t('Pagrindo nuokrypis (RMS)'), U.fmtLen(d.baseRms)]);
       out.labels.push({ pos: centroidOnSurface(L), text: `${out.value}` });
       break;
     }
@@ -308,11 +309,11 @@ export function describe(m, viewer, U, settings, live = false) {
       out.value = U.fmtLen(d.length);
       if (d.samples) {
         out.details = [
-          ['Žemiausias taškas', U.fmtDisp(viewer.dispElev(d.minY, U))],
-          ['Aukščiausias taškas', U.fmtDisp(viewer.dispElev(d.maxY, U))],
-          ['Aukščių skirtumas', U.fmtLen(d.maxY - d.minY)],
-          ['Kilimas / leidimasis', `${U.fmtLen(d.gain)} / ${U.fmtLen(d.loss)}`],
-          ['Didžiausias nuolydis', U.fmtPercent(d.maxSlope)],
+          [t('Žemiausias taškas'), U.fmtDisp(viewer.dispElev(d.minY, U))],
+          [t('Aukščiausias taškas'), U.fmtDisp(viewer.dispElev(d.maxY, U))],
+          [t('Aukščių skirtumas'), U.fmtLen(d.maxY - d.minY)],
+          [t('Kilimas / leidimasis'), `${U.fmtLen(d.gain)} / ${U.fmtLen(d.loss)}`],
+          [t('Didžiausias nuolydis'), U.fmtPercent(d.maxSlope)],
         ];
       }
       out.labels.push({ pos: L[L.length - 1].clone(), text: `⟂ ${out.value}` });

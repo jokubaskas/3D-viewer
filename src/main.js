@@ -6,6 +6,7 @@ import { createDemoModel } from './demo.js';
 import { units } from './units.js';
 import { hydrateIcons, icon } from './icons.js';
 import { logoSvg, drawLogo } from './logo.js';
+import { t as tr, getLang, setLang, onLangChange, startI18n, locale } from './i18n.js';
 import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId, checkpointResidual } from './measurements.js';
 import { fitPlaneNormal } from './compute.js';
 import { ProfileChart } from './profile.js';
@@ -57,7 +58,7 @@ let modelInfo = null;
 function toast(msg, type = 'info', ms = 3500) {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.textContent = msg;
+  el.textContent = tr(msg);
   $('#toasts').append(el);
   setTimeout(() => {
     el.classList.add('out');
@@ -85,7 +86,7 @@ TOOL_ORDER.forEach((group, gi) => {
     b.innerHTML = `<span data-icon="${t.icon}">${icon(t.icon)}</span><span class="tool-label">${t.short}</span>${t.key && t.key !== 'Esc' ? `<span class="tool-key">${t.key}</span>` : ''}`;
     b.addEventListener('click', () => (id === 'navigate' ? tools.deactivate() : tools.activate(id)));
     b.addEventListener('mouseenter', () => {
-      tipEl.innerHTML = `<b>${t.label}</b> <span style="opacity:.7">(${t.key})</span><br>${t.tip}`;
+      tipEl.innerHTML = `<b>${tr(t.label)}</b> <span style="opacity:.7">(${t.key})</span><br>${tr(t.tip)}`;
       const r = b.getBoundingClientRect();
       tipEl.style.left = `${r.right + 10}px`;
       tipEl.style.top = `${r.top + 4}px`;
@@ -143,9 +144,9 @@ const tools = {
     const t = TOOLS[this.active];
     hint.hidden = false;
     hint.style.borderLeftColor = t.color;
-    $('#tool-hint-title').textContent = t.label;
+    $('#tool-hint-title').textContent = tr(t.label);
     const n = this.points.length;
-    $('#tool-hint-body').textContent = n ? `${t.hint} Pažymėta taškų: ${n}.` : t.hint;
+    $('#tool-hint-body').textContent = n ? `${tr(t.hint)} ${tr('Pažymėta taškų: {n}.', { n })}` : tr(t.hint);
     $('#hint-undo').disabled = !n;
     $('#hint-finish').hidden = t.max === n || t.max <= 2 || t.max === 3;
     $('#hint-finish').disabled = n < t.min;
@@ -201,7 +202,7 @@ const tools = {
     if (!this.active) return;
     const t = TOOLS[this.active];
     if (this.points.length < t.min) {
-      if (this.points.length) toast(`Reikia bent ${t.min} taškų`, 'info', 1800);
+      if (this.points.length) toast(tr('Reikia bent {n} taškų', { n: t.min }), 'info', 1800);
       return;
     }
     const type = this.active;
@@ -277,7 +278,7 @@ function updateStatusCoords(hit) {
   }
   const p = Math.max(units.precision, 2);
   const rows = viewer.coordRows(hit.local, units, settings.coordOrder);
-  el.textContent = `${rows.map(([k, v]) => `${k.split(' ')[0]} ${units.num(v, p)}`).join('   ')} ${units.display}${viewer.crs ? `   ${viewer.crs.name.split(' (')[0]}` : ''}${hit.snapped ? '   ◆ viršūnė' : ''}`;
+  el.textContent = `${rows.map(([k, v]) => `${k.split(' ')[0]} ${units.num(v, p)}`).join('   ')} ${units.display}${viewer.crs ? `   ${viewer.crs.name.split(' (')[0]}` : ''}${hit.snapped ? `   ◆ ${tr('viršūnė')}` : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +318,7 @@ async function recompute(it) {
     if (err.name === 'AbortError') return;
     console.error(err);
     m.status = 'error';
-    toast(`Nepavyko apskaičiuoti: ${err.message}`, 'error');
+    toast(tr('Nepavyko apskaičiuoti: {e}', { e: err.message }), 'error');
   }
   redrawItem(it);
   renderList();
@@ -441,7 +442,7 @@ function volumeOptions(it) {
     <label class="row">Pagrindas
       <select data-o="base">${Object.entries(BASE_MODES).map(([k, v]) => `<option value="${k}" ${k === m.options.base ? 'selected' : ''}>${v}</option>`).join('')}</select>
     </label>
-    <label class="row" ${m.options.base === 'custom' ? '' : 'hidden'}>Pagrindo aukštis (${units.display})
+    <label class="row" ${m.options.base === 'custom' ? '' : 'hidden'}>${tr('Pagrindo aukštis ({u})', { u: units.display })}
       <input type="number" class="num wide" step="0.01" data-o="elev" value="${baseElevDisplay}" />
     </label>
     <label class="row">Tankis (t/m³)
@@ -506,7 +507,7 @@ function calibrate(pts) {
     updateScaleBadge();
     redrawAll();
     updateModelInfo();
-    toast(`Mastelis pritaikytas: koeficientas ${units.calibration.toPrecision(6)}`);
+    toast(tr('Mastelis pritaikytas: koeficientas {k}', { k: units.calibration.toPrecision(6) }));
   };
 }
 
@@ -600,7 +601,7 @@ function renderCheckpoints() {
 function updateScaleBadge() {
   const b = $('#scale-badge');
   b.hidden = Math.abs(units.calibration - 1) < 1e-9;
-  b.textContent = `Mastelis ×${units.num(units.calibration, 4)}`;
+  b.textContent = `${tr('Mastelis')} ×${units.num(units.calibration, 4)}`;
 }
 
 function level(pts) {
@@ -647,7 +648,7 @@ async function openFiles(files, opts = {}) {
     res.warnings.forEach((w) => toast(w, /perskaičiuot/.test(w) ? 'info' : 'error', 7000));
   } catch (err) {
     console.error(err);
-    toast(`Nepavyko atidaryti: ${err.message || err}`, 'error', 7000);
+    toast(tr('Nepavyko atidaryti: {e}', { e: err.message || err }), 'error', 7000);
   } finally {
     setLoading(false);
   }
@@ -672,11 +673,11 @@ async function showModel(object, offset, up, name, format, { crs = null, heightS
   setupClipSliders(true);
   updateModelInfo();
   const s = viewer.stats;
-  $('#status-model').textContent = s.points ? `${fmtInt(s.points)} taškų` : `${fmtInt(s.triangles)} trikampių`;
-  toast(`Atidaryta: ${name}`);
+  $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });
+  toast(tr('Atidaryta: {name}', { name }));
 }
 
-const fmtInt = (n) => n.toLocaleString('lt-LT');
+const fmtInt = (n) => n.toLocaleString(locale());
 
 function updateModelInfo() {
   if (!viewer.hasModel) return;
@@ -843,7 +844,7 @@ function applyClip() {
   const max = hi < 1 ? box.min.y + (box.max.y - box.min.y) * hi + pad : null;
   viewer.setClip(min, max);
   const f = (y) => units.fmtDisp(viewer.dispElev(y, units));
-  $('#clip-readout').textContent = min == null && max == null ? 'Pjūvis išjungtas' : `Rodoma nuo ${min == null ? 'apačios' : f(min)} iki ${max == null ? 'viršaus' : f(max)}`;
+  $('#clip-readout').textContent = min == null && max == null ? tr('Pjūvis išjungtas') : tr('Rodoma nuo {a} iki {b}', { a: min == null ? tr('apačios') : f(min), b: max == null ? tr('viršaus') : f(max) });
 }
 $('#clip-min').addEventListener('input', applyClip);
 $('#clip-max').addEventListener('input', applyClip);
@@ -954,7 +955,7 @@ $('#btn-fit').addEventListener('click', () => viewer.fitView());
 const orthoBtn = $('#btn-ortho');
 const toggleOrtho = () => {
   viewer.setOrtho(!viewer.isOrtho);
-  orthoBtn.textContent = viewer.isOrtho ? 'Orto' : 'Persp.';
+  orthoBtn.textContent = viewer.isOrtho ? tr('Orto') : tr('Persp.');
   orthoBtn.classList.toggle('active', viewer.isOrtho);
 };
 orthoBtn.addEventListener('click', toggleOrtho);
@@ -976,13 +977,13 @@ const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 $('#btn-export-csv').addEventListener('click', () => {
   if (!items.length) return toast('Nėra matavimų eksportui');
   const axisNames = viewer.hasModel && items.length ? viewer.coordRows(items[0].m.points[0], units, settings.coordOrder).map(([k]) => k.split(' ')[0]).join(' ') : 'X Y Z';
-  const rows = [['Nr.', 'Pavadinimas', 'Tipas', 'Reikšmė', 'Detalės', `Taškai (${axisNames}${viewer.crs ? ', ' + viewer.crs.name : ''})`]];
+  const rows = [[tr('Nr.'), tr('Pavadinimas'), tr('Tipas'), tr('Reikšmė'), tr('Detalės'), `${tr('Taškai')} (${axisNames}${viewer.crs ? ', ' + tr(viewer.crs.name) : ''})`]];
   items.forEach(({ m }, i) => {
     const d = describe(m, viewer, units, settings);
     const pts = m.points.map((p) => {
       return viewer.coordRows(p, units, settings.coordOrder).map(([, v]) => units.num(v, 3)).join(' ');
     });
-    rows.push([i + 1, m.name, TOOLS[m.type].label, d.value, d.details.map(([k, v]) => `${k}: ${v}`).join(' | '), pts.join(' ; ')]);
+    rows.push([i + 1, m.name, tr(TOOLS[m.type].label), d.value, d.details.map(([k, v]) => `${k}: ${v}`).join(' | '), pts.join(' ; ')]);
   });
   const csv = '﻿' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/ | /g, ' ')}"`).join(';')).join('\r\n');
   download(`${baseName()}_matavimai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
@@ -1042,16 +1043,16 @@ $('#json-input').addEventListener('change', async (e) => {
       n++;
     }
     setNextId(items.length + 1);
-    if (modelInfo?.name && data.model && data.model !== modelInfo.name) toast(`Dėmesio: matavimai buvo atlikti modeliui „${data.model}“`, 'error', 6000);
-    toast(`Įkelta matavimų: ${n}`);
+    if (modelInfo?.name && data.model && data.model !== modelInfo.name) toast(tr('Dėmesio: matavimai buvo atlikti modeliui „{m}“', { m: data.model }), 'error', 6000);
+    toast(tr('Įkelta matavimų: {n}', { n }));
   } catch (err) {
-    toast(`Nepavyko įkelti: ${err.message}`, 'error');
+    toast(tr('Nepavyko įkelti: {e}', { e: err.message }), 'error');
   }
 });
 
 $('#btn-clear').addEventListener('click', () => {
   if (!items.length) return;
-  if (confirm(`Ištrinti visus matavimus (${items.length})?`)) clearMeasurements();
+  if (confirm(tr('Ištrinti visus matavimus ({n})?', { n: items.length }))) clearMeasurements();
 });
 
 // Ekrano kopija su etiketėmis ir Atea žyma
@@ -1097,7 +1098,7 @@ async function screenshot() {
   // Žyma: ATEA logotipas + failas ir data
   const pad = 14 * pr, bh = 40 * pr;
   g.font = `600 ${12 * pr}px Inter, Segoe UI, Arial, sans-serif`;
-  const caption = `${modelInfo?.name || ''}  •  ${new Date().toLocaleString('lt-LT')}`;
+  const caption = `${modelInfo?.name || ''}  •  ${new Date().toLocaleString(locale())}`;
   const logoW = (156 / 40) * 16 * pr;
   const boxW = 14 * pr + logoW + 14 * pr + g.measureText(caption).width + 14 * pr;
   g.fillStyle = 'rgba(31,35,38,0.92)';
@@ -1152,16 +1153,16 @@ const odmUI = createOdmUI({
     try {
       const progress = (p, bytes) => {
         $('#loading-bar').style.width = `${Math.round(p * 100)}%`;
-        $('#loading-text').textContent = `Atsisiunčiami rezultatai… ${(bytes / 1e6).toFixed(0)} MB`;
+        $('#loading-text').textContent = `${tr('Atsisiunčiami rezultatai…')} ${(bytes / 1e6).toFixed(0)} MB`;
       };
       let files = await extractFromZipUrl(project.downloadUrl, kind === 'points' ? WANT_POINTS : WANT_MODEL_GLB, progress);
       if (kind !== 'points' && !files.some((f) => /\.glb$/i.test(f.name))) files = await extractFromZipUrl(project.downloadUrl, WANT_MODEL, progress);
-      if (!files.some((f) => /\.(obj|glb|laz|las)$/i.test(f.name))) throw new Error(kind === 'points' ? 'Archyve nerasta taškų debesies' : 'Archyve nerastas 3D modelis');
+      if (!files.some((f) => /\.(obj|glb|laz|las)$/i.test(f.name))) throw new Error(tr(kind === 'points' ? 'Archyve nerasta taškų debesies' : 'Archyve nerastas 3D modelis'));
       setLoading(false);
       await openFiles(files, { heightSystem: project.heightSystem, name: project.name });
     } catch (e) {
       setLoading(false);
-      toast(`Nepavyko atidaryti rezultatų: ${e.message}`, 'error', 8000);
+      toast(tr('Nepavyko atidaryti rezultatų: {e}', { e: e.message }), 'error', 8000);
     }
   },
 });
@@ -1209,6 +1210,39 @@ window.addEventListener('keydown', (e) => {
   else if (k === '5') viewer.setView('iso');
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
+
+// ---------------------------------------------------------------------------
+// Kalba (LT / EN)
+// ---------------------------------------------------------------------------
+const langSwitch = $('#lang-switch');
+const syncLangSwitch = () => {
+  const l = getLang();
+  langSwitch.dataset.lang = l;
+  langSwitch.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.lang === l)));
+};
+langSwitch.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-lang]');
+  setLang(b ? b.dataset.lang : getLang() === 'lt' ? 'en' : 'lt');
+});
+onLangChange(() => {
+  syncLangSwitch();
+  tools._updateUI();
+  if (tools.active) tools._redraw();
+  redrawAll();
+  updateModelInfo();
+  updateScaleBadge();
+  applyClip();
+  odmUI.rerender();
+  if (viewer.hasModel) {
+    const s = viewer.stats;
+    $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });
+  }
+  if (viewer.isOrtho) orthoBtn.textContent = tr('Orto');
+  gizmo._last = null;
+  gizmo.update();
+});
+syncLangSwitch();
+startI18n();
 
 // Testams / derinimui: ?debug
 if (new URLSearchParams(location.search).has('debug')) window.__atea = { viewer, units, items, settings };

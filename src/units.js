@@ -1,3 +1,4 @@
+import { locale } from './i18n.js';
 // Vienetai, mastelis ir skaičių formatavimas (lietuviška lokalė)
 
 export const TO_METERS = { m: 1, cm: 0.01, mm: 0.001, km: 1000, ft: 0.3048, in: 0.0254 };
@@ -58,10 +59,10 @@ export class Units {
 
   num(v, digits = this.precision) {
     if (v == null || !isFinite(v)) return '—';
-    const key = digits;
+    const key = `${locale()}|${digits}`;
     let f = this._fmtCache.get(key);
     if (!f) {
-      f = new Intl.NumberFormat('lt-LT', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+      f = new Intl.NumberFormat(locale(), { minimumFractionDigits: digits, maximumFractionDigits: digits });
       this._fmtCache.set(key, f);
     }
     return f.format(Math.abs(v) < 0.5 * 10 ** -digits ? 0 : v);

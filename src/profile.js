@@ -1,6 +1,7 @@
 // Aukščio profilio grafikas (SVG) su žymekliu 3D vaizde
 import * as THREE from 'three';
 import { niceStep } from './viewer.js';
+import { t } from './i18n.js';
 
 export class ProfileChart {
   constructor(container, viewer, units) {
@@ -39,7 +40,7 @@ export class ProfileChart {
     const elev = (y) => v.dispElev(y, U);
     const ys = S.filter((s) => !isNaN(s.y)).map((s) => elev(s.y));
     if (!ys.length) {
-      this.el.innerHTML = '<div style="padding:20px;opacity:.7">Palei liniją nerasta paviršiaus</div>';
+      this.el.innerHTML = `<div style="padding:20px;opacity:.7">${t('Palei liniją nerasta paviršiaus')}</div>`;
       return;
     }
     let y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -95,8 +96,10 @@ export class ProfileChart {
 
     const d = m.data;
     document.getElementById('profile-title').textContent = m.name;
-    document.getElementById('profile-stats').textContent =
-      `Ilgis ${U.fmtLen(d.length)}  •  Aukščiai ${U.num(Math.min(...ys))}…${U.num(Math.max(...ys))} ${U.display}  •  Δ ${U.fmtLen(d.maxY - d.minY)}  •  Kilimas ${U.fmtLen(d.gain)}  •  Leidimasis ${U.fmtLen(d.loss)}  •  Maks. nuolydis ${U.fmtPercent(d.maxSlope)}`;
+    document.getElementById('profile-stats').textContent = t('Ilgis {l}  •  Aukščiai {a}…{b} {u}  •  Δ {d}  •  Kilimas {g}  •  Leidimasis {s}  •  Maks. nuolydis {m}', {
+      l: U.fmtLen(d.length), a: U.num(Math.min(...ys)), b: U.num(Math.max(...ys)), u: U.display, d: U.fmtLen(d.maxY - d.minY),
+      g: U.fmtLen(d.gain), s: U.fmtLen(d.loss), m: U.fmtPercent(d.maxSlope),
+    });
   }
 
   _hover(e) {

@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 // Nuotraukų rinkinio analizė, aukščių perskaičiavimas ir geo.txt failo kūrimas OpenDroneMap'ui.
 import { LKS94 } from '../geo/tm.js';
 
@@ -125,21 +126,21 @@ export function analyzePhotos(metas, opts = {}) {
   const centerLon = used.reduce((s, m) => s + m.lon, 0) / Math.max(1, used.length);
 
   const warnings = [];
-  if (used.length < 30) warnings.push({ level: 'error', text: `Per mažai nuotraukų (${used.length}). Patikimam modeliui reikia bent 30–50.` });
+  if (used.length < 30) warnings.push({ level: 'error', text: t('Per mažai nuotraukų ({n}). Patikimam modeliui reikia bent 30–50.', { n: used.length }) });
   const nonFix = used.length - rtk.fix;
-  if (rtk.unknown === used.length) warnings.push({ level: 'warn', text: 'Nuotraukose nerasta RTK informacijos – bus naudojamas paprastas GPS (tikslumas ~1–5 m).' });
-  else if (nonFix > 0) warnings.push({ level: nonFix / used.length > 0.1 ? 'error' : 'warn', text: `${nonFix} nuotr. be RTK FIX (FLOAT/SINGLE/be RTK). Joms bus priskirtas mažesnis svoris.` });
-  if (stdV && stdV > 0.05) warnings.push({ level: 'warn', text: `Aukščio RTK nuokrypis didesnis nei įprasta (${stdV.toFixed(3)} m).` });
-  if (models.length > 1) warnings.push({ level: 'warn', text: `Kelios kameros: ${models.join(', ')}.` });
-  if (duplicates) warnings.push({ level: 'info', text: `${duplicates} pasikartojantys failų pavadinimai – bus automatiškai pervadinti.` });
+  if (rtk.unknown === used.length) warnings.push({ level: 'warn', text: t('Nuotraukose nerasta RTK informacijos – bus naudojamas paprastas GPS (tikslumas ~1–5 m).') });
+  else if (nonFix > 0) warnings.push({ level: nonFix / used.length > 0.1 ? 'error' : 'warn', text: t('{n} nuotr. be RTK FIX (FLOAT/SINGLE/be RTK). Joms bus priskirtas mažesnis svoris.', { n: nonFix }) });
+  if (stdV && stdV > 0.05) warnings.push({ level: 'warn', text: t('Aukščio RTK nuokrypis didesnis nei įprasta ({v} m).', { v: stdV.toFixed(3) }) });
+  if (models.length > 1) warnings.push({ level: 'warn', text: t('Kelios kameros: {m}.', { m: models.join(', ') }) });
+  if (duplicates) warnings.push({ level: 'info', text: t('{n} pasikartojantys failų pavadinimai – bus automatiškai pervadinti.', { n: duplicates }) });
   const thermal = excluded.filter((e) => e.reason === 'terminė kamera').length;
-  if (thermal) warnings.push({ level: 'info', text: `${thermal} terminės kameros (_T) nuotraukos nenaudojamos 3D modeliui.` });
+  if (thermal) warnings.push({ level: 'info', text: t('{n} terminės kameros (_T) nuotraukos nenaudojamos 3D modeliui.', { n: thermal }) });
   const zoom = excluded.filter((e) => e.reason === 'priartinimo kamera').length;
-  if (zoom) warnings.push({ level: 'info', text: `${zoom} priartinimo kameros (_Z) nuotraukos nenaudojamos.` });
+  if (zoom) warnings.push({ level: 'info', text: t('{n} priartinimo kameros (_Z) nuotraukos nenaudojamos.', { n: zoom }) });
   const noGps = excluded.filter((e) => e.reason === 'nėra GPS koordinačių').length;
-  if (noGps) warnings.push({ level: 'warn', text: `${noGps} nuotr. be GPS koordinačių – praleidžiamos.` });
+  if (noGps) warnings.push({ level: 'warn', text: t('{n} nuotr. be GPS koordinačių – praleidžiamos.', { n: noGps }) });
   const nadirShare = used.filter((m) => m.gimbalPitch != null && m.gimbalPitch < -80).length / Math.max(1, used.length);
-  if (used.length && nadirShare > 0.95) warnings.push({ level: 'info', text: 'Visos nuotraukos statmenos žemyn – vertikalios sienos (pastatai, krūvų šlaitai) gali būti mažiau detalūs. Įstrižos nuotraukos pagerintų 3D.' });
+  if (used.length && nadirShare > 0.95) warnings.push({ level: 'info', text: t('Visos nuotraukos statmenos žemyn – vertikalios sienos (pastatai, krūvų šlaitai) gali būti mažiau detalūs. Įstrižos nuotraukos pagerintų 3D.') });
 
   return {
     used, excluded, rtk, stdH, stdV, lks, agl, gsd, takeoff, models, versions, totalBytes,
