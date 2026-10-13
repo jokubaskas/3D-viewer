@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 // NodeODM REST API klientas (https://github.com/OpenDroneMap/NodeODM/blob/master/docs/index.adoc)
 
 export const STATUS = { QUEUED: 10, RUNNING: 20, FAILED: 30, COMPLETED: 40, CANCELED: 50 };
@@ -27,14 +28,14 @@ export class NodeODM {
       data = JSON.parse(text);
     } catch {
       if ([502, 503, 504].includes(res.status))
-        throw new Error('Apdorojimo serveris (NodeODM) dar paleidžiamas arba neveikia. Palaukite 1–2 min. ir bandykite dar kartą; jei nepadeda – Docker Desktop patikrinkite, ar veikia konteineris „nodeodm“.');
+        throw new Error(t('Apdorojimo serveris (NodeODM) dar paleidžiamas arba neveikia. Palaukite 1–2 min. ir bandykite dar kartą; jei nepadeda – Docker Desktop patikrinkite, ar veikia konteineris „nodeodm“.'));
       if (/^\s*</.test(text))
-        throw new Error(`Adresu ${this.base} atsako ne apdorojimo serveris (gautas HTML puslapis). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.`);
-      throw new Error(`Serveris grąžino netikėtą atsakymą (HTTP ${res.status})`);
+        throw new Error(t('Adresu {u} atsako ne apdorojimo serveris (gautas HTML puslapis). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.', { u: this.base }));
+      throw new Error(t('Serveris grąžino netikėtą atsakymą (HTTP {s})', { s: res.status }));
     }
     if (data && data.error) {
       if (/authentication token/i.test(data.error))
-        throw new Error(this.token ? 'Neteisingas raktas. Įveskite raktą iš deploy/.env (NODEODM_TOKEN) arba palikite tuščią, jei programa atidaryta per http://localhost:8080.' : 'Serveris reikalauja rakto. Įveskite NODEODM_TOKEN reikšmę iš deploy/.env failo.');
+        throw new Error(t(this.token ? 'Neteisingas raktas. Įveskite raktą iš deploy/.env (NODEODM_TOKEN) arba palikite tuščią, jei programa atidaryta per http://localhost:8080.' : 'Serveris reikalauja rakto. Įveskite NODEODM_TOKEN reikšmę iš deploy/.env failo.'));
       throw new Error(data.error);
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -45,7 +46,7 @@ export class NodeODM {
     try {
       return await fetch(url, init);
     } catch {
-      throw new Error(`Nepavyko prisijungti prie ${this.base} – ar paleistas apdorojimo serveris (Docker)?`);
+      throw new Error(t('Nepavyko prisijungti prie {u} – ar paleistas apdorojimo serveris (Docker)?', { u: this.base }));
     }
   }
 
@@ -71,7 +72,7 @@ export class NodeODM {
       options: JSON.stringify(options),
       outputs: outputs ? JSON.stringify(outputs) : null,
     });
-    if (!r.uuid) throw new Error('Serveris negrąžino užduoties ID');
+    if (!r.uuid) throw new Error(t('Serveris negrąžino užduoties ID'));
     return r.uuid;
   }
 
@@ -119,8 +120,8 @@ export class NodeODM {
             reject(new Error(`HTTP ${xhr.status}`));
           }
         };
-        xhr.onerror = () => reject(new Error('Ryšio klaida'));
-        xhr.ontimeout = () => reject(new Error('Baigėsi laikas'));
+        xhr.onerror = () => reject(new Error(t('Ryšio klaida')));
+        xhr.ontimeout = () => reject(new Error(t('Baigėsi laikas')));
         signal?.addEventListener('abort', () => xhr.abort(), { once: true });
         xhr.onabort = () => reject(new DOMException('Atšaukta', 'AbortError'));
         xhr.send(fd);

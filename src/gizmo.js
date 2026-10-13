@@ -1,5 +1,6 @@
 // Ašių indikatorius (SVG). Rodomos „geodezinės“ ašys: X – rytai, Y – šiaurė, Z – aukštyn.
 import * as THREE from 'three';
+import { t } from './i18n.js';
 
 const AXES = [
   { label: 'X', dir: new THREE.Vector3(1, 0, 0), color: '#ff5f57', view: 'right', neg: 'left' },
@@ -45,5 +46,5 @@ export class Gizmo {
 }
 
 function viewTitle(v) {
-  return { top: 'Iš viršaus', bottom: 'Iš apačios', front: 'Iš pietų (priekis)', back: 'Iš šiaurės', right: 'Iš rytų', left: 'Iš vakarų' }[v];
+  return t({ top: 'Iš viršaus', bottom: 'Iš apačios', front: 'Iš pietų (priekis)', back: 'Iš šiaurės', right: 'Iš rytų', left: 'Iš vakarų' }[v]);
 }

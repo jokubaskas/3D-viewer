@@ -32,6 +32,7 @@ Georeferencuotos koordinatės (pvz. LKS-94) apdorojamos dvigubu tikslumu – mod
 | `C` | Kontrolinis taškas | Modelio ir geodeziškai išmatuoto taško skirtumai ΔX, ΔY, ΔH; RMS; pataisos pritaikymas |
 
 Kiti patogumai:
+- **Kalba: LT / EN** – perjungiklis viršutinėje juostoje (pasirinkimas įsimenamas). Vertimai – `src/i18n.en.js`.
 - `Enter` / dvigubas spustelėjimas / dešinys pelės klavišas – baigti; `Backspace` – atšaukti tašką; `Esc` – nutraukti.
 - Kontūrą galima uždaryti spustelėjus pirmą tašką.
 - Prikabinimas prie viršūnių (nustatymuose arba laikant `Alt`).
@@ -120,6 +121,7 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/main.js` – sąsaja, įrankių valdymas, eksportas
 - `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
 - `src/logo.js` – ATEA žodinis ženklas (SVG, perpieštas; oficialų SVG galima įdėti vietoje `LOGO_PATHS`)
+- `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)
 - `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai
 - `deploy/` – Docker Compose: NodeODM + nginx su programa

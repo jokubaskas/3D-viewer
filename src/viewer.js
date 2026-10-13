@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
+import { t } from './i18n.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -261,7 +262,7 @@ export class Viewer extends EventTarget {
     });
     // BVH greitam spindulių sekimui (svarbu didiesiems fotogrametrijos modeliams)
     for (let i = 0; i < toIndex.length; i++) {
-      onStatus?.(`Ruošiamas greitas matavimas (${i + 1}/${toIndex.length})…`);
+      onStatus?.(t('Ruošiamas greitas matavimas ({i}/{n})…', { i: i + 1, n: toIndex.length }));
       await new Promise((r) => setTimeout(r, 0));
       toIndex[i].computeBoundsTree({ maxLeafTris: 10 });
     }
@@ -361,9 +362,9 @@ export class Viewer extends EventTarget {
    */
   coordRows(local, U, order = 'ne') {
     const o = this.dispCoords(local, U);
-    const hLabel = this.heightSystem ? `H (${this.heightSystem})` : 'Z';
-    if (this.crs?.geodetic && order === 'ne') return [['X (šiaurė)', o.y], ['Y (rytai)', o.x], [hLabel, o.z]];
-    if (this.crs?.geodetic) return [['E (rytai)', o.x], ['N (šiaurė)', o.y], [hLabel, o.z]];
+    const hLabel = this.heightSystem ? `H (${t(this.heightSystem)})` : 'Z';
+    if (this.crs?.geodetic && order === 'ne') return [[t('X (šiaurė)'), o.y], [t('Y (rytai)'), o.x], [hLabel, o.z]];
+    if (this.crs?.geodetic) return [[t('E (rytai)'), o.x], [t('N (šiaurė)'), o.y], [hLabel, o.z]];
     return [['X', o.x], ['Y', o.y], [hLabel, o.z]];
   }
 

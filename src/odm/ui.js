@@ -4,6 +4,7 @@ import { readAllMeta, rtkLabel } from './exif.js';
 import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
 import { loadGeoidFile } from '../geo/geoid.js';
+import { t, locale } from '../i18n.js';
 
 const LS_SERVER = 'atea3d.odm.server';
 const LS_PROJECTS = 'atea3d.odm.projects';
@@ -23,12 +24,12 @@ const ls = {
 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const nf = (v, d = 0) => (v == null || !isFinite(v) ? '—' : new Intl.NumberFormat('lt-LT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(v));
+const nf = (v, d = 0) => (v == null || !isFinite(v) ? '—' : new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v));
 const fmtBytes = (b) => (b > 1e9 ? `${nf(b / 1e9, 1)} GB` : `${nf(b / 1e6, 0)} MB`);
 const fmtDur = (ms) => {
   const s = Math.round(ms / 1000);
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  return h ? `${h} val. ${m} min.` : m ? `${m} min. ${s % 60} s` : `${s} s`;
+  return h ? t('{h} val. {m} min.', { h, m }) : m ? t('{m} min. {s} s', { m, s: s % 60 }) : `${s} s`;
 };
 
 /**
@@ -166,13 +167,13 @@ export function createOdmUI(app) {
       st.textContent = '● Prisijungta';
       st.className = 'small ok';
       $('#odm-server-info').innerHTML = `NodeODM ${esc(i.version)} · ODM ${esc(i.engineVersion || '')}<br>
-        CPU branduolių: ${esc(i.cpuCores)} · Laisva RAM: ${i.availableMemory ? fmtBytes(i.availableMemory) : '—'} / ${i.totalMemory ? fmtBytes(i.totalMemory) : '—'}<br>
-        Eilėje užduočių: ${esc(i.taskQueueCount)}${i.maxImages ? ` · Maks. nuotraukų: ${esc(i.maxImages)}` : ''}`;
+        ${t('CPU branduolių: {c} · Laisva RAM: {f} / {tot}', { c: esc(i.cpuCores), f: i.availableMemory ? fmtBytes(i.availableMemory) : '—', tot: i.totalMemory ? fmtBytes(i.totalMemory) : '—' })}<br>
+        ${t('Eilėje užduočių: {n}', { n: esc(i.taskQueueCount) })}${i.maxImages ? ` · ${t('Maks. nuotraukų: {n}', { n: esc(i.maxImages) })}` : ''}`;
       return i;
     } catch (e) {
-      st.textContent = /rakt/i.test(e.message) ? '● Raktas netinka' : /paleidžiamas/.test(e.message) ? '● Serveris paleidžiamas' : '● Nepavyko prisijungti';
+      st.textContent = /rakt|token/i.test(e.message) ? t('● Raktas netinka') : /paleidžiamas|starting/.test(e.message) ? t('● Serveris paleidžiamas') : t('● Nepavyko prisijungti');
       st.className = 'small bad';
-      $('#odm-server-info').textContent = `${e.message.replace(/[.?!]?$/, (m) => m || ".")} Instrukcija – README skyrius „Serverio diegimas“.`;
+      $('#odm-server-info').textContent = `${e.message.replace(/[.?!]?$/, (m) => m || '.')} ${t('Instrukcija – README skyrius „Serverio diegimas“.')}`;
       if (!quiet) app.toast(e.message, 'error', 8000);
       return null;
     }
@@ -206,14 +207,14 @@ export function createOdmUI(app) {
     extraFiles = files.filter((f) => /^gcp.*\.txt$/i.test(f.name));
     if (!jpgs.length) return app.toast('Nerasta JPG nuotraukų', 'error');
     const box = $('#odm-analysis');
-    box.innerHTML = `<div class="odm-progress"><div class="progress"><div class="progress-bar" style="width:0"></div></div><span class="small muted">Skaitomi ${nf(jpgs.length)} nuotraukų metaduomenys…</span></div>`;
+    box.innerHTML = `<div class="odm-progress"><div class="progress"><div class="progress-bar" style="width:0"></div></div><span class="small muted">${t('Skaitomi {n} nuotraukų metaduomenys…', { n: nf(jpgs.length) })}</span></div>`;
     const t0 = performance.now();
     metas = await readAllMeta(jpgs, (p) => (box.querySelector('.progress-bar').style.width = `${Math.round(p * 100)}%`));
     console.info(`EXIF: ${jpgs.length} nuotr. per ${Math.round(performance.now() - t0)} ms`);
     reanalyze();
     if (!$('#odm-name').value) {
       const d = analysis.timeFrom || new Date();
-      $('#odm-name').value = `Skrydis ${d.toLocaleDateString('lt-LT')} ${d.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit' })}`;
+      $('#odm-name').value = `${t('Skrydis')} ${d.toLocaleDateString(locale())} ${d.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}`;
     }
   }
 
@@ -234,17 +235,17 @@ export function createOdmUI(app) {
     const box = $('#odm-analysis');
     box.innerHTML = `
       <div class="odm-stats">
-        ${stat('Nuotraukų', `${nf(n)}`, `iš ${nf(metas.length)} · ${fmtBytes(a.totalBytes)}`)}
-        ${stat('RTK FIX', `${nf(fixPct, 0)} %`, `FLOAT ${a.rtk.float} · kita ${a.rtk.single + a.rtk.none + a.rtk.unknown}`, fixPct > 95 ? 'ok' : fixPct > 70 ? 'warn' : 'bad')}
-        ${stat('RTK tikslumas', a.stdH != null ? `±${nf(a.stdH * 100, 1)} cm` : '—', a.stdV != null ? `aukštis ±${nf(a.stdV * 100, 1)} cm` : 'plokštumoje')}
+        ${stat('Nuotraukų', `${nf(n)}`, `${t('iš {n}', { n: nf(metas.length) })} · ${fmtBytes(a.totalBytes)}`)}
+        ${stat('RTK FIX', `${nf(fixPct, 0)} %`, `FLOAT ${a.rtk.float} · ${t('kita')} ${a.rtk.single + a.rtk.none + a.rtk.unknown}`, fixPct > 95 ? 'ok' : fixPct > 70 ? 'warn' : 'bad')}
+        ${stat('RTK tikslumas', a.stdH != null ? `±${nf(a.stdH * 100, 1)} cm` : '—', a.stdV != null ? t('aukštis ±{v} cm', { v: nf(a.stdV * 100, 1) }) : 'plokštumoje')}
         ${stat('Skrydžio aukštis', a.agl != null ? `${nf(a.agl, 0)} m` : '—', 'virš pakilimo vietos')}
         ${stat('GSD', a.gsd != null ? `${nf(a.gsd * 100, 2)} cm/px` : '—', 'žemės pikselio dydis')}
         ${stat('Plotas', `${nf(a.areaM2 / 10000, 2)} ha`, 'pagal nuotraukų vietas')}
         ${stat('Kamera', esc(a.models.join(', ') || '—'), a.versions.length ? `DJI XMP ${esc(a.versions.join(', '))}` : '')}
-        ${stat('Laikas', a.timeFrom ? a.timeFrom.toLocaleDateString('lt-LT') : '—', a.timeFrom ? `${a.timeFrom.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit' })}–${a.timeTo.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit' })}` : '')}
+        ${stat('Laikas', a.timeFrom ? a.timeFrom.toLocaleDateString(locale()) : '—', a.timeFrom ? `${a.timeFrom.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}–${a.timeTo.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}` : '')}
       </div>
       ${a.warnings.length ? `<ul class="odm-warn">${a.warnings.map((w) => `<li class="${w.level}">${esc(w.text)}</li>`).join('')}</ul>` : '<p class="small ok">Nuotraukų rinkinys tvarkingas.</p>'}
-      ${extraFiles.length ? `<p class="small">Pridėtas GCP failas: <b>${esc(extraFiles.map((f) => f.name).join(', '))}</b> (bus perduotas ODM).</p>` : ''}
+      ${extraFiles.length ? `<p class="small">${t('Pridėtas GCP failas: {f} (bus perduotas ODM).', { f: esc(extraFiles.map((f) => f.name).join(', ')) })}</p>` : ''}
       <div class="odm-map-wrap">
         <canvas id="odm-map"></canvas>
         <div class="odm-legend small"><span class="dot fix"></span>FIX <span class="dot float"></span>FLOAT <span class="dot other"></span>be RTK <span class="muted">· LKS-94</span></div>
@@ -311,7 +312,7 @@ export function createOdmUI(app) {
     g.lineTo(W - 12, 28);
     g.closePath();
     g.fill();
-    g.fillText('Š', W - 22, 42);
+    g.fillText(t('Š'), W - 22, 42);
 
     cv.onmousemove = (e) => {
       const r = cv.getBoundingClientRect();
@@ -328,7 +329,7 @@ export function createOdmUI(app) {
       tip.hidden = false;
       tip.style.left = `${mx + 12}px`;
       tip.style.top = `${my + 12}px`;
-      tip.innerHTML = `<b>${esc(m.name)}</b><br>RTK ${rtkLabel(m.rtkFlag)}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>Aukštis ${nf(m.absAlt ?? m.alt, 2)} m (virš pakil. ${nf(m.relAlt, 1)} m)`;
+      tip.innerHTML = `<b>${esc(m.name)}</b><br>RTK ${t(rtkLabel(m.rtkFlag))}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>${t('Aukštis {h} m (virš pakil. {r} m)', { h: nf(m.absAlt ?? m.alt, 2), r: nf(m.relAlt, 1) })}`;
     };
     cv.onmouseleave = () => (page.querySelector('.odm-map-tip').hidden = true);
   }
@@ -369,12 +370,12 @@ export function createOdmUI(app) {
     const N = fn?.(c.lat, c.lon);
     const takeoff = analysis.takeoff;
     let html = '<div class="odm-hp">';
-    if (takeoff != null) html += `<div>Pakilimo vietos aukštis nuotraukose: <b>${nf(takeoff, 2)} m</b></div>`;
+    if (takeoff != null) html += `<div>${t('Pakilimo vietos aukštis nuotraukose:')} <b>${nf(takeoff, 2)} m</b></div>`;
     if (hm === 'ellipsoid') {
       if (N != null && isFinite(N)) {
-        html += `<div>N objekto centre: <b>${nf(N, 3)} m</b> → pakilimo vieta LAS07 ≈ <b>${nf(takeoff - N, 2)} m</b></div>`;
+        html += `<div>${t('N objekto centre:')} <b>${nf(N, 3)} m</b> → ${t('pakilimo vieta LAS07 ≈')} <b>${nf(takeoff - N, 2)} m</b></div>`;
         const H = photoHeight(sample, 'ellipsoid', fn);
-        html += `<div class="muted">Pvz. ${esc(sample.name)}: h ${nf(sample.absAlt ?? sample.alt, 3)} → H ${nf(H, 3)} m</div>`;
+        html += `<div class="muted">${t('Pvz. {f}: h {h} → H {H} m', { f: esc(sample.name), h: nf(sample.absAlt ?? sample.alt, 3), H: nf(H, 3) })}</div>`;
       } else if (geoidMode() === 'grid' && geoid && !geoid.covers(c.lat, c.lon)) {
         html += '<div class="bad">Geoido modelis nedengia objekto vietos.</div>';
       } else {
@@ -399,7 +400,7 @@ export function createOdmUI(app) {
       $('#odm-geoid-file-info').textContent = `${geoid.name}: ${geoid.rows}×${geoid.cols}`;
       updateHeightPreview();
     } catch (err) {
-      app.toast(`Nepavyko įkelti geoido: ${err.message}`, 'error');
+      app.toast(t('Nepavyko įkelti geoido: {e}', { e: err.message }), 'error');
     }
   });
 
@@ -418,7 +419,7 @@ export function createOdmUI(app) {
     const n = analysis.used.length;
     // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
     const perImg = { fast: 4, standard: 8, high: 18 }[preset];
-    $('#odm-start-summary').innerHTML = `${nf(n)} nuotr. (${fmtBytes(analysis.totalBytes)}) · ${PRESETS[preset].label} · aukščiai: ${esc(heightSystem())}<br>Apytikslė trukmė: ${fmtDur(n * perImg * 1000)} – ${fmtDur(n * perImg * 2500)} (priklauso nuo serverio)`;
+    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })} (${fmtBytes(analysis.totalBytes)}) · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}`;
   }
 
   // ------------------------------------------------------------------ Paleidimas
@@ -427,7 +428,7 @@ export function createOdmUI(app) {
     if (uploading) return app.toast('Jau vyksta įkėlimas', 'error');
     const info = await checkServer(true);
     if (!info) return app.toast('Apdorojimo serveris nepasiekiamas', 'error');
-    if (info.maxImages && analysis.used.length > info.maxImages) return app.toast(`Serveris priima iki ${info.maxImages} nuotraukų`, 'error');
+    if (info.maxImages && analysis.used.length > info.maxImages) return app.toast(t('Serveris priima iki {n} nuotraukų', { n: info.maxImages }), 'error');
     if ($('#odm-hmode').value === 'ellipsoid' && geoidMode() === 'const' && !geoidFn()) {
       return app.toast('Įveskite geoido aukštį N arba pasirinkite kitą variantą', 'error');
     }
@@ -464,21 +465,21 @@ export function createOdmUI(app) {
         const el = (performance.now() - t0) / 1000;
         const speed = sent / Math.max(el, 0.1);
         $('#odm-up-bar').style.width = `${(p * 100).toFixed(1)}%`;
-        $('#odm-up-text').textContent = `${nf(p * 100, 1)} % · ${fmtBytes(sent)} / ${fmtBytes(total)} · ${nf(speed / 1e6, 1)} MB/s · liko ~${fmtDur(((total - sent) / Math.max(speed, 1)) * 1000)} · ${done}/${items.length} failų`;
+        $('#odm-up-text').textContent = `${nf(p * 100, 1)} % · ${fmtBytes(sent)} / ${fmtBytes(total)} · ${nf(speed / 1e6, 1)} MB/s · ${t('liko ~{t}', { t: fmtDur(((total - sent) / Math.max(speed, 1)) * 1000) })} · ${t('{a}/{b} failų', { a: done, b: items.length })}`;
       }, { signal: ctrl.signal });
       await client.commit(project.uuid);
       project.status = 'queued';
       saveProject(project);
       app.toast('Nuotraukos įkeltos – apdorojimas pradėtas. Galite uždaryti šį langą.');
-      run.innerHTML = `<p>Projektas <b>${esc(name)}</b> perduotas apdoroti. Eigą matysite projektų sąraše kairėje – galite toliau dirbti ar net uždaryti naršyklę.</p>`;
+      run.innerHTML = `<p>${t('Projektas „{n}“ perduotas apdoroti. Eigą matysite projektų sąraše kairėje – galite toliau dirbti ar net uždaryti naršyklę.', { n: esc(name) })}</p>`;
       resetWizard();
       poll();
     } catch (e) {
       if (e.name === 'AbortError') app.toast('Įkėlimas nutrauktas', 'error');
-      else app.toast(`Klaida: ${e.message}`, 'error', 8000);
+      else app.toast(t('Klaida: {e}', { e: e.message }), 'error', 8000);
       if (project.uuid) client.remove(project.uuid).catch(() => {});
       removeProject(project.uuid);
-      run.innerHTML = `<p class="bad">Nepavyko: ${esc(e.message)}</p>`;
+      run.innerHTML = `<p class="bad">${t('Nepavyko: {e}', { e: esc(e.message) })}</p>`;
     } finally {
       uploading = null;
       renderProjects();
@@ -520,7 +521,7 @@ export function createOdmUI(app) {
     if (code === STATUS.COMPLETED) return '<span class="chip ok">Baigta</span>';
     if (code === STATUS.FAILED) return '<span class="chip bad">Nepavyko</span>';
     if (code === STATUS.CANCELED) return '<span class="chip">Atšaukta</span>';
-    if (code === STATUS.RUNNING) return `<span class="chip run">Apdorojama ${nf(p.progress, 0)} %</span>`;
+    if (code === STATUS.RUNNING) return `<span class="chip run">${t('Apdorojama {p} %', { p: nf(p.progress, 0) })}</span>`;
     if (code === STATUS.QUEUED) return '<span class="chip">Eilėje</span>';
     return '<span class="chip">—</span>';
   }
@@ -537,7 +538,7 @@ export function createOdmUI(app) {
         (p) => `
       <div class="odm-proj" data-uuid="${esc(p.uuid)}">
         <div class="odm-proj-head"><b>${esc(p.name)}</b>${statusChip(p)}</div>
-        <div class="small muted">${new Date(p.created).toLocaleString('lt-LT')} · ${nf(p.photos)} nuotr. · ${esc(PRESETS[p.preset]?.label || '')}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
+        <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(PRESETS[p.preset]?.label || ''))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
         ${p.statusCode === STATUS.RUNNING ? `<div class="progress"><div class="progress-bar" style="width:${p.progress || 0}%"></div></div>` : ''}
         ${p.statusCode === STATUS.FAILED && p.error ? `<div class="small bad">${esc(p.error)}</div>` : ''}
         <div class="odm-proj-actions">
@@ -566,11 +567,11 @@ export function createOdmUI(app) {
         await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid) }, act);
         close();
       } else if (act === 'cancel') {
-        if (confirm(`Atšaukti „${p.name}“ apdorojimą?`)) await c.cancel(uuid);
+        if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
       } else if (act === 'restart') {
         await c.restart(uuid);
       } else if (act === 'delete') {
-        if (!confirm(`Pašalinti projektą „${p.name}“ ir jo rezultatus serveryje?`)) return;
+        if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         await c.remove(uuid).catch(() => {});
         removeProject(uuid);
       } else if (act === 'log') {
@@ -606,8 +607,8 @@ export function createOdmUI(app) {
         p.status = 'server';
         if (p.statusCode === STATUS.FAILED) p._polledFailed = true;
         if (prev !== STATUS.COMPLETED && p.statusCode === STATUS.COMPLETED) {
-          app.toast(`Modelis „${p.name}“ paruoštas!`, 'info', 8000);
-          notify(`Modelis „${p.name}“ paruoštas`);
+          app.toast(t('Modelis „{n}“ paruoštas!', { n: p.name }), 'info', 8000);
+          notify(t('Modelis „{n}“ paruoštas', { n: p.name }));
         }
         if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
       } catch (e) {
@@ -632,7 +633,7 @@ export function createOdmUI(app) {
     const running = projects.filter((p) => p.status === 'uploading' || p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED);
     const done = projects.filter((p) => p.statusCode === STATUS.COMPLETED && !p.seen);
     b.hidden = !running.length && !done.length;
-    b.textContent = running.length ? `${running.length} apdorojama${running[0].statusCode === STATUS.RUNNING ? ` · ${nf(running[0].progress, 0)} %` : ''}` : `${done.length} paruošta`;
+    b.textContent = running.length ? `${t('{n} apdorojama', { n: running.length })}${running[0].statusCode === STATUS.RUNNING ? ` · ${nf(running[0].progress, 0)} %` : ''}` : t('{n} paruošta', { n: done.length });
     b.className = `badge ${running.length ? 'run' : 'ok'}`;
   }
 
@@ -664,6 +665,17 @@ export function createOdmUI(app) {
   });
   page.addEventListener('keydown', (e) => e.stopPropagation());
 
+  /** Perpiešia dinamines dalis (pvz. pakeitus kalbą). */
+  function rerender() {
+    if (analysis) renderAnalysis();
+    updateHeightPreview();
+    updateStartSummary();
+    $('#odm-preset-desc').textContent = PRESETS[preset].desc;
+    renderProjects();
+    if (!$('#odm-server-state').textContent.startsWith('●')) return;
+    checkServer(true);
+  }
+
   poll();
-  return { open, close, get isOpen() { return !page.hidden; } };
+  return { open, close, rerender, get isOpen() { return !page.hidden; } };
 }

@@ -1,3 +1,4 @@
+import { t } from '../i18n.js';
 // Geoido (kvazigeoido) aukščių modelis: elipsoidinis h -> normalinis H = h − N.
 // Lietuvoje naudojama LAS07 aukščių sistema ir kvazigeoido modelis LIT15G.
 // Modelio failas su programa neplatinamas – jį galima įkelti (GTX, Gravsoft .gri/.grd arba tekstinis „platuma ilguma N“).
@@ -42,7 +43,7 @@ function parseGtx(buf, name) {
   const dv = new DataView(buf);
   const lat0 = dv.getFloat64(0), lon0n = dv.getFloat64(8), dlat = dv.getFloat64(16), dlon = dv.getFloat64(24);
   const rows = dv.getInt32(32), cols = dv.getInt32(36);
-  if (!(rows > 1 && cols > 1) || 40 + rows * cols * 4 > buf.byteLength) throw new Error('Netinkamas GTX failas');
+  if (!(rows > 1 && cols > 1) || 40 + rows * cols * 4 > buf.byteLength) throw new Error(t('Netinkamas GTX failas'));
   const data = new Float32Array(rows * cols);
   for (let k = 0; k < rows * cols; k++) data[k] = dv.getFloat32(40 + k * 4);
   const lon0 = lon0n > 180 ? lon0n - 360 : lon0n;
@@ -69,7 +70,7 @@ function parseXyzGrid(text, name) {
     const p = line.trim().split(/[\s,;]+/).map(Number);
     if (p.length >= 3 && p.slice(0, 3).every(isFinite)) pts.push(p);
   }
-  if (pts.length < 4) throw new Error('Nepavyko atpažinti geoido failo formato');
+  if (pts.length < 4) throw new Error(t('Nepavyko atpažinti geoido failo formato'));
   // Nustatome, kuris stulpelis platuma (Lietuvoje 53–57°), kuris ilguma (20–27°)
   const swap = pts[0][0] < 40 && pts[0][1] > 40;
   const lats = [...new Set(pts.map((p) => +(swap ? p[1] : p[0]).toFixed(8)))].sort((a, b) => a - b);
