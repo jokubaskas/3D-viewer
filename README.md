@@ -68,6 +68,25 @@ Prielaidos ir tikslumas:
 
 ### Serverio diegimas
 
+#### Windows (Docker Desktop)
+
+1. Įdiekite [Docker Desktop](https://www.docker.com/products/docker-desktop/) ir jį paleiskite.
+2. Atsisiųskite visą projektą (GitHub → **Code → Download ZIP**) ir išskleiskite.
+3. Atidarykite aplanką `deploy` ir dukart spustelėkite **`start-windows.bat`**.
+   Jis sukurs `.env` su slaptu raktu, paleis serverį ir atidarys `http://localhost:8080`.
+4. Programoje **„Iš nuotraukų“** įveskite raktą, kurį parodė langas. Adresas – `./odm/`.
+
+Kai naudojate vieno failo versiją (`release/…html`), adresas yra `http://localhost:8080/odm/`.
+Docker Desktop pagal nutylėjimą WSL2 skiria tik dalį RAM. Dideliems projektams sukurkite `%UserProfile%\.wslconfig`:
+
+```ini
+[wsl2]
+memory=48GB
+processors=12
+```
+
+#### Linux serveris
+
 Reikia Linux serverio su Docker. Rekomendacijos: 1000 nuotraukų (48 MP) – 16+ branduolių, **64–128 GB RAM**, 500 GB+ SSD; NVIDIA GPU pagreitina.
 
 ```bash
