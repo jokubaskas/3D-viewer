@@ -74,9 +74,9 @@ Prielaidos ir tikslumas:
 2. Atsisiųskite visą projektą (GitHub → **Code → Download ZIP**) ir išskleiskite.
 3. Atidarykite aplanką `deploy` ir dukart spustelėkite **`start-windows.bat`**.
    Jis sukurs `.env` su slaptu raktu, paleis serverį ir atidarys `http://localhost:8080`.
-4. Programoje **„Iš nuotraukų“** įveskite raktą, kurį parodė langas. Adresas – `./odm/`.
+4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
 
-Kai naudojate vieno failo versiją (`release/…html`), adresas yra `http://localhost:8080/odm/`.
+Kai naudojate vieno failo versiją (`release/…html`), adresas yra `http://localhost:8080/odm/`. Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
 Docker Desktop pagal nutylėjimą WSL2 skiria tik dalį RAM. Dideliems projektams sukurkite `%UserProfile%\.wslconfig`:
 
 ```ini

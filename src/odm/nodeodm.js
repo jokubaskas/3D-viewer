@@ -26,11 +26,17 @@ export class NodeODM {
     try {
       data = JSON.parse(text);
     } catch {
+      if ([502, 503, 504].includes(res.status))
+        throw new Error('Apdorojimo serveris (NodeODM) dar paleidžiamas arba neveikia. Palaukite 1–2 min. ir bandykite dar kartą; jei nepadeda – Docker Desktop patikrinkite, ar veikia konteineris „nodeodm“.');
       if (/^\s*</.test(text))
         throw new Error(`Adresu ${this.base} atsako ne apdorojimo serveris (gautas HTML puslapis). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.`);
       throw new Error(`Serveris grąžino netikėtą atsakymą (HTTP ${res.status})`);
     }
-    if (data && data.error) throw new Error(data.error);
+    if (data && data.error) {
+      if (/authentication token/i.test(data.error))
+        throw new Error(this.token ? 'Neteisingas raktas. Įveskite raktą iš deploy/.env (NODEODM_TOKEN) arba palikite tuščią, jei programa atidaryta per http://localhost:8080.' : 'Serveris reikalauja rakto. Įveskite NODEODM_TOKEN reikšmę iš deploy/.env failo.');
+      throw new Error(data.error);
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return data;
   }
