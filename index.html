@@ -23,6 +23,10 @@
         <button class="btn btn-ghost" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
           <span data-icon="folder"></span><span class="hide-sm">Aplankas</span>
         </button>
+        <button class="btn btn-ghost" id="btn-odm" title="Sukurti 3D modelį iš drono nuotraukų (OpenDroneMap)">
+          <span data-icon="camera"></span><span class="hide-sm">Iš nuotraukų</span>
+        </button>
+        <button class="badge" id="odm-badge" hidden></button>
         <span class="file-name" id="file-name">Modelis neįkeltas</span>
       </div>
       <div class="topbar-right">
@@ -42,7 +46,7 @@
         <button class="btn btn-ghost icon-only" id="btn-help" title="Pagalba ir spartieji klavišai (?)"><span data-icon="help"></span></button>
       </div>
       <input type="file" id="file-input" multiple hidden
-        accept=".obj,.mtl,.glb,.gltf,.bin,.ply,.stl,.fbx,.dae,.3mf,.las,.pcd,.xyz,.pts,.txt,.csv,.zip,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp,.tga,.ktx2" />
+        accept=".obj,.mtl,.glb,.gltf,.bin,.ply,.stl,.fbx,.dae,.3mf,.las,.laz,.pcd,.xyz,.pts,.txt,.csv,.zip,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp,.tga,.ktx2" />
       <input type="file" id="folder-input" webkitdirectory directory multiple hidden />
       <input type="file" id="json-input" accept=".json" hidden />
     </header>
@@ -57,9 +61,10 @@
           <div class="empty-card">
             <div class="empty-icon" data-icon="cube"></div>
             <h1>Matuokite fotogrametrijos modelius</h1>
-            <p>Atstumai, aukščiai, plotai, tūriai ir profiliai tiesiai 3D modelyje. Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
+            <p>Atstumai, aukščiai, plotai, tūriai ir profiliai tiesiai 3D modelyje. Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS/LAZ</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
             <div class="empty-actions">
               <button class="btn btn-primary btn-lg" id="btn-open-2"><span data-icon="open"></span>Pasirinkti failus</button>
+              <button class="btn btn-outline btn-lg" id="btn-odm-2"><span data-icon="camera"></span>Kurti iš drono nuotraukų</button>
               <button class="btn btn-outline btn-lg" id="btn-demo"><span data-icon="mountain"></span>Demonstracinis modelis</button>
             </div>
             <p class="muted small">OBJ modeliams pažymėkite kartu ir .mtl bei tekstūrų failus, arba atidarykite visą aplanką / ZIP.</p>
@@ -161,6 +166,10 @@
             <label class="row check"><input type="checkbox" id="opt-grid" /> Rodyti tinklelį po modeliu</label>
           </section>
           <section class="card">
+            <h3>Kontroliniai taškai</h3>
+            <div id="cp-summary"></div>
+          </section>
+          <section class="card">
             <h3>Pjūvis pagal aukštį</h3>
             <p class="muted small">Paslėpkite dalį modelio, pvz. medžius ar stogą, kad matytumėte ir matuotumėte, kas po jais.</p>
             <label class="row">Apačia <input type="range" id="clip-min" min="0" max="1000" value="0" /></label>
@@ -201,6 +210,12 @@
             <label class="row">Tikslumas (skaitmenys po kablelio)
               <select id="opt-precision">
                 <option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option>
+              </select>
+            </label>
+            <label class="row">Koordinačių žymėjimas
+              <select id="opt-coord-order">
+                <option value="ne">LKS-94: X – šiaurė, Y – rytai</option>
+                <option value="en">E (rytai), N (šiaurė)</option>
               </select>
             </label>
             <label class="row check"><input type="checkbox" id="opt-snap" /> Prikabinti prie viršūnių</label>
@@ -256,6 +271,21 @@
       <menu>
         <button value="cancel" class="btn btn-ghost">Atšaukti</button>
         <button value="ok" class="btn btn-primary" id="cal-ok">Taikyti</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-checkpoint">
+    <form method="dialog">
+      <h2>Kontrolinis taškas</h2>
+      <p class="muted small">Įveskite geodeziškai išmatuotas taško koordinates (pvz. GNSS imtuvu LKS-94 / LAS07). Pilkai rodoma modelio reikšmė.</p>
+      <label class="row">Pavadinimas <input id="cp-name" class="num wide" style="text-align:left" /></label>
+      <label class="row"><span id="cp-l0">X</span> <input id="cp-a" class="num wide" inputmode="decimal" /></label>
+      <label class="row"><span id="cp-l1">Y</span> <input id="cp-b" class="num wide" inputmode="decimal" /></label>
+      <label class="row"><span id="cp-l2">H</span> <input id="cp-c" class="num wide" inputmode="decimal" /></label>
+      <menu>
+        <button value="cancel" class="btn btn-ghost" formnovalidate>Atšaukti</button>
+        <button value="ok" class="btn btn-primary">Išsaugoti</button>
       </menu>
     </form>
   </dialog>

@@ -15,8 +15,9 @@ import { PCDLoader } from 'three/examples/jsm/loaders/PCDLoader.js';
 import { TGALoader } from 'three/examples/jsm/loaders/TGALoader.js';
 import { TIFFLoader } from 'three/examples/jsm/loaders/TIFFLoader.js';
 import { unzipSync } from 'three/examples/jsm/libs/fflate.module.js';
+import { CRS, parseCoordsTxt, isLithuanianUtm, makeUtmToLks, reprojectUtmLocalObject, detectLasCrs } from './geo/georef.js';
 
-const MODEL_PRIORITY = ['glb', 'gltf', 'obj', 'fbx', 'ply', 'las', 'dae', '3mf', 'stl', 'pcd', 'xyz', 'pts', 'csv', 'txt'];
+const MODEL_PRIORITY = ['glb', 'gltf', 'obj', 'fbx', 'ply', 'las', 'laz', 'dae', '3mf', 'stl', 'pcd', 'xyz', 'pts', 'csv', 'txt'];
 const MAX_POINTS = 25_000_000;
 
 const ext = (name) => (name.split('.').pop() || '').toLowerCase();
@@ -65,8 +66,15 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
   const byName = new Map();
   for (const f of files) byName.set(base(f.webkitRelativePath || f.name), f);
 
+  // ODM rezultatai: coords.txt nurodo UTM zoną ir poslinkį
+  const coordsFile = byName.get('coords.txt');
+  const odmCoords = coordsFile ? parseCoordsTxt(await coordsFile.text()) : null;
+  // ODM archyve gali būti keli OBJ – renkamės georeferencuotą
+  const geoObj = files.find((f) => /_geo\.obj$/i.test(f.name));
+  if (geoObj) files = files.filter((f) => ext(f.name) !== 'obj' || f === geoObj);
+
   const main = files
-    .filter((f) => MODEL_PRIORITY.includes(ext(f.name)))
+    .filter((f) => MODEL_PRIORITY.includes(ext(f.name)) && !/^(coords|geo|gcp_list|image_groups)\.txt$/i.test(f.name))
     .sort((a, b) => MODEL_PRIORITY.indexOf(ext(a.name)) - MODEL_PRIORITY.indexOf(ext(b.name)) || b.size - a.size)[0];
   if (!main) throw new Error('Nerastas palaikomas 3D failas. Palaikoma: OBJ, GLB/GLTF, PLY, LAS, STL, FBX, DAE, 3MF, PCD, XYZ, ZIP.');
 
@@ -105,15 +113,16 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
   let object;
   let originOffset = new THREE.Vector3();
   let suggestedUp = null;
+  let crs = null;
 
   switch (format) {
     case 'glb':
     case 'gltf': {
       const loader = new GLTFLoader(manager);
-      const draco = new DRACOLoader(manager).setDecoderPath(dracoPath());
+      const draco = new DRACOLoader().setDecoderPath(dracoPath()); // be manager – dekoderio failai nėra modelio dalis
       loader.setDRACOLoader(draco);
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const ktx2 = new KTX2Loader(manager).setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/basis/');
+      const ktx2 = new KTX2Loader().setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/basis/');
       loader.setKTX2Loader(ktx2);
       const gltf = await new Promise((res, rej) => loader.parse(data, '', res, rej));
       object = gltf.scene || gltf.scenes[0];
@@ -171,10 +180,13 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
     case 'pcd':
       object = new PCDLoader(manager).parse(data);
       break;
-    case 'las': {
-      const r = parseLAS(data, warnings);
+    case 'las':
+    case 'laz': {
+      onStatus?.(format === 'laz' ? 'Išskleidžiamas LAZ taškų debesis…' : 'Skaitomas LAS taškų debesis…');
+      const r = await parseLAS(data, warnings, odmCoords ? { zone: odmCoords.zone } : null, (p) => onProgress?.(0.65 + p * 0.3));
       object = r.object;
       originOffset = r.offset;
+      crs = r.crs;
       suggestedUp = 'z';
       break;
     }
@@ -200,8 +212,24 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
   }
   setTimeout(() => blobUrls.forEach((u) => URL.revokeObjectURL(u)), 60_000);
 
+  // ODM tekstūruotas modelis (UTM minus poslinkis) -> LKS-94
+  if (odmCoords && format !== 'las' && format !== 'laz') {
+    if (isLithuanianUtm(odmCoords.zone, odmCoords.south)) {
+      onStatus?.('Perskaičiuojama į LKS-94…');
+      await nextFrame();
+      originOffset = reprojectUtmLocalObject(object, odmCoords);
+      crs = CRS.LKS94;
+      suggestedUp = 'z';
+      warnings.push(`Modelis perskaičiuotas iš WGS84 / UTM ${odmCoords.zone}N į LKS-94.`);
+    } else {
+      originOffset = new THREE.Vector3(odmCoords.offE, odmCoords.offN, 0);
+      crs = CRS.utm(odmCoords.zone);
+      suggestedUp = 'z';
+    }
+  }
+
   prepareObject(object);
-  return { object, name: main.name, format: format.toUpperCase(), originOffset, suggestedUp, warnings };
+  return { object, name: main.name, format: format.toUpperCase(), originOffset, suggestedUp, warnings, crs };
 }
 
 function nextFrame() {
@@ -287,15 +315,35 @@ function prepareObject(root) {
 // ---------------------------------------------------------------------------
 // LAS (nesuspaustas) skaitymas
 // ---------------------------------------------------------------------------
-function parseLAS(buffer, warnings) {
+let lazPerfPromise = null;
+async function getLazPerf() {
+  if (!lazPerfPromise) {
+    lazPerfPromise = (async () => {
+      const [{ default: createLazPerf }, { default: wasmUrl }] = await Promise.all([
+        import('laz-perf/lib/web/laz-perf.js'),
+        import('laz-perf/lib/web/laz-perf.wasm?url'),
+      ]);
+      const wasmBinary = await (await fetch(wasmUrl)).arrayBuffer();
+      return createLazPerf({ wasmBinary });
+    })();
+  }
+  return lazPerfPromise;
+}
+
+/**
+ * LAS / LAZ skaitymas. Jei faile nurodyta UTM 34N/35N sistema – taškai perskaičiuojami į LKS-94.
+ * @param {{zone:number}|null} forceUtm – UTM zona, jei žinoma iš kitur (pvz. ODM coords.txt)
+ */
+async function parseLAS(buffer, warnings, forceUtm = null, onProgress) {
   const dv = new DataView(buffer);
   const sig = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
   if (sig !== 'LASF') throw new Error('Netinkamas LAS failas');
   const vMinor = dv.getUint8(25);
   const headerSize = dv.getUint16(94, true);
   const dataOffset = dv.getUint32(96, true);
+  const numVlrs = dv.getUint32(100, true);
   const formatRaw = dv.getUint8(104);
-  if (formatRaw & 0x80 || formatRaw & 0x40) throw new Error('Suspausti LAZ failai nepalaikomi – eksportuokite kaip LAS.');
+  const compressed = !!(formatRaw & 0x80 || formatRaw & 0x40);
   const fmt = formatRaw & 0x3f;
   const recLen = dv.getUint16(105, true);
   let count = dv.getUint32(107, true);
@@ -308,10 +356,25 @@ function parseLAS(buffer, warnings) {
   const maxX = dv.getFloat64(179, true), minX = dv.getFloat64(187, true);
   const maxY = dv.getFloat64(195, true), minY = dv.getFloat64(203, true);
   const maxZ = dv.getFloat64(211, true), minZ = dv.getFloat64(219, true);
-  const center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
 
-  const available = Math.floor((buffer.byteLength - dataOffset) / recLen);
-  count = Math.min(count, available);
+  // Koordinačių sistema
+  const detected = detectLasCrs(dv, headerSize, numVlrs);
+  let crs = detected?.kind === 'lks' ? CRS.LKS94 : null;
+  let toLks = null;
+  const zone = forceUtm?.zone ?? (detected?.kind === 'utm' ? detected.zone : null);
+  if (zone && isLithuanianUtm(zone, false)) {
+    toLks = makeUtmToLks(zone, minX, minY, maxX, maxY);
+    crs = CRS.LKS94;
+    warnings.push(`Taškų debesis perskaičiuotas iš WGS84 / UTM ${zone}N į LKS-94.`);
+  } else if (zone) crs = CRS.utm(zone);
+
+  let center = new THREE.Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
+  if (toLks) {
+    const [e, n] = toLks(center.x, center.y);
+    center = new THREE.Vector3(Math.round(e), Math.round(n), Math.round(center.z));
+  }
+
+  if (!compressed) count = Math.min(count, Math.floor((buffer.byteLength - dataOffset) / recLen));
   const stride = Math.max(1, Math.ceil(count / MAX_POINTS));
   if (stride > 1) warnings.push(`Taškų debesis labai didelis (${count.toLocaleString('lt-LT')} t.) – rodomas kas ${stride}-as taškas.`);
   const n = Math.floor(count / stride);
@@ -323,22 +386,58 @@ function parseLAS(buffer, warnings) {
   let minI = Infinity, maxI = -Infinity;
   const inten = rgbOffset == null ? new Float32Array(n) : null;
 
-  for (let i = 0, k = 0; k < n; i += stride, k++) {
-    const o = dataOffset + i * recLen;
-    pos[k * 3] = dv.getInt32(o, true) * sx + ox - center.x;
-    pos[k * 3 + 1] = dv.getInt32(o + 4, true) * sy + oy - center.y;
-    pos[k * 3 + 2] = dv.getInt32(o + 8, true) * sz + oz - center.z;
+  const store = (k, rv, o) => {
+    const X = rv.getInt32(o, true) * sx + ox, Y = rv.getInt32(o + 4, true) * sy + oy, Z = rv.getInt32(o + 8, true) * sz + oz;
+    if (toLks) {
+      const [e, nn] = toLks(X, Y);
+      pos[k * 3] = e - center.x;
+      pos[k * 3 + 1] = nn - center.y;
+    } else {
+      pos[k * 3] = X - center.x;
+      pos[k * 3 + 1] = Y - center.y;
+    }
+    pos[k * 3 + 2] = Z - center.z;
     if (rgbOffset != null) {
-      const r = dv.getUint16(o + rgbOffset, true), g = dv.getUint16(o + rgbOffset + 2, true), b = dv.getUint16(o + rgbOffset + 4, true);
+      const r = rv.getUint16(o + rgbOffset, true), g = rv.getUint16(o + rgbOffset + 2, true), b = rv.getUint16(o + rgbOffset + 4, true);
       col[k * 3] = r; col[k * 3 + 1] = g; col[k * 3 + 2] = b;
       if (r > maxC) maxC = r;
       if (g > maxC) maxC = g;
       if (b > maxC) maxC = b;
     } else {
-      const it = dv.getUint16(o + 12, true);
+      const it = rv.getUint16(o + 12, true);
       inten[k] = it;
       if (it < minI) minI = it;
       if (it > maxI) maxI = it;
+    }
+  };
+
+  if (!compressed) {
+    for (let i = 0, k = 0; k < n; i += stride, k++) store(k, dv, dataOffset + i * recLen);
+  } else {
+    const L = await getLazPerf();
+    const bytes = new Uint8Array(buffer);
+    const filePtr = L._malloc(bytes.length);
+    L.HEAPU8.set(bytes, filePtr);
+    const laszip = new L.LASZip();
+    try {
+      laszip.open(filePtr, bytes.length);
+      const pl = laszip.getPointLength();
+      const total = Math.min(count, laszip.getCount());
+      const dataPtr = L._malloc(pl);
+      let rv = new DataView(L.HEAPU8.buffer, dataPtr, pl);
+      for (let i = 0, k = 0; i < total && k < n; i++) {
+        laszip.getPoint(dataPtr);
+        if (rv.buffer !== L.HEAPU8.buffer) rv = new DataView(L.HEAPU8.buffer, dataPtr, pl);
+        if (i % stride === 0) store(k++, rv, 0);
+        if ((i & 0xfffff) === 0 && i) {
+          onProgress?.(i / total);
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+      L._free(dataPtr);
+    } finally {
+      laszip.delete();
+      L._free(filePtr);
     }
   }
 
@@ -358,7 +457,7 @@ function parseLAS(buffer, warnings) {
   }
   if (hasColor) geom.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const pts = new THREE.Points(geom, new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: hasColor, color: hasColor ? 0xffffff : 0xcfd8d4 }));
-  return { object: pts, offset: center };
+  return { object: pts, offset: center, crs };
 }
 
 function srgbToLinear(c) {

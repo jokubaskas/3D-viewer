@@ -1,0 +1,40 @@
+# Atea 3D Matuoklis + OpenDroneMap apdorojimo serveris
+#
+#   cp .env.example .env      # nustatykite NODEODM_TOKEN
+#   docker compose up -d --build
+#
+# Programa: http://<serveris>:8080   (NodeODM pasiekiamas per /odm/)
+# Su NVIDIA GPU: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+services:
+  nodeodm:
+    image: opendronemap/nodeodm:${NODEODM_TAG:-latest}
+    restart: unless-stopped
+    command:
+      - --port=3000
+      - --token=${NODEODM_TOKEN:?Nustatykite NODEODM_TOKEN faile .env}
+      # Kiek užduočių apdoroti vienu metu (daugiau – reikia daugiau RAM)
+      - --parallel_queue_processing=${NODEODM_PARALLEL:-1}
+      # Rezultatus laikyti 30 dienų (numatyta tik 2 paros)
+      - --cleanup_tasks_after=${NODEODM_KEEP_MINUTES:-43200}
+      # Nebaigtus įkėlimus išvalyti po 2 parų
+      - --cleanup_uploads_after=2880
+    volumes:
+      - nodeodm-data:/var/www/data
+    # Atminties riba (didiems projektams reikia 64–128 GB)
+    # mem_limit: 96g
+    expose:
+      - "3000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - nodeodm
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  nodeodm-data:

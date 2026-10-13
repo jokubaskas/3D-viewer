@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "laz-perf": "^0.0.7",
     "three": "^0.169.0",
     "three-mesh-bvh": "^0.8.3"
   },
