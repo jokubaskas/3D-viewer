@@ -465,7 +465,7 @@ export class Viewer extends EventTarget {
     const ext = Math.max(size.x, size.z) * 1.4;
     const step = niceStep(ext / 20);
     const div = Math.ceil(ext / step);
-    const grid = new THREE.GridHelper(div * step, div, 0x8dc63f, 0x5d6b66);
+    const grid = new THREE.GridHelper(div * step, div, 0x008b01, 0x4a5357);
     grid.material.transparent = true;
     grid.material.opacity = 0.45;
     const c = this.worldBox.getCenter(new THREE.Vector3());

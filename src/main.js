@@ -5,6 +5,7 @@ import { loadModelFiles } from './loaders.js';
 import { createDemoModel } from './demo.js';
 import { units } from './units.js';
 import { hydrateIcons, icon } from './icons.js';
+import { logoSvg, drawLogo } from './logo.js';
 import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId } from './measurements.js';
 import { fitPlaneNormal } from './compute.js';
 import { ProfileChart } from './profile.js';
@@ -19,7 +20,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 const SETTINGS_KEY = 'atea3d.settings.v1';
 const settings = {
   unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
-  background: 'dark', pointSize: 2.5, viewMode: 'texture', grid: false,
+  background: 'atea', pointSize: 2.5, viewMode: 'texture', grid: false,
 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
@@ -36,6 +37,8 @@ units.precision = settings.precision;
 // Pagrindiniai objektai
 // ---------------------------------------------------------------------------
 hydrateIcons();
+$('#brand-logo').innerHTML = logoSvg();
+if (!['atea', 'graphite', 'light', 'white'].includes(settings.background)) settings.background = 'atea';
 const viewport = $('#viewport');
 const viewer = new Viewer(viewport);
 const gizmo = new Gizmo($('#gizmo'), viewer);
@@ -953,11 +956,12 @@ async function screenshot() {
   out.width = w;
   out.height = h;
   const g = out.getContext('2d');
-  const bgs = { dark: ['#2c3a36', '#0f1513'], green: ['#0f6b4f', '#00241a'], light: ['#f4f7f6', '#c6d2ce'], white: ['#ffffff', '#ffffff'] };
-  const [c0, c1] = bgs[settings.background] || bgs.dark;
-  const grad = g.createRadialGradient(w / 2, h * 0.35, 0, w / 2, h * 0.35, Math.max(w, h) * 0.75);
+  const bgs = { atea: ['#1d4629', '#102d21', '#1f2326'], graphite: ['#30363a', '#1f2326', '#141719'], light: ['#f4f7f6', '#d9e2df', '#c6d2ce'], white: ['#ffffff', '#ffffff', '#ffffff'] };
+  const [c0, c1, c2] = bgs[settings.background] || bgs.atea;
+  const grad = g.createRadialGradient(w * 0.3, h * 0.4, 0, w * 0.3, h * 0.4, Math.max(w, h) * 0.85);
   grad.addColorStop(0, c0);
-  grad.addColorStop(1, c1);
+  grad.addColorStop(0.6, c1);
+  grad.addColorStop(1, c2);
   g.fillStyle = grad;
   g.fillRect(0, 0, w, h);
   g.drawImage(src, 0, 0);
@@ -982,19 +986,21 @@ async function screenshot() {
       lines.forEach((t, i) => g.fillText(t, x + parseFloat(cs.paddingLeft) * pr + 2 * pr, y + (bh / lines.length) * (i + 0.5)));
     });
   }
-  // Žyma
-  const pad = 14 * pr;
-  g.font = `800 ${22 * pr}px Segoe UI, Arial, sans-serif`;
-  const text = 'atea';
-  const tw = g.measureText(text).width;
-  g.fillStyle = 'rgba(0,87,63,0.9)';
-  roundRect(g, pad, h - pad - 40 * pr, tw + 260 * pr, 40 * pr, 8 * pr);
+  // Žyma: ATEA logotipas + failas ir data
+  const pad = 14 * pr, bh = 40 * pr;
+  g.font = `600 ${12 * pr}px Inter, Segoe UI, Arial, sans-serif`;
+  const caption = `${modelInfo?.name || ''}  •  ${new Date().toLocaleString('lt-LT')}`;
+  const logoW = (156 / 40) * 16 * pr;
+  const boxW = 14 * pr + logoW + 14 * pr + g.measureText(caption).width + 14 * pr;
+  g.fillStyle = 'rgba(31,35,38,0.92)';
+  roundRect(g, pad, h - pad - bh, boxW, bh, 4 * pr);
   g.fill();
-  g.fillStyle = '#fff';
+  g.fillStyle = '#008b01';
+  g.fillRect(pad, h - pad - bh, 4 * pr, bh);
+  drawLogo(g, pad + 14 * pr, h - pad - bh / 2 - 8 * pr, 16 * pr, '#ffffff');
+  g.fillStyle = '#c3cac6';
   g.textBaseline = 'middle';
-  g.fillText(text, pad + 12 * pr, h - pad - 20 * pr);
-  g.font = `600 ${12 * pr}px Segoe UI, Arial, sans-serif`;
-  g.fillText(`${modelInfo?.name || ''}  •  ${new Date().toLocaleString('lt-LT')}`, pad + tw + 24 * pr, h - pad - 20 * pr);
+  g.fillText(caption, pad + 28 * pr + logoW, h - pad - bh / 2);
   out.toBlob((blob) => download(`${baseName()}_${stamp()}.png`, blob));
   toast('Ekrano kopija išsaugota');
 }

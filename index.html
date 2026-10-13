@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Atea 3D Matuoklis</title>
   <meta name="description" content="Fotogrametrijos 3D modelių peržiūra ir matavimai: atstumai, aukščiai, plotai, tūriai, profiliai." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2300573F'/%3E%3Cpath d='M8 22 L16 8 L24 22 Z' fill='none' stroke='%238DC63F' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='8' r='2.5' fill='white'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231F2326'/%3E%3Cpath d='M8 22 L16 8 L24 22 Z' fill='none' stroke='%23008B01' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='8' r='2.5' fill='white'/%3E%3C/svg%3E" />
 </head>
 <body>
   <div id="app">
     <!-- Viršutinė juosta -->
     <header class="topbar">
       <div class="brand">
-        <span class="brand-logo" aria-label="Atea">atea</span>
+        <span class="brand-logo" id="brand-logo" aria-label="ATEA"></span>
         <span class="brand-sep"></span>
         <span class="brand-title">3D Matuoklis</span>
       </div>
@@ -56,8 +56,8 @@
         <div class="empty-state" id="empty-state">
           <div class="empty-card">
             <div class="empty-icon" data-icon="cube"></div>
-            <h1>Atidarykite fotogrametrijos modelį</h1>
-            <p>Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
+            <h1>Matuokite fotogrametrijos modelius</h1>
+            <p>Atstumai, aukščiai, plotai, tūriai ir profiliai tiesiai 3D modelyje. Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
             <div class="empty-actions">
               <button class="btn btn-primary btn-lg" id="btn-open-2"><span data-icon="open"></span>Pasirinkti failus</button>
               <button class="btn btn-outline btn-lg" id="btn-demo"><span data-icon="mountain"></span>Demonstracinis modelis</button>
@@ -152,8 +152,8 @@
             <label class="row">Taškų dydis <input type="range" id="opt-point-size" min="1" max="12" step="0.5" value="2.5" /></label>
             <label class="row">Fonas
               <select id="opt-background">
-                <option value="dark">Tamsus</option>
-                <option value="green">Atea žalias</option>
+                <option value="atea">Atea žalias</option>
+                <option value="graphite">Grafitas</option>
                 <option value="light">Šviesus</option>
                 <option value="white">Baltas</option>
               </select>

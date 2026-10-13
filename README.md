@@ -58,4 +58,5 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/measurements.js` – matavimų tipai, skaičiavimai ir jų atvaizdavimas
 - `src/compute.js` – geometrija: plotai, plokštumos, tūrio ir paviršiaus skaičiavimas tinkleliu, profiliai
 - `src/main.js` – sąsaja, įrankių valdymas, eksportas
-- `src/style.css` – stiliai; Atea spalvos – `:root` kintamuosiuose (`--atea-green`, `--atea-lime` ir kt.)
+- `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
+- `src/logo.js` – ATEA žodinis ženklas (SVG, perpieštas; oficialų SVG galima įdėti vietoje `LOGO_PATHS`)
