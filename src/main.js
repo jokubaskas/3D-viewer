@@ -13,6 +13,8 @@ import { ProfileChart } from './profile.js';
 import { Gizmo } from './gizmo.js';
 import { createOdmUI } from './odm/ui.js';
 import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
+import { AiClient, AI_CLASSES } from './ai/client.js';
+import { renderTopDown } from './ai/ortho.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -22,6 +24,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 // ---------------------------------------------------------------------------
 const SETTINGS_KEY = 'atea3d.settings.v1';
 const settings = {
+  aiUrl: '', aiClasses: ['car', 'truck', 'bus', 'motorcycle'], aiThreshold: 0.5, aiOutlineKind: 'volume',
   coordOrder: 'ne', unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
   background: 'atea', pointSize: 2.5, viewMode: 'texture', grid: false,
 };
@@ -69,7 +72,8 @@ function toast(msg, type = 'info', ms = 3500) {
 // ---------------------------------------------------------------------------
 // Įrankių juosta
 // ---------------------------------------------------------------------------
-const TOOL_ORDER = [['navigate'], ['distance', 'polyline', 'height', 'angle', 'point'], ['area', 'volume', 'profile'], ['checkpoint', 'scale', 'level']];
+const TOOL_ORDER = [['navigate'], ['distance', 'polyline', 'height', 'angle', 'point'], ['area', 'volume', 'profile'], ['aiOutline', 'aiDetect'], ['checkpoint', 'scale', 'level']];
+const AI_DETECT_BTN = { short: 'Transp.', label: 'AI transporto aptikimas', key: 'X', icon: 'car', tip: 'Dirbtinis intelektas (RF-DETR) suranda automobilius, sunkvežimius ir autobusus visame modelyje ir pateikia jų sąrašą su koordinatėmis.' };
 const toolbar = $('#toolbar');
 const tipEl = document.createElement('div');
 tipEl.className = 'tool-tip';
@@ -79,12 +83,12 @@ document.body.append(tipEl);
 TOOL_ORDER.forEach((group, gi) => {
   if (gi) toolbar.insertAdjacentHTML('beforeend', '<div class="tool-sep"></div>');
   for (const id of group) {
-    const t = id === 'navigate' ? { short: 'Naršyti', label: 'Naršymas', key: 'Esc', icon: 'navigate', tip: 'Modelio apžiūra: sukimas, stūmimas, priartinimas.' } : TOOLS[id];
+    const t = id === 'navigate' ? { short: 'Naršyti', label: 'Naršymas', key: 'Esc', icon: 'navigate', tip: 'Modelio apžiūra: sukimas, stūmimas, priartinimas.' } : id === 'aiDetect' ? AI_DETECT_BTN : TOOLS[id];
     const b = document.createElement('button');
     b.className = 'tool-btn';
     b.dataset.tool = id;
     b.innerHTML = `<span data-icon="${t.icon}">${icon(t.icon)}</span><span class="tool-label">${t.short}</span>${t.key && t.key !== 'Esc' ? `<span class="tool-key">${t.key}</span>` : ''}`;
-    b.addEventListener('click', () => (id === 'navigate' ? tools.deactivate() : tools.activate(id)));
+    b.addEventListener('click', () => (id === 'navigate' ? tools.deactivate() : id === 'aiDetect' ? runDetection() : tools.activate(id)));
     b.addEventListener('mouseenter', () => {
       tipEl.innerHTML = `<b>${tr(t.label)}</b> <span style="opacity:.7">(${t.key})</span><br>${tr(t.tip)}`;
       const r = b.getBoundingClientRect();
@@ -96,7 +100,7 @@ TOOL_ORDER.forEach((group, gi) => {
     toolbar.append(b);
   }
 });
-$('#help-tools').innerHTML = Object.values(TOOLS).map((t) => `<li><span>${t.label}</span><kbd>${t.key}</kbd></li>`).join('');
+$('#help-tools').innerHTML = [...Object.values(TOOLS).filter((t) => t.key), AI_DETECT_BTN].map((t) => `<li><span>${t.label}</span><kbd>${t.key}</kbd></li>`).join('');
 
 // ---------------------------------------------------------------------------
 // Įrankių valdymas (taškų žymėjimas)
@@ -214,6 +218,7 @@ const tools = {
     $('#tool-hint-live').textContent = '';
     if (type === 'scale') return calibrate(pts);
     if (type === 'checkpoint') return askCheckpoint(pts[0]);
+    if (type === 'aiOutline') return aiOutline(pts[0]);
     if (type === 'level') return level(pts);
     const m = new Measurement(type, pts);
     addMeasurement(m, true);
@@ -391,6 +396,16 @@ function renderList() {
       ${desc.details.length ? `<dl class="m-details">${desc.details.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('')}</dl>` : ''}
     `;
     if (m.type === 'volume') el.append(volumeOptions(it));
+    if (m.type === 'detections' && m.options.items?.length) {
+      const b = document.createElement('div');
+      b.className = 'm-options';
+      b.innerHTML = `<button class="btn btn-sm btn-outline"><span data-icon="table">${icon('table')}</span>${tr('Objektų sąrašas (CSV)')}</button>`;
+      b.querySelector('button').addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportDetectionsCsv(m);
+      });
+      el.append(b);
+    }
     if (m.type === 'profile' && m.data?.samples) {
       const b = document.createElement('div');
       b.className = 'm-options';
@@ -510,6 +525,154 @@ function calibrate(pts) {
     toast(tr('Mastelis pritaikytas: koeficientas {k}', { k: units.calibration.toPrecision(6) }));
   };
 }
+
+// ---------------------------------------------------------------------------
+// Vietinis dirbtinis intelektas (deploy/ai): išmanus kontūras ir transporto aptikimas
+// ---------------------------------------------------------------------------
+const defaultAiUrl = () => (location.protocol === 'file:' ? 'http://localhost:8080/ai/' : './ai/');
+const aiClient = () => new AiClient(settings.aiUrl || defaultAiUrl());
+const metersToWorld = (m) => m / units.metersPerUnit;
+
+async function aiOutline(local) {
+  const P = viewer.localToWorld(local);
+  const box = viewer.worldBox;
+  const ext = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+  let S = Math.min(ext * 1.05, metersToWorld(80));
+  setLoading(true, tr('AI ieško objekto kontūro…'), 0.3);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const half = S / 2;
+      const img = await renderTopDown(viewer, { minX: P.x - half, maxX: P.x + half, minZ: P.z - half, maxZ: P.z + half, gsd: S / 1024, maxPx: 1024 });
+      const [px, py] = img.toPixel(P.x, P.z);
+      $('#loading-bar').style.width = `${40 + attempt * 20}%`;
+      const res = await aiClient().segment(img.blob, px, py);
+      // Kontūras siekia vaizdo kraštą – objektas didesnis, didiname sritį
+      if (res.touches_border && S < ext && attempt < 2) {
+        S = Math.min(S * 2.2, ext * 1.05);
+        continue;
+      }
+      const pts = res.polygon.map(([x, y]) => {
+        const [wx, wz] = img.toWorld(x, y);
+        let wy = viewer.topHeightAt(wx, wz);
+        if (!isFinite(wy)) wy = P.y;
+        return viewer.worldToLocal(new THREE.Vector3(wx, wy, wz));
+      });
+      if (pts.length < 3) throw new Error(tr('Objekto nepavyko atskirti'));
+      const kind = settings.aiOutlineKind === 'area' ? 'area' : 'volume';
+      const m = new Measurement(kind, pts, `${tr('AI')} ${tr(TOOLS[kind].label).toLowerCase()} ${items.length + 1}`);
+      addMeasurement(m, true);
+      toast(tr('AI kontūras sukurtas ({n} taškų). Jei reikia – spustelėkite kitoje objekto vietoje.', { n: pts.length }));
+      return;
+    }
+  } catch (e) {
+    toast(e.message, 'error', 9000);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function runDetection() {
+  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
+  tools.deactivate();
+  const classes = settings.aiClasses.length ? settings.aiClasses : ['car', 'truck', 'bus'];
+  const box = viewer.worldBox;
+  setLoading(true, tr('Ruošiamas vaizdas iš viršaus…'), 0.1);
+  try {
+    await new Promise((r) => setTimeout(r, 30));
+    const img = await renderTopDown(viewer, { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z, gsd: metersToWorld(0.06), maxPx: 6144 });
+    const gsdM = units.toMeters(img.gsd);
+    $('#loading-text').textContent = tr('AI ieško transporto… ({w}×{h} px, {g} cm/px)', { w: img.width, h: img.height, g: (gsdM * 100).toFixed(1) });
+    $('#loading-bar').style.width = '50%';
+    const res = await aiClient().detect(img.blob, { classes, threshold: settings.aiThreshold });
+    const det = res.detections || [];
+    if (!det.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
+    const lift = metersToWorld(0.25);
+    const itemsOut = det.map((d) => {
+      const [x0, y0, x1, y1] = d.box;
+      const [cx, cz] = img.toWorld((x0 + x1) / 2, (y0 + y1) / 2);
+      let cy = viewer.topHeightAt(cx, cz);
+      if (!isFinite(cy)) cy = box.min.y;
+      const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([px, py]) => {
+        const [wx, wz] = img.toWorld(px, py);
+        let wy = viewer.topHeightAt(wx, wz);
+        if (!isFinite(wy)) wy = cy;
+        return viewer.worldToLocal(new THREE.Vector3(wx, wy + lift, wz)).toArray();
+      });
+      return {
+        cls: d.class, score: d.score,
+        c: viewer.worldToLocal(new THREE.Vector3(cx, cy + lift, cz)).toArray(),
+        size: [units.toMeters((x1 - x0) * img.gsd), units.toMeters((y1 - y0) * img.gsd)],
+        corners,
+      };
+    });
+    const m = new Measurement('detections', itemsOut.map((it) => new THREE.Vector3(...it.c)));
+    m.options.items = itemsOut;
+    m.options.meta = { classes, threshold: settings.aiThreshold, gsd: gsdM, seconds: res.seconds };
+    addMeasurement(m, true);
+    toast(tr('AI rado objektų: {n} (per {s} s)', { n: itemsOut.length, s: res.seconds }));
+    if (gsdM > 0.15) toast(tr('Modelis didelis – vaizdo raiška {g} cm/px, maži objektai gali būti praleisti.', { g: (gsdM * 100).toFixed(0) }), 'info', 8000);
+  } catch (e) {
+    toast(e.message, 'error', 9000);
+  } finally {
+    setLoading(false);
+  }
+}
+
+function exportDetectionsCsv(m) {
+  const names = viewer.coordRows(new THREE.Vector3(...m.options.items[0].c), units, settings.coordOrder).map(([k]) => k.split(' ')[0]);
+  const rows = [[tr('Nr.'), tr('Klasė'), tr('Patikimumas'), ...names.map((n) => `${n} (${units.display})`), tr('Ilgis (m)'), tr('Plotis (m)')]];
+  m.options.items.forEach((it, i) => {
+    const cr = viewer.coordRows(new THREE.Vector3(...it.c), units, settings.coordOrder);
+    rows.push([i + 1, tr(AI_CLASSES[it.cls]?.lt || it.cls), units.num(it.score * 100, 0) + ' %', ...cr.map(([, v]) => units.num(v, 3)), units.num(it.size[1], 2), units.num(it.size[0], 2)]);
+  });
+  const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/\u00a0|\u202f/g, ' ')}"`).join(';')).join('\r\n');
+  download(`${baseName()}_ai_objektai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
+}
+
+// AI nustatymai
+function setupAiSettings() {
+  const url = $('#ai-url');
+  url.value = settings.aiUrl || defaultAiUrl();
+  url.addEventListener('change', () => {
+    settings.aiUrl = url.value.trim() === defaultAiUrl() ? '' : url.value.trim();
+    saveSettings();
+  });
+  $('#ai-classes').innerHTML = Object.entries(AI_CLASSES)
+    .map(([k, c]) => `<label class="check small"><input type="checkbox" value="${k}" ${settings.aiClasses.includes(k) ? 'checked' : ''}/> <span>${c.many}</span></label>`)
+    .join('');
+  $('#ai-classes').addEventListener('change', () => {
+    settings.aiClasses = [...$('#ai-classes').querySelectorAll('input:checked')].map((i) => i.value);
+    saveSettings();
+  });
+  const thr = $('#ai-threshold');
+  thr.value = Math.round(settings.aiThreshold * 100);
+  const thrLabel = () => ($('#ai-threshold-val').textContent = `${thr.value} %`);
+  thrLabel();
+  thr.addEventListener('input', () => {
+    settings.aiThreshold = +thr.value / 100;
+    thrLabel();
+    saveSettings();
+  });
+  $('#ai-outline-kind').value = settings.aiOutlineKind;
+  $('#ai-outline-kind').addEventListener('change', (e) => {
+    settings.aiOutlineKind = e.target.value;
+    saveSettings();
+  });
+  $('#ai-check').addEventListener('click', async () => {
+    const st = $('#ai-status');
+    st.textContent = tr('Jungiamasi…');
+    st.className = 'small muted';
+    try {
+      const h = await aiClient().health();
+      st.textContent = `● ${tr('Prisijungta')} · ${h.device.toUpperCase()}`;
+      st.className = 'small ok';
+    } catch (e) {
+      st.textContent = `● ${e.message}`;
+      st.className = 'small bad';
+    }
+  });
+}
+setupAiSettings();
 
 // ---------------------------------------------------------------------------
 // Kontroliniai taškai (tikslumo patikra ir pataisa)
@@ -1179,7 +1342,7 @@ $('#btn-help').addEventListener('click', () => $('#dlg-help').showModal());
 // ---------------------------------------------------------------------------
 // Klaviatūra
 // ---------------------------------------------------------------------------
-const KEY_TOOLS = Object.fromEntries(Object.entries(TOOLS).map(([id, t]) => [t.key.toLowerCase(), id]));
+const KEY_TOOLS = Object.fromEntries(Object.entries(TOOLS).filter(([, t]) => t.key).map(([id, t]) => [t.key.toLowerCase(), id]));
 window.addEventListener('keydown', (e) => {
   if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen) return;
   const k = e.key.toLowerCase();
@@ -1208,6 +1371,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === '1') viewer.setView('front');
   else if (k === '3') viewer.setView('right');
   else if (k === '5') viewer.setView('iso');
+  else if (k === 'x') runDetection();
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
 

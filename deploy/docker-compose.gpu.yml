@@ -9,3 +9,15 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+
+  ai:
+    build:
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu124
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

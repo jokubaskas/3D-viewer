@@ -26,6 +26,19 @@ services:
     expose:
       - "3000"
 
+  # Vietinė AI paslauga: transporto aptikimas ir išmanus kontūras (be interneto, be mokesčių)
+  ai:
+    build:
+      context: ./ai
+      args:
+        TORCH_INDEX: ${AI_TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
+        DETECTOR: ${AI_DETECTOR:-medium}
+    restart: unless-stopped
+    environment:
+      - ATEA_AI_THREADS=${AI_THREADS:-4}
+    expose:
+      - "8000"
+
   web:
     build:
       context: ..
@@ -33,6 +46,7 @@ services:
     restart: unless-stopped
     depends_on:
       - nodeodm
+      - ai
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}

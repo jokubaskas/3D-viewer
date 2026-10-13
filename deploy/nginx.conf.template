@@ -18,6 +18,15 @@ server {
     try_files $uri $uri/ /index.html;
   }
 
+  # Vietinė AI paslauga
+  location /ai/ {
+    proxy_pass http://ai:8000/;
+    proxy_http_version 1.1;
+    proxy_read_timeout 900s;
+    proxy_send_timeout 900s;
+    proxy_set_header Host $host;
+  }
+
   # NodeODM API per tą patį adresą (be CORS problemų)
   location /odm/ {
     set $args "${odm_token_prefix}${args}";
