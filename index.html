@@ -243,6 +243,23 @@
             <label class="row check"><input type="checkbox" id="opt-labels" checked /> Rodyti etiketes</label>
           </section>
           <section class="card">
+            <h3>Dirbtinis intelektas (vietinis)</h3>
+            <p class="muted small">Veikia jūsų serveryje (deploy/ai), be interneto ir be mokesčių. Modeliai: RF-DETR ir MobileSAM (Apache 2.0).</p>
+            <label class="row">Adresas <input id="ai-url" class="num wide" style="text-align:left;width:170px" /></label>
+            <div class="row"><button class="btn btn-sm btn-outline" id="ai-check">Tikrinti ryšį</button><span id="ai-status" class="small muted"></span></div>
+            <label class="row">AI kontūras kuria
+              <select id="ai-outline-kind">
+                <option value="volume">Tūrio matavimą</option>
+                <option value="area">Ploto matavimą</option>
+              </select>
+            </label>
+            <div class="row" style="flex-direction:column;align-items:flex-start;gap:4px">
+              <span>Ieškoti</span>
+              <div id="ai-classes" class="ai-classes"></div>
+            </div>
+            <label class="row">Patikimumo slenkstis <input type="range" id="ai-threshold" min="20" max="90" step="5" /> <span id="ai-threshold-val" class="small"></span></label>
+          </section>
+          <section class="card">
             <h3>Apie</h3>
             <p class="muted small">Atea 3D Matuoklis – fotogrametrijos modelių peržiūros ir matavimo įrankis. Visi duomenys apdorojami tik jūsų naršyklėje, niekur nesiunčiami.</p>
           </section>

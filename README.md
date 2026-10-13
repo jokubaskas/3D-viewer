@@ -42,6 +42,22 @@ Kiti patogumai:
 - Matavimų eksportas į **CSV** (Excel, lietuviškas formatas), išsaugojimas / įkėlimas **JSON**, ekrano kopija su etiketėmis (`P`).
 - Vienetai: m, cm, mm, km, ft; modelio vienetų ir mastelio nustatymai.
 
+## Dirbtinis intelektas (vietinis, nemokamas)
+
+Veikia jūsų serveryje (`deploy/ai`, Docker), be interneto ir be prenumeratų. Abu modeliai – **Apache 2.0** (galima naudoti komerciškai):
+
+| Įrankis | Klavišas | Modelis | Ką daro |
+|---|---|---|---|
+| **AI kontūras** | `I` | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) | Spustelite ant krūvos, stogo ar aikštelės – AI apibrėžia kontūrą ir sukuria tūrio (arba ploto) matavimą. ~1 s procesoriumi. |
+| **Transporto aptikimas** | `X` | [RF-DETR](https://github.com/roboflow/rf-detr) (Medium, COCO) | Suranda automobilius, sunkvežimius, autobusus (ir pasirinktinai žmones, dviračius…) visame modelyje; sąrašas su LKS-94 koordinatėmis ir CSV. |
+
+Kaip veikia: naršyklė iš 3D modelio nupiešia vaizdą iš viršaus (kaip ortofoto, ~6 cm/px), AI paslauga grąžina pikselių koordinates,
+o programa jas paverčia modelio / LKS-94 koordinatėmis ir aukščiais.
+Nustatymuose: AI adresas, ieškomos klasės, patikimumo slenkstis, ką kuria AI kontūras (tūrį ar plotą).
+
+Pastabos: RF-DETR apmokytas su COCO (ne drono) vaizdais – automobilius iš viršaus randa gerai, bet retesnę techniką (ekskavatorius ir pan.) atpažins tik papildomai apmokius su savais vaizdais.
+YOLO (Ultralytics) sąmoningai nenaudojamas dėl AGPL licencijos.
+
 ## 3D modelio kūrimas iš drono nuotraukų
 
 Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
@@ -124,4 +140,6 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)
 - `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai
-- `deploy/` – Docker Compose: NodeODM + nginx su programa
+- `deploy/` – Docker Compose: NodeODM + AI paslauga + nginx su programa
+- `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`)
+- `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas

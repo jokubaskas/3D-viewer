@@ -25,7 +25,7 @@ if not exist ".env" (
 )
 
 echo.
-echo Paleidziama (pirma karta atsisiuncia ~4 GB, gali uztrukti 10-20 min.)...
+echo Paleidziama (pirma karta atsisiuncia ~6 GB: OpenDroneMap + AI modeliai, gali uztrukti 15-30 min.)...
 echo Jei serveris jau veike, jis bus atnaujintas.
 docker compose up -d --build
 if errorlevel 1 (

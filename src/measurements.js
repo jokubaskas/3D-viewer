@@ -9,6 +9,7 @@ import {
   sampleGrid, surfaceAreaFromGrid, volumeFromGrid, sampleProfile,
 } from './compute.js';
 import { t } from './i18n.js';
+import { AI_CLASSES as AI_CLASS_NAMES } from './ai/client.js';
 
 /** Įrankių aprašai. min/max – taškų skaičius; auto – baigti automatiškai pasiekus max. */
 export const TOOLS = {
@@ -28,6 +29,9 @@ export const TOOLS = {
     hint: 'Apibrėžkite kontūrą ant žemės aplink krūvą ar duobę. Baigti – pirmas taškas / Enter.', tip: 'Krūvos ar iškasos tūris: pylimas, iškasa ir grynasis tūris pagal pasirinktą pagrindą. Taip pat masė pagal tankį.' },
   profile: { label: 'Aukščio profilis', short: 'Profilis', key: 'R', icon: 'profile', color: '#3fe0d0', min: 2, max: Infinity,
     hint: 'Nubrėžkite liniją (2+ taškai). Baigti – Enter arba dvigubas spustelėjimas.', tip: 'Reljefo pjūvis palei liniją su aukščio grafiku apačioje.' },
+  aiOutline: { label: 'AI kontūras', short: 'AI kont.', key: 'I', icon: 'magic', color: '#b388ff', min: 1, max: 1, special: true,
+    hint: 'Spustelėkite ant krūvos ar kito objekto – AI pats apibrėš jo kontūrą ir apskaičiuos tūrį.', tip: 'Dirbtinis intelektas (MobileSAM) vienu spustelėjimu apibrėžia krūvos, stogo ar aikštelės kontūrą ir sukuria tūrio arba ploto matavimą.' },
+  detections: { label: 'AI aptikimas', short: 'AI', key: '', icon: 'car', color: '#00e5ff', min: 0, max: 0, special: true, hint: '', tip: '' },
   checkpoint: { label: 'Kontrolinis taškas', short: 'Kontrol.', key: 'C', icon: 'target', color: '#ff5fd2', min: 1, max: 1,
     hint: 'Spustelėkite ant žinomo taško (GCP, ženklo) modelyje ir įveskite jo LKS-94 koordinates.', tip: 'Tikslumo patikra: modelio ir geodeziškai išmatuoto taško skirtumai (ΔX, ΔY, ΔH). Iš kelių taškų galima pritaikyti pataisą.' },
   scale: { label: 'Mastelis', short: 'Mastelis', key: 'S', icon: 'scale', color: '#ff5d8f', min: 2, max: 2, special: true,
@@ -182,6 +186,8 @@ export async function computeMeasurement(m, viewer, settings, onProgress, signal
       }
       return { ...q, samples: prof.samples, minY: Math.min(...ys), maxY: Math.max(...ys), gain, loss, maxSlope: maxSlope * 100 };
     }
+    case 'detections':
+      return { items: m.options.items || [] };
     default:
       return q;
   }
@@ -303,6 +309,19 @@ export function describe(m, viewer, U, settings, live = false) {
       if (d.coverage < 0.97) out.details.push([t('Paviršiaus padengimas'), U.fmtPercent(d.coverage * 100)]);
       if (d.baseRms != null) out.details.push([t('Pagrindo nuokrypis (RMS)'), U.fmtLen(d.baseRms)]);
       out.labels.push({ pos: centroidOnSurface(L), text: `${out.value}` });
+      break;
+    }
+    case 'detections': {
+      const items = d.items || [];
+      const counts = {};
+      items.forEach((it) => (counts[it.cls] = (counts[it.cls] || 0) + 1));
+      out.value = t('{n} obj.', { n: items.length });
+      out.details = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => [t(AI_CLASS_NAMES[c]?.many || c), String(n)]);
+      if (items.length) out.details.push([t('Vidutinis patikimumas'), U.fmtPercent((items.reduce((a, it) => a + it.score, 0) / items.length) * 100)]);
+      if (items.length <= 80)
+        items.forEach((it) => out.labels.push({ pos: new THREE.Vector3(...it.c), text: `${t(AI_CLASS_NAMES[it.cls]?.lt || it.cls)} ${Math.round(it.score * 100)}%`, sub: true, color: AI_CLASS_NAMES[it.cls]?.color }));
       break;
     }
     case 'profile': {
@@ -489,14 +508,20 @@ export class MeasurementVisual {
         this._line(L, color, { width: 2, closed });
         if (closed) this._fill(L, color, 0.2);
         break;
+      case 'detections':
+        for (const it of m.options.items || []) {
+          const c = AI_CLASS_NAMES[it.cls]?.color || color;
+          this._line(it.corners.map((p) => new THREE.Vector3(...p)), c, { width: selected ? 3 : 2, closed: true });
+        }
+        break;
       default:
         this._line(L, color, { width });
     }
-    this._markers(L, color, selected ? 13 : 11);
+    if (m.type !== 'detections') this._markers(L, color, selected ? 13 : 11);
 
     if (desc) {
       desc.labels.forEach((l, i) =>
-        this._label(l.pos, l.text, color, { sub: l.sub, preview, selected, name: showName && i === desc.labels.length - 1 ? m.name : null }),
+        this._label(l.pos, l.text, l.color || color, { sub: l.sub, preview, selected, name: showName && i === desc.labels.length - 1 ? m.name : null }),
       );
     }
     v.requestRender();
