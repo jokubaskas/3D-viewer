@@ -26,6 +26,7 @@ if not exist ".env" (
 
 echo.
 echo Paleidziama (pirma karta atsisiuncia ~4 GB, gali uztrukti 10-20 min.)...
+echo Jei serveris jau veike, jis bus atnaujintas.
 docker compose up -d --build
 if errorlevel 1 (
   echo [KLAIDA] Nepavyko paleisti. Perziurekite klaidas auksciau.
@@ -36,8 +37,8 @@ if errorlevel 1 (
 echo.
 echo ============================================================
 echo  Paruosta! Programa: http://localhost:8080
-echo  Programoje "Is nuotrauku" - Adresas: ./odm/
-echo  Raktas (nukopijuokite i programa):
+echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
+echo  Raktas (reikia tik jungiantis tiesiogiai, ne per localhost:8080):
 for /f "tokens=2 delims==" %%a in ('findstr /b "NODEODM_TOKEN=" .env') do echo     %%a
 echo  Sustabdyti: docker compose down  (siame aplanke)
 echo ============================================================

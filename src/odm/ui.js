@@ -170,10 +170,10 @@ export function createOdmUI(app) {
         Eilėje užduočių: ${esc(i.taskQueueCount)}${i.maxImages ? ` · Maks. nuotraukų: ${esc(i.maxImages)}` : ''}`;
       return i;
     } catch (e) {
-      st.textContent = '● Nepavyko prisijungti';
+      st.textContent = /rakt/i.test(e.message) ? '● Raktas netinka' : /paleidžiamas/.test(e.message) ? '● Serveris paleidžiamas' : '● Nepavyko prisijungti';
       st.className = 'small bad';
       $('#odm-server-info').textContent = `${e.message.replace(/[.?!]?$/, (m) => m || ".")} Instrukcija – README skyrius „Serverio diegimas“.`;
-      if (!quiet) app.toast('Nepavyko prisijungti prie apdorojimo serverio', 'error');
+      if (!quiet) app.toast(e.message, 'error', 8000);
       return null;
     }
   }
