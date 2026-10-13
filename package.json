@@ -1,0 +1,21 @@
+{
+  "name": "atea-3d-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Atea 3D fotogrametrijos modelių peržiūros ir matavimo programa",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --mode single",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.169.0",
+    "three-mesh-bvh": "^0.8.3"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10",
+    "vite-plugin-singlefile": "^2.0.3"
+  }
+}
