@@ -1,0 +1,11 @@
+# NVIDIA GPU pagreitinimas (reikia nvidia-container-toolkit)
+services:
+  nodeodm:
+    image: opendronemap/nodeodm:gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

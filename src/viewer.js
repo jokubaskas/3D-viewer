@@ -125,6 +125,9 @@ export class Viewer extends EventTarget {
     this.meshes = [];
     this.pointClouds = [];
     this.center = new THREE.Vector3(); // originalių koordinačių centras
+    this.datumShift = new THREE.Vector3(); // pataisa pagal kontrolinius taškus (originaliomis ašimis)
+    this.crs = null;
+    this.heightSystem = null;
     this.upAxis = 'z';
     this.levelQuat = new THREE.Quaternion();
     this.viewMode = 'texture';
@@ -225,8 +228,11 @@ export class Viewer extends EventTarget {
    * @param {THREE.Object3D} object
    * @param {THREE.Vector3} originOffset - originalių koordinačių poslinkis (pvz. LAS/XYZ)
    */
-  async setModel(object, originOffset, upAxis, onStatus) {
+  async setModel(object, originOffset, upAxis, onStatus, { crs = null, heightSystem = null } = {}) {
     this.clearModel();
+    this.crs = crs;
+    this.heightSystem = heightSystem;
+    this.datumShift.set(0, 0, 0);
     this.model = object;
     object.updateMatrixWorld(true);
 
@@ -324,8 +330,9 @@ export class Viewer extends EventTarget {
   worldToLocal(v) {
     return this.modelRoot.worldToLocal(v.clone());
   }
+  /** Aukščio ašies centras + poslinkis pagal kontrolinius taškus. */
   get upCenter() {
-    return this.upAxis === 'z' ? this.center.z : this.center.y;
+    return this.upAxis === 'z' ? this.center.z + this.datumShift.z : this.center.y + this.datumShift.y;
   }
   /**
    * Rodomas aukštis (rodomais vienetais). Kalibravimo mastelis taikomas tik
@@ -339,8 +346,25 @@ export class Viewer extends EventTarget {
   }
   /** Rodomos koordinatės (originalioje failo sistemoje) iš lokalių. */
   dispCoords(local, U) {
-    const c = this.center;
+    const c = this.center.clone().add(this.datumShift);
     return new THREE.Vector3(U.lenRaw(c.x) + U.len(local.x), U.lenRaw(c.y) + U.len(local.y), U.lenRaw(c.z) + U.len(local.z));
+  }
+  /** Rodomos koordinatės -> lokalios (atvirkštinė dispCoords). */
+  localFromDisp(d, U) {
+    const c = this.center.clone().add(this.datumShift);
+    const k = U.len(1);
+    return new THREE.Vector3((d.x - U.lenRaw(c.x)) / k, (d.y - U.lenRaw(c.y)) / k, (d.z - U.lenRaw(c.z)) / k);
+  }
+  /**
+   * Koordinačių eilutės rodymui. LKS-94 geodeziniu žymėjimu X – šiaurė, Y – rytai.
+   * @returns {[string, number][]}
+   */
+  coordRows(local, U, order = 'ne') {
+    const o = this.dispCoords(local, U);
+    const hLabel = this.heightSystem ? `H (${this.heightSystem})` : 'Z';
+    if (this.crs?.geodetic && order === 'ne') return [['X (šiaurė)', o.y], ['Y (rytai)', o.x], [hLabel, o.z]];
+    if (this.crs?.geodetic) return [['E (rytai)', o.x], ['N (šiaurė)', o.y], [hLabel, o.z]];
+    return [['X', o.x], ['Y', o.y], [hLabel, o.z]];
   }
 
   // -------------------------------------------------------------------------

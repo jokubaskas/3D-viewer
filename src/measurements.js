@@ -27,11 +27,24 @@ export const TOOLS = {
     hint: 'Apibrėžkite kontūrą ant žemės aplink krūvą ar duobę. Baigti – pirmas taškas / Enter.', tip: 'Krūvos ar iškasos tūris: pylimas, iškasa ir grynasis tūris pagal pasirinktą pagrindą. Taip pat masė pagal tankį.' },
   profile: { label: 'Aukščio profilis', short: 'Profilis', key: 'R', icon: 'profile', color: '#3fe0d0', min: 2, max: Infinity,
     hint: 'Nubrėžkite liniją (2+ taškai). Baigti – Enter arba dvigubas spustelėjimas.', tip: 'Reljefo pjūvis palei liniją su aukščio grafiku apačioje.' },
+  checkpoint: { label: 'Kontrolinis taškas', short: 'Kontrol.', key: 'C', icon: 'target', color: '#ff5fd2', min: 1, max: 1,
+    hint: 'Spustelėkite ant žinomo taško (GCP, ženklo) modelyje ir įveskite jo LKS-94 koordinates.', tip: 'Tikslumo patikra: modelio ir geodeziškai išmatuoto taško skirtumai (ΔX, ΔY, ΔH). Iš kelių taškų galima pritaikyti pataisą.' },
   scale: { label: 'Mastelis', short: 'Mastelis', key: 'S', icon: 'scale', color: '#ff5d8f', min: 2, max: 2, special: true,
     hint: 'Pažymėkite du taškus, tarp kurių atstumas žinomas.', tip: 'Kalibruokite modelio mastelį pagal žinomą atstumą (pvz. matavimo liniuotė, GCP).' },
   level: { label: 'Išlyginti', short: 'Išlyginti', key: 'L', icon: 'level', color: '#c9f27b', min: 3, max: Infinity, special: true,
     hint: 'Pažymėkite 3 ar daugiau taškų ant žemės / grindų. Baigti – Enter.', tip: 'Pasukite modelį taip, kad pažymėta plokštuma taptų horizontali.' },
 };
+
+/**
+ * Kontrolinio taško liekamoji paklaida rodomais vienetais (E, N, H ašimis).
+ * known – originaliais modelio vienetais (be kalibravimo), kaip ir viewer.center.
+ */
+export function checkpointResidual(m, viewer, U) {
+  const k = m.options.known;
+  const meas = viewer.dispCoords(m.points[0], U);
+  const known = new THREE.Vector3(U.lenRaw(k.x), U.lenRaw(k.y), U.lenRaw(k.z));
+  return { dx: meas.x - known.x, dy: meas.y - known.y, dz: meas.z - known.z, meas, known };
+}
 
 export const BASE_MODES = {
   fit: 'Plokštuma per kontūrą',
@@ -233,14 +246,29 @@ export function describe(m, viewer, U, settings, live = false) {
       break;
     }
     case 'point': {
-      const o = viewer.dispCoords(L[0], U);
-      out.value = `Z ${U.fmtDisp(viewer.dispElev(W[0].y, U))}`;
-      out.details = [
-        ['X', U.num(o.x, Math.max(U.precision, 3))],
-        ['Y', U.num(o.y, Math.max(U.precision, 3))],
-        ['Z', U.num(o.z, Math.max(U.precision, 3))],
-      ];
+      const rows = viewer.coordRows(L[0], U, settings.coordOrder);
+      out.value = `${rows[2][0].split(' ')[0]} ${U.fmtDisp(viewer.dispElev(W[0].y, U))}`;
+      out.details = rows.map(([k, v]) => [k, U.num(v, Math.max(U.precision, 3))]);
       out.labels.push({ pos: L[0].clone(), text: out.value });
+      break;
+    }
+    case 'checkpoint': {
+      const k = m.options.known;
+      if (!k) break;
+      const r = checkpointResidual(m, viewer, U);
+      const p3 = Math.max(U.precision, 3);
+      const sgn = (v) => (v > 0 ? '+' : '') + U.num(v, p3);
+      out.value = `ΔH ${sgn(r.dz)} ${U.display}`;
+      const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
+      out.details = [
+        [geo ? 'ΔX (šiaurė)' : 'ΔX', `${sgn(geo ? r.dy : r.dx)} ${U.display}`],
+        [geo ? 'ΔY (rytai)' : 'ΔY', `${sgn(geo ? r.dx : r.dy)} ${U.display}`],
+        ['Δ plokštumoje', U.fmtDisp(Math.hypot(r.dx, r.dy), p3)],
+        ['Δ 3D', U.fmtDisp(Math.hypot(r.dx, r.dy, r.dz), p3)],
+        ['Žinomas taškas', (geo ? [r.known.y, r.known.x, r.known.z] : [r.known.x, r.known.y, r.known.z]).map((v) => U.num(v, p3)).join('; ')],
+        ['Modelyje', (geo ? [r.meas.y, r.meas.x, r.meas.z] : [r.meas.x, r.meas.y, r.meas.z]).map((v) => U.num(v, p3)).join('; ')],
+      ];
+      out.labels.push({ pos: L[0].clone(), text: `${m.name}: ${out.value}` });
       break;
     }
     case 'area': {

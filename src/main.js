@@ -6,10 +6,12 @@ import { createDemoModel } from './demo.js';
 import { units } from './units.js';
 import { hydrateIcons, icon } from './icons.js';
 import { logoSvg, drawLogo } from './logo.js';
-import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId } from './measurements.js';
+import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId, checkpointResidual } from './measurements.js';
 import { fitPlaneNormal } from './compute.js';
 import { ProfileChart } from './profile.js';
 import { Gizmo } from './gizmo.js';
+import { createOdmUI } from './odm/ui.js';
+import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -19,7 +21,7 @@ const $$ = (s) => [...document.querySelectorAll(s)];
 // ---------------------------------------------------------------------------
 const SETTINGS_KEY = 'atea3d.settings.v1';
 const settings = {
-  unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
+  coordOrder: 'ne', unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
   background: 'atea', pointSize: 2.5, viewMode: 'texture', grid: false,
 };
 try {
@@ -66,7 +68,7 @@ function toast(msg, type = 'info', ms = 3500) {
 // ---------------------------------------------------------------------------
 // Įrankių juosta
 // ---------------------------------------------------------------------------
-const TOOL_ORDER = [['navigate'], ['distance', 'polyline', 'height', 'angle', 'point'], ['area', 'volume', 'profile'], ['scale', 'level']];
+const TOOL_ORDER = [['navigate'], ['distance', 'polyline', 'height', 'angle', 'point'], ['area', 'volume', 'profile'], ['checkpoint', 'scale', 'level']];
 const toolbar = $('#toolbar');
 const tipEl = document.createElement('div');
 tipEl.className = 'tool-tip';
@@ -210,6 +212,7 @@ const tools = {
     this._updateUI();
     $('#tool-hint-live').textContent = '';
     if (type === 'scale') return calibrate(pts);
+    if (type === 'checkpoint') return askCheckpoint(pts[0]);
     if (type === 'level') return level(pts);
     const m = new Measurement(type, pts);
     addMeasurement(m, true);
@@ -272,9 +275,9 @@ function updateStatusCoords(hit) {
     el.textContent = 'X — Y — Z —';
     return;
   }
-  const o = viewer.dispCoords(hit.local, units);
   const p = Math.max(units.precision, 2);
-  el.textContent = `X ${units.num(o.x, p)}   Y ${units.num(o.y, p)}   Z ${units.num(o.z, p)} ${units.display}${hit.snapped ? '   ◆ viršūnė' : ''}`;
+  const rows = viewer.coordRows(hit.local, units, settings.coordOrder);
+  el.textContent = `${rows.map(([k, v]) => `${k.split(' ')[0]} ${units.num(v, p)}`).join('   ')} ${units.display}${viewer.crs ? `   ${viewer.crs.name.split(' (')[0]}` : ''}${hit.snapped ? '   ◆ viršūnė' : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +360,7 @@ function removeMeasurement(id) {
 }
 
 function renderList() {
+  renderCheckpoints();
   const list = $('#m-list');
   $('#m-count').textContent = items.length;
   $('#m-empty').hidden = items.length > 0;
@@ -506,6 +510,93 @@ function calibrate(pts) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Kontroliniai taškai (tikslumo patikra ir pataisa)
+// ---------------------------------------------------------------------------
+function askCheckpoint(local) {
+  const dlg = $('#dlg-checkpoint');
+  const rows = viewer.coordRows(local, units, settings.coordOrder);
+  const inputs = ['#cp-a', '#cp-b', '#cp-c'].map((q) => $(q));
+  rows.forEach(([k, v], i) => {
+    $(`#cp-l${i}`).textContent = `${k} (${units.display})`;
+    inputs[i].value = '';
+    inputs[i].placeholder = units.num(v, 3).replace(/\s/g, '');
+  });
+  const n = items.filter((i) => i.m.type === 'checkpoint').length + 1;
+  $('#cp-name').value = `KT${n}`;
+  dlg.returnValue = '';
+  dlg.showModal();
+  setTimeout(() => inputs[0].focus(), 50);
+  dlg.onclose = () => {
+    if (dlg.returnValue !== 'ok') return;
+    const vals = inputs.map((el) => parseFloat(String(el.value).replace(',', '.').replace(/\s/g, '')));
+    if (vals.some((v) => !isFinite(v))) return toast('Įveskite visas tris koordinates', 'error');
+    // Rodomos ašys -> E, N, H
+    const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
+    const [E, N, H] = geo ? [vals[1], vals[0], vals[2]] : vals;
+    const raw = (v) => v / units.lenRaw(1);
+    const m = new Measurement('checkpoint', [local], $('#cp-name').value.trim() || `KT${n}`);
+    m.options.known = { x: raw(E), y: raw(N), z: raw(H) };
+    addMeasurement(m, true);
+    renderCheckpoints();
+  };
+}
+
+function checkpointStats() {
+  const cps = items.filter((i) => i.m.type === 'checkpoint' && i.m.options.known).map((i) => checkpointResidual(i.m, viewer, units));
+  if (!cps.length) return null;
+  const mean = (f) => cps.reduce((a, r) => a + f(r), 0) / cps.length;
+  const rms = (f) => Math.sqrt(mean((r) => f(r) ** 2));
+  return {
+    n: cps.length,
+    mean: { x: mean((r) => r.dx), y: mean((r) => r.dy), z: mean((r) => r.dz) },
+    rmsXY: rms((r) => Math.hypot(r.dx, r.dy)),
+    rmsZ: rms((r) => r.dz),
+  };
+}
+
+function renderCheckpoints() {
+  const el = $('#cp-summary');
+  if (!el) return;
+  const st = viewer.hasModel ? checkpointStats() : null;
+  const shifted = viewer.datumShift.lengthSq() > 0;
+  const p3 = Math.max(units.precision, 3);
+  const f = (v) => `${v > 0 ? '+' : ''}${units.num(v, p3)} ${units.display}`;
+  const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
+  el.innerHTML = st
+    ? `<dl class="kv">
+        <dt>Taškų</dt><dd>${st.n}</dd>
+        <dt>RMS plokštumoje</dt><dd>${units.fmtDisp(st.rmsXY, p3)}</dd>
+        <dt>RMS aukščio</dt><dd>${units.fmtDisp(st.rmsZ, p3)}</dd>
+        <dt>Vid. ${geo ? 'ΔX (š.)' : 'ΔX'}</dt><dd>${f(geo ? st.mean.y : st.mean.x)}</dd>
+        <dt>Vid. ${geo ? 'ΔY (r.)' : 'ΔY'}</dt><dd>${f(geo ? st.mean.x : st.mean.y)}</dd>
+        <dt>Vid. ΔH</dt><dd>${f(st.mean.z)}</dd>
+      </dl>
+      <div class="pane-actions" style="margin-top:10px">
+        <button class="btn btn-sm btn-primary" data-cp="h">Taikyti ΔH pataisą</button>
+        <button class="btn btn-sm btn-outline" data-cp="xyz">Taikyti X, Y, H</button>
+      </div>`
+    : '<p class="muted small">Pažymėkite modelyje geodeziškai išmatuotus taškus įrankiu <b>Kontrolinis taškas</b> <kbd>C</kbd> – pamatysite tikslumą ir galėsite pritaikyti aukščio pataisą (pvz. geoido N).</p>';
+  if (shifted) el.insertAdjacentHTML('beforeend', `<p class="small muted">Pritaikyta pataisa. <button class="btn btn-sm btn-ghost" data-cp="reset">Atstatyti</button></p>`);
+  el.querySelectorAll('[data-cp]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (b.dataset.cp === 'reset') viewer.datumShift.set(0, 0, 0);
+      else {
+        const k = 1 / units.lenRaw(1);
+        viewer.datumShift.z -= st.mean.z * k;
+        if (b.dataset.cp === 'xyz') {
+          viewer.datumShift.x -= st.mean.x * k;
+          viewer.datumShift.y -= st.mean.y * k;
+        }
+        toast('Pataisa pritaikyta – visos koordinatės ir aukščiai perskaičiuoti');
+      }
+      redrawAll();
+      updateModelInfo();
+      renderCheckpoints();
+    }),
+  );
+}
+
 function updateScaleBadge() {
   const b = $('#scale-badge');
   b.hidden = Math.abs(units.calibration - 1) < 1e-9;
@@ -540,7 +631,7 @@ function guessUp(object, suggested) {
   return s.z <= s.y ? 'z' : 'y';
 }
 
-async function openFiles(files) {
+async function openFiles(files, opts = {}) {
   if (!files || !files.length) return;
   tools.deactivate();
   setLoading(true, 'Įkeliama…', 0);
@@ -549,8 +640,11 @@ async function openFiles(files) {
       onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
       onStatus: (t) => ($('#loading-text').textContent = t),
     });
-    await showModel(res.object, res.originOffset, guessUp(res.object, res.suggestedUp), res.name, res.format);
-    res.warnings.forEach((w) => toast(w, 'error', 7000));
+    await showModel(res.object, res.originOffset, guessUp(res.object, res.suggestedUp), opts.name || res.name, res.format, {
+      crs: res.crs,
+      heightSystem: opts.heightSystem ?? null,
+    });
+    res.warnings.forEach((w) => toast(w, /perskaičiuot/.test(w) ? 'info' : 'error', 7000));
   } catch (err) {
     console.error(err);
     toast(`Nepavyko atidaryti: ${err.message || err}`, 'error', 7000);
@@ -559,12 +653,13 @@ async function openFiles(files) {
   }
 }
 
-async function showModel(object, offset, up, name, format) {
+async function showModel(object, offset, up, name, format, { crs = null, heightSystem = null } = {}) {
   clearMeasurements();
   units.calibration = 1;
   $('#opt-scale').value = 1;
   updateScaleBadge();
-  await viewer.setModel(object, offset, up, (t) => ($('#loading-text').textContent = t));
+  await viewer.setModel(object, offset, up, (t) => ($('#loading-text').textContent = t), { crs, heightSystem });
+  renderCheckpoints();
   viewer.setViewMode(settings.viewMode);
   modelInfo = { name, format };
   $('#file-name').textContent = name;
@@ -594,7 +689,8 @@ function updateModelInfo() {
   if (s.triangles) rows.push(['Trikampiai', fmtInt(s.triangles)], ['Viršūnės', fmtInt(s.vertices)]);
   if (s.points) rows.push(['Taškai', fmtInt(s.points)]);
   if (s.textures) rows.push(['Tekstūros', String(s.textures)]);
-  rows.push(['Plotis (X)', units.fmtLen(size.x)], ['Ilgis (Y)', units.fmtLen(size.z)], ['Aukštis (Z)', units.fmtLen(size.y)]);
+  if (viewer.crs?.geodetic) rows.push(['Ilgis rytų kryptimi', units.fmtLen(size.x)], ['Ilgis šiaurės kryptimi', units.fmtLen(size.z)], ['Aukščių skirtumas', units.fmtLen(size.y)]);
+  else rows.push(['Plotis (X)', units.fmtLen(size.x)], ['Ilgis (Y)', units.fmtLen(size.z)], ['Aukštis (Z)', units.fmtLen(size.y)]);
   rows.push(['Žemiausias taškas', units.fmtDisp(viewer.dispElev(viewer.worldBox.min.y, units))]);
   rows.push(['Aukščiausias taškas', units.fmtDisp(viewer.dispElev(viewer.worldBox.max.y, units))]);
   if (s.triangles && s.triangles < 8e6) {
@@ -602,8 +698,10 @@ function updateModelInfo() {
     rows.push(['Paviršiaus plotas', units.fmtArea(area)]);
     rows.push(['Tūris (jei uždaras)', units.fmtVol(volume)]);
   }
-  const c = viewer.center;
-  rows.push(['Centras', `${units.num(c.x, 2)}; ${units.num(c.y, 2)}; ${units.num(c.z, 2)}`]);
+  const cr = viewer.coordRows(viewer.worldToLocal(viewer.worldBox.getCenter(new THREE.Vector3())), units, settings.coordOrder);
+  rows.push(['Centras', cr.map(([k, v]) => `${k.split(' ')[0]} ${units.num(v, 2)}`).join('; ')]);
+  rows.unshift(['Koordinačių sistema', viewer.crs?.name || 'Vietinė / nežinoma'], ['Aukščių sistema', viewer.heightSystem || '—']);
+  if (viewer.datumShift.lengthSq() > 0) rows.push(['Pritaikyta pataisa', `${units.num(units.lenRaw(viewer.datumShift.x), 3)}; ${units.num(units.lenRaw(viewer.datumShift.y), 3)}; ${units.num(units.lenRaw(viewer.datumShift.z), 3)}`]);
   $('#model-info').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
 }
 
@@ -807,6 +905,13 @@ prec.addEventListener('change', () => {
   redrawAll();
   updateModelInfo();
 });
+$('#opt-coord-order').value = settings.coordOrder;
+$('#opt-coord-order').addEventListener('change', (e) => {
+  settings.coordOrder = e.target.value;
+  saveSettings();
+  redrawAll();
+  updateModelInfo();
+});
 $('#opt-snap').checked = settings.snap;
 $('#opt-snap').addEventListener('change', (e) => {
   settings.snap = e.target.checked;
@@ -870,12 +975,12 @@ const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 
 $('#btn-export-csv').addEventListener('click', () => {
   if (!items.length) return toast('Nėra matavimų eksportui');
-  const rows = [['Nr.', 'Pavadinimas', 'Tipas', 'Reikšmė', 'Detalės', 'Taškai (X Y Z)']];
+  const axisNames = viewer.hasModel && items.length ? viewer.coordRows(items[0].m.points[0], units, settings.coordOrder).map(([k]) => k.split(' ')[0]).join(' ') : 'X Y Z';
+  const rows = [['Nr.', 'Pavadinimas', 'Tipas', 'Reikšmė', 'Detalės', `Taškai (${axisNames}${viewer.crs ? ', ' + viewer.crs.name : ''})`]];
   items.forEach(({ m }, i) => {
     const d = describe(m, viewer, units, settings);
     const pts = m.points.map((p) => {
-      const o = viewer.dispCoords(p, units);
-      return [o.x, o.y, o.z].map((v) => units.num(v, 3)).join(' ');
+      return viewer.coordRows(p, units, settings.coordOrder).map(([, v]) => units.num(v, 3)).join(' ');
     });
     rows.push([i + 1, m.name, TOOLS[m.type].label, d.value, d.details.map(([k, v]) => `${k}: ${v}`).join(' | '), pts.join(' ; ')]);
   });
@@ -889,6 +994,8 @@ $('#btn-export-json').addEventListener('click', () => {
     app: 'Atea 3D Matuoklis', version: 1, model: modelInfo?.name, created: new Date().toISOString(),
     calibration: units.calibration, modelUnit: units.modelUnit, upAxis: viewer.upAxis,
     level: viewer.levelQuat.toArray(),
+    crs: viewer.crs?.id || null,
+    datumShift: viewer.datumShift.toArray(),
     measurements: items.map(({ m }) => ({
       type: m.type, name: m.name, visible: m.visible, options: m.options,
       points: m.points.map((p) => viewer.localToOriginal(p).toArray()),
@@ -912,6 +1019,7 @@ $('#json-input').addEventListener('change', async (e) => {
       viewer.setUpAxis(data.upAxis, false);
       $$('#up-axis button').forEach((b) => b.classList.toggle('active', b.dataset.up === viewer.upAxis));
     }
+    if (Array.isArray(data.datumShift)) viewer.datumShift.fromArray(data.datumShift);
     if (Array.isArray(data.level)) {
       viewer.levelQuat.fromArray(data.level);
       viewer._applyOrientation();
@@ -1020,15 +1128,46 @@ $('#profile-close').addEventListener('click', () => profile.hide());
 $('#profile-csv').addEventListener('click', () => {
   const m = profile.current;
   if (!m?.data?.samples) return;
-  const rows = [['Atstumas', 'X', 'Y', 'Aukštis'].map((h) => `${h} (${units.display})`)];
+  const local0 = viewer.worldToLocal(new THREE.Vector3(m.data.samples[0].x, 0, m.data.samples[0].z));
+  const names = viewer.coordRows(local0, units, settings.coordOrder).map(([k]) => k.split(' ')[0]);
+  const rows = [['Atstumas', names[0], names[1], 'Aukštis'].map((h) => `${h} (${units.display})`)];
   for (const s of m.data.samples) {
     const local = viewer.worldToLocal(new THREE.Vector3(s.x, isNaN(s.y) ? 0 : s.y, s.z));
-    const o = viewer.dispCoords(local, units);
-    rows.push([units.len(s.d), o.x, o.y, isNaN(s.y) ? '' : viewer.dispElev(s.y, units)].map((v) => (v === '' ? '' : v.toFixed(3).replace('.', ','))));
+    const cr = viewer.coordRows(local, units, settings.coordOrder);
+    rows.push([units.len(s.d), cr[0][1], cr[1][1], isNaN(s.y) ? '' : viewer.dispElev(s.y, units)].map((v) => (v === '' ? '' : v.toFixed(3).replace('.', ','))));
   }
   download(`${baseName()}_profilis_${m.id}.csv`, '﻿' + rows.map((r) => r.join(';')).join('\r\n'), 'text/csv;charset=utf-8');
 });
 profile.onResize = () => viewer.resize();
+
+// ---------------------------------------------------------------------------
+// Modelio kūrimas iš nuotraukų (OpenDroneMap)
+// ---------------------------------------------------------------------------
+const odmUI = createOdmUI({
+  toast,
+  filesFromDataTransfer,
+  async openResult(project, kind) {
+    tools.deactivate();
+    setLoading(true, 'Atsisiunčiami rezultatai…', 0);
+    try {
+      const progress = (p, bytes) => {
+        $('#loading-bar').style.width = `${Math.round(p * 100)}%`;
+        $('#loading-text').textContent = `Atsisiunčiami rezultatai… ${(bytes / 1e6).toFixed(0)} MB`;
+      };
+      let files = await extractFromZipUrl(project.downloadUrl, kind === 'points' ? WANT_POINTS : WANT_MODEL_GLB, progress);
+      if (kind !== 'points' && !files.some((f) => /\.glb$/i.test(f.name))) files = await extractFromZipUrl(project.downloadUrl, WANT_MODEL, progress);
+      if (!files.some((f) => /\.(obj|glb|laz|las)$/i.test(f.name))) throw new Error(kind === 'points' ? 'Archyve nerasta taškų debesies' : 'Archyve nerastas 3D modelis');
+      setLoading(false);
+      await openFiles(files, { heightSystem: project.heightSystem, name: project.name });
+    } catch (e) {
+      setLoading(false);
+      toast(`Nepavyko atidaryti rezultatų: ${e.message}`, 'error', 8000);
+    }
+  },
+});
+$('#btn-odm').addEventListener('click', () => odmUI.open());
+$('#btn-odm-2').addEventListener('click', () => odmUI.open());
+$('#odm-badge').addEventListener('click', () => odmUI.open());
 
 // Skydelis mažuose ekranuose
 $('#btn-panel').addEventListener('click', () => $('#sidepanel').classList.toggle('open'));
@@ -1041,7 +1180,7 @@ $('#btn-help').addEventListener('click', () => $('#dlg-help').showModal());
 // ---------------------------------------------------------------------------
 const KEY_TOOLS = Object.fromEntries(Object.entries(TOOLS).map(([id, t]) => [t.key.toLowerCase(), id]));
 window.addEventListener('keydown', (e) => {
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]')) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -1070,6 +1209,9 @@ window.addEventListener('keydown', (e) => {
   else if (k === '5') viewer.setView('iso');
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
+
+// Testams / derinimui: ?debug
+if (new URLSearchParams(location.search).has('debug')) window.__atea = { viewer, units, items, settings };
 
 // Vaizdo atnaujinimas – gizmo
 viewer.addEventListener('render', () => gizmo.update());

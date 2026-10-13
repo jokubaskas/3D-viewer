@@ -1,6 +1,6 @@
 # Atea 3D Matuoklis
 
-Fotogrametrijos 3D modelių peržiūros ir matavimo programa (veikia naršyklėje, duomenys niekur nesiunčiami).
+Fotogrametrijos 3D modelių kūrimo, peržiūros ir matavimo programa. Matavimai vyksta naršyklėje; 3D modeliai iš drono nuotraukų kuriami jūsų serveryje su [OpenDroneMap](https://opendronemap.org).
 
 **Greitas startas be diegimo:** atsisiųskite [`release/atea-3d-matuoklis.html`](release/atea-3d-matuoklis.html) ir atidarykite jį dukart spustelėję (Chrome / Edge / Firefox). Viskas viename faile.
 
@@ -9,7 +9,7 @@ Fotogrametrijos 3D modelių peržiūros ir matavimo programa (veikia naršyklėj
 | Tipas | Formatai |
 |---|---|
 | Tinklai | **OBJ** (+MTL ir tekstūros), **GLB / GLTF** (įskaitant Draco, Meshopt), **PLY**, **FBX**, **DAE**, **3MF**, **STL** |
-| Taškų debesys | **LAS** (nesuspaustas, su RGB arba intensyvumu), **PLY**, **PCD**, **XYZ / PTS / TXT / CSV** |
+| Taškų debesys | **LAS / LAZ** (su RGB arba intensyvumu), **PLY**, **PCD**, **XYZ / PTS / TXT / CSV** |
 | Archyvai | **ZIP** (pvz. OBJ + MTL + tekstūros viename archyve) |
 
 OBJ modeliui pažymėkite kartu `.obj`, `.mtl` ir tekstūrų failus, atidarykite visą aplanką arba nutempkite ZIP.
@@ -29,6 +29,7 @@ Georeferencuotos koordinatės (pvz. LKS-94) apdorojamos dvigubu tikslumu – mod
 | `R` | Aukščio profilis | Reljefo pjūvio grafikas, kilimas / leidimasis, maks. nuolydis, CSV eksportas |
 | `S` | Mastelis | Kalibravimas pagal žinomą atstumą (modeliams be georeferencijos) |
 | `L` | Išlyginti | Pasuka modelį pagal 3+ taškais pažymėtą žemės plokštumą |
+| `C` | Kontrolinis taškas | Modelio ir geodeziškai išmatuoto taško skirtumai ΔX, ΔY, ΔH; RMS; pataisos pritaikymas |
 
 Kiti patogumai:
 - `Enter` / dvigubas spustelėjimas / dešinys pelės klavišas – baigti; `Backspace` – atšaukti tašką; `Esc` – nutraukti.
@@ -39,6 +40,46 @@ Kiti patogumai:
 - Vaizdai iš viršaus / priekio / šono, ortografinė projekcija (`O`), dvigubas spustelėjimas – sukimosi centras.
 - Matavimų eksportas į **CSV** (Excel, lietuviškas formatas), išsaugojimas / įkėlimas **JSON**, ekrano kopija su etiketėmis (`P`).
 - Vienetai: m, cm, mm, km, ft; modelio vienetų ir mastelio nustatymai.
+
+## 3D modelio kūrimas iš drono nuotraukų
+
+Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
+
+1. **Nuotraukos** – nutempkite aplanką. Naršyklė perskaito EXIF ir DJI XMP (pirmus ~0,5 MB kiekvienos nuotraukos, 1000 nuotraukų per kelias sekundes) ir parodo:
+   RTK FIX / FLOAT dalį, RTK tikslumą (`RtkStdLat/Lon/Hgt`), skrydžio aukštį, GSD, plotą, skrydžio žemėlapį LKS-94 ir įspėjimus.
+   DJI Mavic 3T terminės (`_T`) ir priartinimo (`_Z`) nuotraukos praleidžiamos automatiškai. `gcp_list.txt` (jei pridėtas) perduodamas ODM.
+2. **Nustatymai** – kokybė (greitas / standartinis / aukšta), DSM, DTM, ortofoto, aukščių sistema:
+   - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
+   - Galima palikti elipsoidinius ir pataisyti kontroliniais taškais.
+3. **Apdorojimas** – nuotraukos įkeliamos dalimis (su pakartojimais), kartu siunčiamas `geo.txt` su perskaičiuotais aukščiais ir RTK tikslumais (FIX nuotraukos gauna didesnį svorį).
+   Eiga matoma projektų sąraše, naršyklę galima uždaryti. Baigus – **„3D modelis“** arba **„Taškai“** atsidaro iškart.
+
+### Koordinatės
+
+OpenDroneMap rezultatus visada pateikia WGS84 / UTM (Lietuvoje – 34N arba 35N). Programa juos **automatiškai perskaičiuoja į LKS-94 (EPSG:3346)**:
+tekstūruotą modelį (`odm_textured_model_geo.obj` + `coords.txt` poslinkis) ir taškų debesį (`.laz`).
+Transformacija – skersinė Merkatoriaus projekcija su 6 eilės Krüger eilute; patikrinta su PROJ (pyproj) – skirtumas < 0,001 mm.
+LKS-94 koordinatės rodomos geodeziniu žymėjimu (X – šiaurė, Y – rytai), galima perjungti nustatymuose.
+
+Prielaidos ir tikslumas:
+- RTK pataisos turi būti ETRS89 sistemoje (pvz. **LitPOS** NTRIP). Kitų tinklų (ITRF) koordinatės gali skirtis ~0,7 m – tai matysite kontroliniuose taškuose.
+- DJI `AbsoluteAltitude` su RTK paprastai yra elipsoidinis aukštis, bet tai priklauso nuo DJI Pilot 2 nustatymų ir XMP versijos – patikrinkite bent vienu kontroliniu tašku.
+- Ortofoto ir DSM/DTM GeoTIFF failai archyve `all.zip` kol kas lieka UTM sistemoje (perprojektuoti galima QGIS / `gdalwarp -t_srs EPSG:3346`).
+
+### Serverio diegimas
+
+Reikia Linux serverio su Docker. Rekomendacijos: 1000 nuotraukų (48 MP) – 16+ branduolių, **64–128 GB RAM**, 500 GB+ SSD; NVIDIA GPU pagreitina.
+
+```bash
+cd deploy
+cp .env.example .env        # įrašykite NODEODM_TOKEN
+docker compose up -d --build
+# su GPU:
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+Programa bus `http://serveris:8080`, NodeODM – per `/odm/` (programoje numatytas adresas). Rezultatai serveryje laikomi 30 dienų (`NODEODM_KEEP_MINUTES`).
+Vieno failo versijai (`release/…html`) nurodykite pilną adresą, pvz. `http://serveris:8080/odm/`.
 
 ## Kūrimas
 
@@ -60,3 +101,6 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/main.js` – sąsaja, įrankių valdymas, eksportas
 - `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
 - `src/logo.js` – ATEA žodinis ženklas (SVG, perpieštas; oficialų SVG galima įdėti vietoje `LOGO_PATHS`)
+- `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja
+- `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai
+- `deploy/` – Docker Compose: NodeODM + nginx su programa

@@ -11,5 +11,7 @@ export default defineConfig(({ mode }) => ({
     outDir: mode === 'single' ? 'dist-single' : 'dist',
     chunkSizeWarningLimit: 2000,
     copyPublicDir: mode !== 'single',
+    // Vieno failo versijoje viską (įskaitant LAZ dekoderio WASM) įterpiame į HTML
+    assetsInlineLimit: mode === 'single' ? 100_000_000 : 4096,
   },
 }));
