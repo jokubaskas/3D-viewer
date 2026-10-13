@@ -26,21 +26,31 @@ export class NodeODM {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`Serveris grąžino ne JSON (HTTP ${res.status})`);
+      if (/^\s*</.test(text))
+        throw new Error(`Adresu ${this.base} atsako ne apdorojimo serveris (gautas HTML puslapis). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.`);
+      throw new Error(`Serveris grąžino netikėtą atsakymą (HTTP ${res.status})`);
     }
     if (data && data.error) throw new Error(data.error);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return data;
   }
 
+  async _fetch(url, init) {
+    try {
+      return await fetch(url, init);
+    } catch {
+      throw new Error(`Nepavyko prisijungti prie ${this.base} – ar paleistas apdorojimo serveris (Docker)?`);
+    }
+  }
+
   async get(path, params) {
-    return this._json(await fetch(this.url(path, params)));
+    return this._json(await this._fetch(this.url(path, params)));
   }
 
   async postForm(path, fields) {
     const fd = new FormData();
     for (const [k, v] of Object.entries(fields)) if (v != null) fd.append(k, v);
-    return this._json(await fetch(this.url(path), { method: 'POST', body: fd }));
+    return this._json(await this._fetch(this.url(path), { method: 'POST', body: fd }));
   }
 
   /** Serverio informacija: versija, eilė, RAM, branduoliai. */

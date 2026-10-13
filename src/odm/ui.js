@@ -35,7 +35,9 @@ const fmtDur = (ms) => {
  * @param {{toast:(msg:string,type?:string,ms?:number)=>void, openResult:(project:object, kind:'model'|'points')=>Promise<void>}} app
  */
 export function createOdmUI(app) {
-  const server = ls.get(LS_SERVER, { url: location.protocol === 'file:' ? 'http://localhost:3000/' : './odm/', token: '' });
+  // Atidarius HTML failą tiesiai iš disko – serveris pagal deploy/ numatytuosius nustatymus
+  const server = ls.get(LS_SERVER, { url: location.protocol === 'file:' ? 'http://localhost:8080/odm/' : './odm/', token: '' });
+  if (location.protocol === 'file:' && /^\.\//.test(server.url)) server.url = 'http://localhost:8080/odm/';
   let projects = ls.get(LS_PROJECTS, []);
   let client = new NodeODM(server.url, server.token);
   let analysis = null;
@@ -170,7 +172,7 @@ export function createOdmUI(app) {
     } catch (e) {
       st.textContent = '● Nepavyko prisijungti';
       st.className = 'small bad';
-      $('#odm-server-info').textContent = `${e.message}. Patikrinkite adresą ir ar serveris paleistas (žr. deploy/README).`;
+      $('#odm-server-info').textContent = `${e.message.replace(/[.?!]?$/, (m) => m || ".")} Instrukcija – README skyrius „Serverio diegimas“.`;
       if (!quiet) app.toast('Nepavyko prisijungti prie apdorojimo serverio', 'error');
       return null;
     }
