@@ -94,7 +94,7 @@ Prielaidos ir tikslumas:
    Jei prievadas 8080 jau užimtas kitos programos, failas pats parinks laisvą (8081, 8082…), įrašys jį į `deploy/.env` (`WEB_PORT`) ir atidarys teisingą adresą.
 4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
 
-Kai naudojate vieno failo versiją (`release/…html`), adresas yra `http://localhost:8080/odm/`. Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
+Kai naudojate vieno failo versiją (`release/…html`), programa pati suranda vietinį serverį prievaduose 8080–8099 (pvz. `http://localhost:8081/odm/` ir `/ai/`). Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
 Docker Desktop pagal nutylėjimą WSL2 skiria tik dalį RAM. Dideliems projektams sukurkite `%UserProfile%\.wslconfig`:
 
 ```ini
