@@ -44,6 +44,19 @@ if errorlevel 1 (
 )
 
 echo.
+echo Tikrinama, ar veikia AI paslauga (iki 2 min.)...
+powershell -NoProfile -Command "for($i=0;$i -lt 40;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://localhost:%PORT%/ai/health'; if($r.StatusCode -eq 200){exit 0}}catch{}; Start-Sleep 3}; exit 1"
+if errorlevel 1 (
+  echo.
+  echo [ISPEJIMAS] AI paslauga neatsako. Programa ir OpenDroneMap veiks, bet AI irankiai - ne.
+  echo Konteineriu busena ir paskutiniai AI pranesimai - nusiuskite juos, jei reikia pagalbos:
+  docker compose ps
+  docker compose logs --tail 40 ai
+) else (
+  echo AI paslauga veikia.
+)
+
+echo.
 echo ============================================================
 echo  Paruosta! Programa: http://localhost:%PORT%
 echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
