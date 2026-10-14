@@ -589,33 +589,62 @@ async function runDetection() {
     const gsdM = units.toMeters(img.gsd);
     $('#loading-text').textContent = tr('AI ieško transporto… ({w}×{h} px, {g} cm/px)', { w: img.width, h: img.height, g: (gsdM * 100).toFixed(1) });
     $('#loading-bar').style.width = '50%';
-    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold });
+    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold, gsd: gsdM });
     const det = res.detections || [];
     if (!det.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
     const lift = metersToWorld(0.25);
-    const itemsOut = det.map((d) => {
+    const surfY = (wx, wz) => viewer.topHeightAt(wx, wz);
+    let itemsOut = det.map((d) => {
       const [x0, y0, x1, y1] = d.box;
-      const [cx, cz] = img.toWorld((x0 + x1) / 2, (y0 + y1) / 2);
-      let cy = viewer.topHeightAt(cx, cz);
+      const px = d.corners || [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+      const pcx = px.reduce((a, p) => a + p[0], 0) / 4, pcy = px.reduce((a, p) => a + p[1], 0) / 4;
+      const [cx, cz] = img.toWorld(pcx, pcy);
+      // Objekto aukštis virš aplinkos: viršus – kontūro viduje, žemė – 1 m už kontūro
+      const inside = [[pcx, pcy], ...px.map(([x, y]) => [pcx + (x - pcx) * 0.4, pcy + (y - pcy) * 0.4])];
+      const top = Math.max(...inside.map(([x, y]) => surfY(...img.toWorld(x, y))).filter(isFinite));
+      const ring = [...px, ...px.map((p, i) => [(p[0] + px[(i + 1) % 4][0]) / 2, (p[1] + px[(i + 1) % 4][1]) / 2])].map(([x, y]) => {
+        const dx = x - pcx, dy = y - pcy, len = Math.hypot(dx, dy) || 1;
+        const k = (len + metersToWorld(1) / img.gsd) / len;
+        return surfY(...img.toWorld(pcx + dx * k, pcy + dy * k));
+      });
+      const ground = Math.min(...ring.filter(isFinite));
+      const height = isFinite(top) && isFinite(ground) ? units.toMeters(top - ground) : null;
+      let cy = surfY(cx, cz);
       if (!isFinite(cy)) cy = box.min.y;
-      const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]].map(([px, py]) => {
-        const [wx, wz] = img.toWorld(px, py);
-        let wy = viewer.topHeightAt(wx, wz);
+      const corners = px.map(([x, y]) => {
+        const [wx, wz] = img.toWorld(x, y);
+        let wy = surfY(wx, wz);
         if (!isFinite(wy)) wy = cy;
         return viewer.worldToLocal(new THREE.Vector3(wx, wy + lift, wz)).toArray();
       });
       return {
         cls: d.class, score: d.score,
         c: viewer.worldToLocal(new THREE.Vector3(cx, cy + lift, cz)).toArray(),
-        size: [units.toMeters((x1 - x0) * img.gsd), units.toMeters((y1 - y0) * img.gsd)],
+        // Matmenys – tik kai yra tikslus (pasuktas) kontūras; ašinė dėžutė pasuktam automobiliui per didelė
+        size: d.length != null ? [d.width, d.length] : null,
+        heading: d.heading ?? null,
+        height,
         corners,
       };
     });
+    // Plokšti objektai (kelio ženklinimas, šuliniai, šešėliai) – ne transportas. Filtras taikomas tik
+    // tada, kai modelis turi aiškų reljefą (dauguma objektų iškilę), kitaip – pvz. plokščias ortofoto.
+    const raised = itemsOut.filter((it) => it.height == null || it.height >= 0.5);
+    let flat = 0;
+    if (raised.length >= itemsOut.length / 2) {
+      flat = itemsOut.length - raised.length;
+      itemsOut = raised;
+    }
+    if (!itemsOut.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
     const m = new Measurement('detections', itemsOut.map((it) => new THREE.Vector3(...it.c)));
     m.options.items = itemsOut;
-    m.options.meta = { classes, threshold: settings.aiThreshold, gsd: gsdM, seconds: res.seconds };
+    m.options.meta = { classes, threshold: settings.aiThreshold, gsd: gsdM, seconds: res.seconds, rejected: (res.rejected || 0) + flat };
     addMeasurement(m, true);
-    toast(tr('AI rado objektų: {n} (per {s} s)', { n: itemsOut.length, s: res.seconds }));
+    const skipped = (res.rejected || 0) + flat;
+    toast(
+      tr('AI rado objektų: {n} (per {s} s)', { n: itemsOut.length, s: res.seconds }) +
+        (skipped ? ' · ' + tr('atmesta netinkamo dydžio ar plokščių: {n}', { n: skipped }) : ''),
+    );
     if (gsdM > 0.15) toast(tr('Modelis didelis – vaizdo raiška {g} cm/px, maži objektai gali būti praleisti.', { g: (gsdM * 100).toFixed(0) }), 'info', 8000);
   } catch (e) {
     toast(e.message, 'error', 9000);
@@ -626,10 +655,10 @@ async function runDetection() {
 
 function exportDetectionsCsv(m) {
   const names = viewer.coordRows(new THREE.Vector3(...m.options.items[0].c), units, settings.coordOrder).map(([k]) => k.split(' ')[0]);
-  const rows = [[tr('Nr.'), tr('Klasė'), tr('Patikimumas'), ...names.map((n) => `${n} (${units.display})`), tr('Ilgis (m)'), tr('Plotis (m)')]];
+  const rows = [[tr('Nr.'), tr('Klasė'), tr('Patikimumas'), ...names.map((n) => `${n} (${units.display})`), tr('Ilgis (m)'), tr('Plotis (m)'), tr('Aukštis (m)'), tr('Kryptis (°)')]];
   m.options.items.forEach((it, i) => {
     const cr = viewer.coordRows(new THREE.Vector3(...it.c), units, settings.coordOrder);
-    rows.push([i + 1, tr(AI_CLASSES[it.cls]?.lt || it.cls), units.num(it.score * 100, 0) + ' %', ...cr.map(([, v]) => units.num(v, 3)), units.num(it.size[1], 2), units.num(it.size[0], 2)]);
+    rows.push([i + 1, tr(AI_CLASSES[it.cls]?.lt || it.cls), units.num(it.score * 100, 0) + ' %', ...cr.map(([, v]) => units.num(v, 3)), ...(it.size ? [units.num(it.size[1], 2), units.num(it.size[0], 2)] : ['', '']), it.height != null ? units.num(it.height, 2) : '', it.heading != null ? units.num(it.heading, 0) : '']);
   });
   const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/\u00a0|\u202f/g, ' ')}"`).join(';')).join('\r\n');
   download(`${baseName()}_ai_objektai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');

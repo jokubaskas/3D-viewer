@@ -49,11 +49,13 @@ Veikia jūsų serveryje (`deploy/ai`, Docker), be interneto ir be prenumeratų. 
 | Įrankis | Klavišas | Modelis | Ką daro |
 |---|---|---|---|
 | **AI kontūras** | `I` | [MobileSAM](https://github.com/ChaoningZhang/MobileSAM) | Spustelite ant krūvos, stogo ar aikštelės – AI apibrėžia kontūrą ir sukuria tūrio (arba ploto) matavimą. ~1 s procesoriumi. |
-| **Transporto aptikimas** | `X` | [RF-DETR](https://github.com/roboflow/rf-detr) (Medium, COCO) | Suranda automobilius, sunkvežimius, autobusus (ir pasirinktinai žmones, dviračius…) visame modelyje; sąrašas su LKS-94 koordinatėmis ir CSV. |
+| **Transporto aptikimas** | `X` | [RF-DETR](https://github.com/roboflow/rf-detr) (Medium, COCO) | Suranda automobilius, sunkvežimius, autobusus (ir pasirinktinai žmones, dviračius…) visame modelyje; sąrašas su LKS-94 koordinatėmis ir CSV (ilgis, plotis, aukštis, kryptis). |
 
 Kaip veikia: naršyklė iš 3D modelio nupiešia vaizdą iš viršaus (kaip ortofoto, ~6 cm/px), AI paslauga grąžina pikselių koordinates,
 o programa jas paverčia modelio / LKS-94 koordinatėmis ir aukščiais.
 Nustatymuose: AI adresas, ieškomos klasės, patikimumo slenkstis, ką kuria AI kontūras (tūrį ar plotą).
+
+Kaip atmetami klaidingi radiniai: kiekvienam objektui MobileSAM nustato tikslų pasuktą kontūrą, todėl matomi tikri ilgis ir plotis. Netikėtino dydžio objektai (suoliukai, akmenys, šuliniai) atmetami, o klasė (automobilis / sunkvežimis / autobusas) patikslinama pagal ilgį. Programa dar pagal 3D modelį patikrina, ar objektas iškilęs virš aplinkos (≥ 0,5 m), todėl atmetami kelio ženklinimas ir šešėliai. Saulėtą dieną į kontūrą kartais patenka automobilio šešėlis – tada plotis būna keliais dešimtimis cm per didelis.
 
 Pastabos: RF-DETR apmokytas su COCO (ne drono) vaizdais – automobilius iš viršaus randa gerai, bet retesnę techniką (ekskavatorius ir pan.) atpažins tik papildomai apmokius su savais vaizdais.
 YOLO (Ultralytics) sąmoningai nenaudojamas dėl AGPL licencijos.
