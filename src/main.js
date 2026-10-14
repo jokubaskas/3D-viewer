@@ -16,6 +16,7 @@ import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './od
 import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
 import { renderTopDown } from './ai/ortho.js';
+import { Basemap, BASEMAPS } from './geo/basemap.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -28,6 +29,7 @@ const settings = {
   aiUrl: '', aiClasses: ['car', 'truck', 'bus', 'motorcycle'], aiThreshold: 0.5, aiOutlineKind: 'volume',
   coordOrder: 'ne', unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
   background: 'atea', pointSize: 2.5, viewMode: 'texture', grid: false,
+  mapOn: false, mapSource: 'satellite', mapUrl: '', mapOpacity: 1,
 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
@@ -49,6 +51,8 @@ if (!['atea', 'graphite', 'light', 'white'].includes(settings.background)) setti
 const viewport = $('#viewport');
 const viewer = new Viewer(viewport);
 const gizmo = new Gizmo($('#gizmo'), viewer);
+const basemap = new Basemap(viewer);
+viewer.basemap = basemap;
 const profile = new ProfileChart($('#profile-chart'), viewer, units);
 
 /** @type {{m: Measurement, visual: MeasurementVisual}[]} */
@@ -790,6 +794,7 @@ function renderCheckpoints() {
         }
         toast('Pataisa pritaikyta – visos koordinatės ir aukščiai perskaičiuoti');
       }
+      basemap.syncDatum();
       redrawAll();
       updateModelInfo();
       renderCheckpoints();
@@ -814,6 +819,8 @@ viewer.addEventListener('orientation', () => {
   // Pasikeitus orientacijai vertikalūs dydžiai keičiasi – perskaičiuojame
   items.forEach((it) => recompute(it));
   setupClipSliders();
+  // Pakeitus aukščio ašį žemėlapis kuriamas iš naujo (arba paslepiamas, jei Z nebe aukštyn)
+  if (settings.mapOn && viewer.hasModel && basemap.source?.axis !== viewer.upAxis) refreshMap(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -871,6 +878,9 @@ async function showModel(object, offset, up, name, format, { crs = null, heightS
   if (pointsOnly && ['lit', 'solid'].includes(settings.viewMode)) setViewMode('texture');
   setupClipSliders(true);
   updateModelInfo();
+  basemap.clear();
+  basemap.hide();
+  if (settings.mapOn) refreshMap(true);
   const s = viewer.stats;
   $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });
   toast(tr('Atidaryta: {name}', { name }));
@@ -1160,6 +1170,77 @@ const toggleOrtho = () => {
 orthoBtn.addEventListener('click', toggleOrtho);
 
 // ---------------------------------------------------------------------------
+// Žemėlapis po modeliu
+// ---------------------------------------------------------------------------
+const mapSource = () =>
+  settings.mapSource === 'custom' ? { url: settings.mapUrl.trim(), maxZoom: 20, attribution: '' } : BASEMAPS[settings.mapSource] || BASEMAPS.satellite;
+let mapBusy = null;
+
+/** Parodo / paslepia žemėlapį pagal settings.mapOn. quiet – be klaidų pranešimų (pvz. įkeliant modelį). */
+async function refreshMap(quiet = false) {
+  syncMapUi();
+  if (!settings.mapOn) return basemap.hide();
+  if (!viewer.hasModel) return;
+  const why = basemap.reason;
+  if (why) {
+    basemap.hide();
+    if (!quiet) toast(why, 'info', 7000);
+    return;
+  }
+  const src = mapSource();
+  if (!src.url || !/\{z\}/.test(src.url) || !/\{x\}/.test(src.url) || !/\{y\}/.test(src.url)) {
+    basemap.hide();
+    return toast(tr('Įveskite žemėlapio adresą su {z}, {x} ir {y}.'), 'error', 7000);
+  }
+  const run = (mapBusy = basemap.show({ ...src, axis: viewer.upAxis }));
+  try {
+    const r = await run;
+    if (r && r.failed) toast(tr('Dalies žemėlapio plytelių nepavyko atsisiųsti ({n}).', { n: r.failed }), 'info', 6000);
+  } catch (e) {
+    if (mapBusy === run) toast(e.message, 'error', 8000);
+  }
+}
+
+function syncMapUi() {
+  $('#btn-map').classList.toggle('active', settings.mapOn);
+  $('#map-on').checked = settings.mapOn;
+  $('#map-source').value = settings.mapSource;
+  $('#row-map-url').hidden = settings.mapSource !== 'custom';
+  const a = $('#map-attrib');
+  a.hidden = !settings.mapOn || !viewer.hasModel;
+  a.textContent = mapSource().attribution || '';
+}
+
+function toggleMap(on = !settings.mapOn) {
+  settings.mapOn = on;
+  saveSettings();
+  refreshMap();
+}
+
+$('#btn-map').addEventListener('click', () => toggleMap());
+$('#map-on').addEventListener('change', (e) => toggleMap(e.target.checked));
+$('#map-source').addEventListener('change', (e) => {
+  settings.mapSource = e.target.value;
+  saveSettings();
+  syncMapUi();
+  if (settings.mapOn && (settings.mapSource !== 'custom' || settings.mapUrl)) refreshMap();
+});
+$('#map-url').value = settings.mapUrl;
+$('#map-url').addEventListener('change', (e) => {
+  settings.mapUrl = e.target.value.trim();
+  saveSettings();
+  if (settings.mapOn) refreshMap();
+});
+$('#map-opacity').value = settings.mapOpacity;
+basemap.setOpacity(settings.mapOpacity);
+$('#map-opacity').addEventListener('input', (e) => {
+  settings.mapOpacity = +e.target.value;
+  basemap.setOpacity(settings.mapOpacity);
+  saveSettings();
+});
+syncMapUi();
+
+// ---------------------------------------------------------------------------
 // Eksportas / importas
 // ---------------------------------------------------------------------------
 function download(name, data, type) {
@@ -1408,6 +1489,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === '3') viewer.setView('right');
   else if (k === '5') viewer.setView('iso');
   else if (k === 'x') runDetection();
+  else if (k === 'm') toggleMap();
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
 

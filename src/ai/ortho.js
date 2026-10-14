@@ -36,6 +36,9 @@ export async function renderTopDown(viewer, { minX, maxX, minZ, maxZ, gsd, maxPx
   });
   const overlayVis = viewer.overlay.visible;
   viewer.overlay.visible = false;
+  const map = viewer.basemap?.group;
+  const mapVis = map?.visible;
+  if (map) map.visible = false; // AI turi matyti tik modelį
   if (prevMode !== 'texture' || prevWire) {
     viewer.wireframe = false;
     viewer.setViewMode('texture');
@@ -75,6 +78,7 @@ export async function renderTopDown(viewer, { minX, maxX, minZ, maxZ, gsd, maxPx
     rt.dispose();
     hidden.forEach((o) => (o.visible = true));
     viewer.overlay.visible = overlayVis;
+    if (map) map.visible = mapVis;
     if (prevMode !== 'texture' || prevWire) {
       viewer.wireframe = prevWire;
       viewer.setViewMode(prevMode);

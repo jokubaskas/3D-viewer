@@ -86,6 +86,7 @@
             <button class="vbtn" data-view="right" title="Vaizdas iš šono (3)">Šonas</button>
             <button class="vbtn" data-view="iso" title="Izometrinis vaizdas (5)">Izo</button>
             <button class="vbtn" id="btn-ortho" title="Perspektyva / ortografinė projekcija (O)">Persp.</button>
+            <button class="vbtn" id="btn-map" title="Žemėlapis po modeliu (M)"><span data-icon="map"></span></button>
             <button class="vbtn" id="btn-fit" title="Rodyti visą modelį (F)"><span data-icon="fit"></span></button>
           </div>
         </div>
@@ -108,6 +109,7 @@
         <div class="statusbar" id="statusbar">
           <span id="status-coords">X — Y — Z —</span>
           <span id="status-model"></span>
+          <span id="map-attrib" class="map-attrib" hidden></span>
         </div>
 
         <div class="loading" id="loading" hidden>
@@ -169,6 +171,20 @@
               </select>
             </label>
             <label class="row check"><input type="checkbox" id="opt-grid" /> Rodyti tinklelį po modeliu</label>
+          </section>
+          <section class="card">
+            <h3>Žemėlapis</h3>
+            <label class="row check"><input type="checkbox" id="map-on" /> Rodyti žemėlapį po modeliu</label>
+            <label class="row">Šaltinis
+              <select id="map-source">
+                <option value="satellite">Palydovinė nuotrauka (Esri)</option>
+                <option value="osm">OpenStreetMap</option>
+                <option value="custom">Kitas (XYZ adresas)</option>
+              </select>
+            </label>
+            <label class="row" id="row-map-url" hidden>Adresas <input id="map-url" class="num wide" style="text-align:left;width:190px" placeholder="https://…/{z}/{x}/{y}.png" /></label>
+            <label class="row">Permatomumas <input type="range" id="map-opacity" min="0.2" max="1" step="0.05" value="1" /></label>
+            <p class="muted small" id="map-note">Žemėlapis sulygiuojamas pagal modelio koordinates (LKS-94 arba UTM). Reikia interneto ryšio.</p>
           </section>
           <section class="card">
             <h3>Kontroliniai taškai</h3>
@@ -326,6 +342,7 @@
             <li><span>Visas modelis</span><kbd>F</kbd></li>
             <li><span>Vaizdai</span><span><kbd>7</kbd> viršus <kbd>1</kbd> priekis <kbd>3</kbd> šonas <kbd>5</kbd> izo</span></li>
             <li><span>Ortografinis vaizdas</span><kbd>O</kbd></li>
+            <li><span>Žemėlapis po modeliu</span><kbd>M</kbd></li>
           </ul>
           <h4>Matuojant</h4>
           <ul class="keys">
