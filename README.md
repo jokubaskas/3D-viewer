@@ -103,6 +103,17 @@ memory=48GB
 processors=12
 ```
 
+**Jei kas nors neveikia** (komandos – aplanke `deploy`):
+
+```bat
+docker compose ps              :: visų dalių būsena (turi būti „running“)
+docker compose logs --tail 50 ai
+docker compose logs --tail 50 web
+docker compose restart ai
+```
+
+`start-windows.bat` pabaigoje pats patikrina AI paslaugą ir, jei ji neatsako, parodo jos pranešimus.
+
 #### Linux serveris
 
 Reikia Linux serverio su Docker. Rekomendacijos: 1000 nuotraukų (48 MP) – 16+ branduolių, **64–128 GB RAM**, 500 GB+ SSD; NVIDIA GPU pagreitina.
