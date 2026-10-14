@@ -91,6 +91,7 @@ Prielaidos ir tikslumas:
 2. Atsisiųskite visą projektą (GitHub → **Code → Download ZIP**) ir išskleiskite.
 3. Atidarykite aplanką `deploy` ir dukart spustelėkite **`start-windows.bat`**.
    Jis sukurs `.env` su slaptu raktu, paleis serverį ir atidarys `http://localhost:8080`.
+   Jei prievadas 8080 jau užimtas kitos programos, failas pats parinks laisvą (8081, 8082…), įrašys jį į `deploy/.env` (`WEB_PORT`) ir atidarys teisingą adresą.
 4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
 
 Kai naudojate vieno failo versiją (`release/…html`), adresas yra `http://localhost:8080/odm/`. Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
