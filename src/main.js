@@ -14,6 +14,7 @@ import { Gizmo } from './gizmo.js';
 import { createOdmUI } from './odm/ui.js';
 import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { AiClient, AI_CLASSES } from './ai/client.js';
+import { findLocalServer } from './local-server.js';
 import { renderTopDown } from './ai/ortho.js';
 
 const $ = (s) => document.querySelector(s);
@@ -530,7 +531,12 @@ function calibrate(pts) {
 // Vietinis dirbtinis intelektas (deploy/ai): išmanus kontūras ir transporto aptikimas
 // ---------------------------------------------------------------------------
 const defaultAiUrl = () => (location.protocol === 'file:' ? 'http://localhost:8080/ai/' : './ai/');
-const aiClient = () => new AiClient(settings.aiUrl || defaultAiUrl());
+async function aiClient(recheck = false) {
+  if (settings.aiUrl) return new AiClient(settings.aiUrl);
+  const local = await findLocalServer(recheck);
+  if (local && $('#ai-url').value === defaultAiUrl()) $('#ai-url').value = local + 'ai/';
+  return new AiClient(local ? local + 'ai/' : defaultAiUrl());
+}
 const metersToWorld = (m) => m / units.metersPerUnit;
 
 async function aiOutline(local) {
@@ -545,7 +551,7 @@ async function aiOutline(local) {
       const img = await renderTopDown(viewer, { minX: P.x - half, maxX: P.x + half, minZ: P.z - half, maxZ: P.z + half, gsd: S / 1024, maxPx: 1024 });
       const [px, py] = img.toPixel(P.x, P.z);
       $('#loading-bar').style.width = `${40 + attempt * 20}%`;
-      const res = await aiClient().segment(img.blob, px, py);
+      const res = await (await aiClient()).segment(img.blob, px, py);
       // Kontūras siekia vaizdo kraštą – objektas didesnis, didiname sritį
       if (res.touches_border && S < ext && attempt < 2) {
         S = Math.min(S * 2.2, ext * 1.05);
@@ -583,7 +589,7 @@ async function runDetection() {
     const gsdM = units.toMeters(img.gsd);
     $('#loading-text').textContent = tr('AI ieško transporto… ({w}×{h} px, {g} cm/px)', { w: img.width, h: img.height, g: (gsdM * 100).toFixed(1) });
     $('#loading-bar').style.width = '50%';
-    const res = await aiClient().detect(img.blob, { classes, threshold: settings.aiThreshold });
+    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold });
     const det = res.detections || [];
     if (!det.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
     const lift = metersToWorld(0.25);
@@ -634,7 +640,8 @@ function setupAiSettings() {
   const url = $('#ai-url');
   url.value = settings.aiUrl || defaultAiUrl();
   url.addEventListener('change', () => {
-    settings.aiUrl = url.value.trim() === defaultAiUrl() ? '' : url.value.trim();
+    const v = url.value.trim();
+    settings.aiUrl = v === defaultAiUrl() || /^http:\/\/localhost:80[89]\d\/ai\/?$/.test(v) ? '' : v;
     saveSettings();
   });
   $('#ai-classes').innerHTML = Object.entries(AI_CLASSES)
@@ -663,7 +670,7 @@ function setupAiSettings() {
     st.textContent = tr('Jungiamasi…');
     st.className = 'small muted';
     try {
-      const h = await aiClient().health();
+      const h = await (await aiClient(true)).health();
       st.textContent = `● ${tr('Prisijungta')} · ${h.device.toUpperCase()}`;
       st.className = 'small ok';
     } catch (e) {

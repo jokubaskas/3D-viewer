@@ -1,4 +1,5 @@
 // „Modelio kūrimas iš nuotraukų“ – vartotojo sąsaja (OpenDroneMap / NodeODM)
+import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
 import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
@@ -158,6 +159,11 @@ export function createOdmUI(app) {
   $('#odm-token').addEventListener('change', saveServer);
 
   async function checkServer(quiet = false) {
+    // Iš disko atidarytai programai – surandame, kuriuo prievadu veikia vietinis serveris
+    if (/^http:\/\/localhost:80[89]\d\/odm\/?$/.test($('#odm-url').value.trim())) {
+      const local = await findLocalServer();
+      if (local) $('#odm-url').value = local + 'odm/';
+    }
     saveServer();
     const st = $('#odm-server-state');
     st.textContent = 'Jungiamasi…';
