@@ -278,25 +278,38 @@ class Doc {
     this.y += 2;
   }
 
-  /** Raktas–reikšmė lentelė dviem stulpeliais. */
+  /** Raktas–reikšmė lentelė dviem stulpeliais (ilgos reikšmės laužomos). */
   kv(rows, { cols = 2 } = {}) {
     const p = this.pdf;
+    if (rows.length === 1) cols = 1;
     const colW = (A4.w - 2 * M - (cols - 1) * 6) / cols;
-    const rh = 5.6;
+    const lh = 3.7;
     const per = Math.ceil(rows.length / cols);
-    this.ensure(Math.min(per, 6) * rh);
+    const cells = rows.map(([k, v]) => {
+      p.setFont('Inter', 'normal').setFontSize(8.5);
+      const kl = p.splitTextToSize(clean(k), colW * 0.44);
+      p.setFont('Inter', 'bold');
+      const vl = p.splitTextToSize(clean(v), colW * 0.54);
+      return { kl, vl, h: Math.max(kl.length, vl.length) * lh + 2 };
+    });
+    // Stulpelių aukščiai
+    const colH = [...Array(cols)].map((_, c) => cells.slice(c * per, (c + 1) * per).reduce((a, x) => a + x.h, 0));
+    this.ensure(Math.min(Math.max(...colH), 60));
     const y0 = this.y;
     let maxY = y0;
-    rows.forEach(([k, v], i) => {
-      const c = Math.floor(i / per), r = i % per;
-      const x = M + c * (colW + 6), y = y0 + r * rh;
-      p.setFont('Inter', 'normal').setFontSize(8.5).setTextColor(...MUTED);
-      p.text(p.splitTextToSize(clean(k), colW * 0.48)[0], x, y + 4);
-      p.setFont('Inter', 'bold').setTextColor(...INK);
-      p.text(p.splitTextToSize(clean(v), colW * 0.52)[0], x + colW, y + 4, { align: 'right' });
-      p.setDrawColor(...LINE).setLineWidth(0.2).line(x, y + rh, x + colW, y + rh);
-      maxY = Math.max(maxY, y + rh);
-    });
+    for (let c = 0; c < cols; c++) {
+      let y = y0;
+      const x = M + c * (colW + 6);
+      for (const { kl, vl, h } of cells.slice(c * per, (c + 1) * per)) {
+        p.setFont('Inter', 'normal').setFontSize(8.5).setTextColor(...MUTED);
+        kl.forEach((l, i) => p.text(l, x, y + 4 + i * lh));
+        p.setFont('Inter', 'bold').setTextColor(...INK);
+        vl.forEach((l, i) => p.text(l, x + colW, y + 4 + i * lh, { align: 'right' }));
+        y += h;
+        p.setDrawColor(...LINE).setLineWidth(0.2).line(x, y, x + colW, y);
+      }
+      maxY = Math.max(maxY, y);
+    }
     this.y = maxY + 4;
   }
 
@@ -309,15 +322,15 @@ class Doc {
     const total = cols.reduce((a, c) => a + c.w, 0);
     const width = A4.w - 2 * M;
     const ws = cols.map((c) => (c.w / total) * width);
-    const pad = 1.6, fs = 8, lh = fs * 0.42;
+    const pad = 1.6, fs = cols.length > 8 ? 7.2 : 8, lh = fs * 0.42;
     const head = () => {
       this.ensure(8);
       p.setFillColor(...INK).rect(M, this.y, width, 6.5, 'F');
-      p.setFont('Inter', 'bold').setFontSize(7.8).setTextColor(255, 255, 255);
+      p.setFont('Inter', 'bold').setFontSize(cols.length > 8 ? 6.8 : 7.8).setTextColor(255, 255, 255);
       let x = M;
       cols.forEach((c, i) => {
         const tx = c.align === 'right' ? x + ws[i] - pad : x + pad;
-        p.text(p.splitTextToSize(clean(c.title), ws[i] - 2 * pad)[0], tx, this.y + 4.4, { align: c.align === 'right' ? 'right' : 'left' });
+        p.text(p.splitTextToSize(clean(c.title), ws[i] - 2 * pad + 1)[0], tx, this.y + 4.4, { align: c.align === 'right' ? 'right' : 'left' });
         x += ws[i];
       });
       this.y += 6.5;
@@ -430,7 +443,10 @@ export async function createReport(ctx, onStatus) {
   if (sections.top) {
     onStatus?.(t('Ruošiamas vaizdas iš viršaus…'));
     await new Promise((r) => setTimeout(r, 0));
+    const chVis = ctx.changeLayer.visible;
+    ctx.changeLayer.visible = false; // pokyčiai – atskirame skyriuje
     const cv = topImage(viewer, fullBounds, ctx.labels, 2400, { metersPerUnit: mpu });
+    ctx.changeLayer.visible = chVis;
     doc.newPage();
     doc.h1(t('Vaizdas iš viršaus'));
     doc.image(cv, { maxH: 225, caption: t('Ortografinė projekcija, šiaurė – viršuje') });
@@ -491,7 +507,8 @@ export async function createReport(ctx, onStatus) {
       doc.ensure(40);
       doc.h1(`${t('AI aptikti objektai')}: ${d.name}`);
       doc.kv(d.summary);
-      doc.table(d.cols.map((title, i) => ({ title, w: i < 2 ? 12 : 14, align: i < 2 ? 'left' : 'right' })), d.rows);
+      const wts = [5, 12, 12, 17, 17, 11, 9, 10, 10, 10];
+      doc.table(d.cols.map((title, i) => ({ title, w: wts[i] ?? 10, align: i < 2 ? 'left' : 'right' })), d.rows);
     }
   }
 
