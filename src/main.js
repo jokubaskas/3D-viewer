@@ -17,6 +17,7 @@ import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
 import { renderTopDown } from './ai/ortho.js';
 import { Basemap, BASEMAPS } from './geo/basemap.js';
+import { CompareModel, analyzeChange, buildChangeMesh } from './compare.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -53,6 +54,7 @@ const viewer = new Viewer(viewport);
 const gizmo = new Gizmo($('#gizmo'), viewer);
 const basemap = new Basemap(viewer);
 viewer.basemap = basemap;
+const cmp = new CompareModel(viewer);
 const profile = new ProfileChart($('#profile-chart'), viewer, units);
 
 /** @type {{m: Measurement, visual: MeasurementVisual}[]} */
@@ -657,13 +659,18 @@ async function runDetection() {
   }
 }
 
-function exportDetectionsCsv(m) {
+function detectionTable(m) {
   const names = viewer.coordRows(new THREE.Vector3(...m.options.items[0].c), units, settings.coordOrder).map(([k]) => k.split(' ')[0]);
   const rows = [[tr('Nr.'), tr('Klasė'), tr('Patikimumas'), ...names.map((n) => `${n} (${units.display})`), tr('Ilgis (m)'), tr('Plotis (m)'), tr('Aukštis (m)'), tr('Kryptis (°)')]];
   m.options.items.forEach((it, i) => {
     const cr = viewer.coordRows(new THREE.Vector3(...it.c), units, settings.coordOrder);
     rows.push([i + 1, tr(AI_CLASSES[it.cls]?.lt || it.cls), units.num(it.score * 100, 0) + ' %', ...cr.map(([, v]) => units.num(v, 3)), ...(it.size ? [units.num(it.size[1], 2), units.num(it.size[0], 2)] : ['', '']), it.height != null ? units.num(it.height, 2) : '', it.heading != null ? units.num(it.heading, 0) : '']);
   });
+  return rows;
+}
+
+function exportDetectionsCsv(m) {
+  const rows = detectionTable(m);
   const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/\u00a0|\u202f/g, ' ')}"`).join(';')).join('\r\n');
   download(`${baseName()}_ai_objektai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
 }
@@ -821,6 +828,7 @@ viewer.addEventListener('orientation', () => {
   setupClipSliders();
   // Pakeitus aukščio ašį žemėlapis kuriamas iš naujo (arba paslepiamas, jei Z nebe aukštyn)
   if (settings.mapOn && viewer.hasModel && basemap.source?.axis !== viewer.upAxis) refreshMap(true);
+  clearChangeLayer();
 });
 
 // ---------------------------------------------------------------------------
@@ -881,6 +889,7 @@ async function showModel(object, offset, up, name, format, { crs = null, heightS
   basemap.clear();
   basemap.hide();
   if (settings.mapOn) refreshMap(true);
+  clearCompare();
   const s = viewer.stats;
   $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });
   toast(tr('Atidaryta: {name}', { name }));
@@ -890,6 +899,11 @@ const fmtInt = (n) => n.toLocaleString(locale());
 
 function updateModelInfo() {
   if (!viewer.hasModel) return;
+  $('#model-info').innerHTML = modelInfoRows().map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+}
+
+/** Modelio informacija. translate – PDF ataskaitai (UI tekstus verčia automatinis DOM vertimas). */
+function modelInfoRows(translate = false) {
   const s = viewer.stats;
   const size = viewer.worldBox.getSize(new THREE.Vector3());
   const rows = [
@@ -912,7 +926,7 @@ function updateModelInfo() {
   rows.push(['Centras', cr.map(([k, v]) => `${k.split(' ')[0]} ${units.num(v, 2)}`).join('; ')]);
   rows.unshift(['Koordinačių sistema', viewer.crs?.name || 'Vietinė / nežinoma'], ['Aukščių sistema', viewer.heightSystem || '—']);
   if (viewer.datumShift.lengthSq() > 0) rows.push(['Pritaikyta pataisa', `${units.num(units.lenRaw(viewer.datumShift.x), 3)}; ${units.num(units.lenRaw(viewer.datumShift.y), 3)}; ${units.num(units.lenRaw(viewer.datumShift.z), 3)}`]);
-  $('#model-info').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+  return translate ? rows.map(([k, v]) => [tr(k), tr(v)]) : rows;
 }
 
 // Failų pasirinkimas
@@ -1170,6 +1184,192 @@ const toggleOrtho = () => {
 orthoBtn.addEventListener('click', toggleOrtho);
 
 // ---------------------------------------------------------------------------
+// Palyginimas su kita data
+// ---------------------------------------------------------------------------
+/** Paskutinio palyginimo rezultatas (naudojamas ir PDF ataskaitoje). */
+let compareState = null;
+const changeLayer = new THREE.Group();
+changeLayer.name = 'change';
+viewer.scene.add(changeLayer);
+
+function clearChangeLayer() {
+  changeLayer.children.forEach((m) => {
+    m.geometry.dispose();
+    m.material.dispose();
+  });
+  changeLayer.clear();
+  if (compareState) compareState.result = null;
+  $('#cmp-result').hidden = true;
+  viewer.requestRender();
+}
+
+function clearCompare() {
+  clearChangeLayer();
+  cmp.clear();
+  compareState = null;
+  viewer.content.visible = true;
+  $('#cmp-body').hidden = true;
+  $('#cmp-empty').hidden = false;
+}
+
+async function openCompareFiles(files) {
+  if (!files?.length) return;
+  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
+  tools.deactivate();
+  setLoading(true, tr('Įkeliamas palyginimo modelis…'), 0);
+  try {
+    const res = await loadModelFiles(files, {
+      onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
+      onStatus: (t) => ($('#loading-text').textContent = t),
+    });
+    const a = viewer.crs?.id || null, b = res.crs?.id || null;
+    if (a && b && a !== b) throw new Error(tr('Modelių koordinačių sistemos skiriasi ({a} ir {b}).', { a: viewer.crs.name, b: res.crs.name }));
+    clearChangeLayer();
+    await cmp.set(res, res.name, (i, n) => ($('#loading-text').textContent = tr('Ruošiamas greitas matavimas ({i}/{n})…', { i: i + 1, n })));
+    const ov = overlapXZ();
+    if (!ov) {
+      clearCompare();
+      throw new Error(tr('Modeliai nepersidengia – patikrinkite, ar abu turi tas pačias koordinates.'));
+    }
+    compareState = { name: res.name, result: null };
+    if (!a || !b) toast('Bent vienas modelis neturi koordinačių sistemos – lyginama pagal failų koordinates.', 'info', 7000);
+    res.warnings.forEach((w) => toast(w, 'info', 6000));
+    $('#cmp-empty').hidden = true;
+    $('#cmp-body').hidden = false;
+    $('#cmp-show-cmp').checked = false;
+    cmp.visible = false;
+    renderCompareInfo();
+    fillCompareRegions();
+    toast(tr('Palyginimo modelis įkeltas: {n}. Spauskite „Skaičiuoti pokyčius“.', { n: res.name }), 'info', 6000);
+  } catch (e) {
+    console.error(e);
+    toast(e.message || String(e), 'error', 8000);
+  } finally {
+    setLoading(false);
+  }
+}
+
+/** Abiejų modelių persidengimas XZ plokštumoje (pasaulio koordinatėmis). */
+function overlapXZ() {
+  const A = viewer.worldBox, B = cmp.box;
+  const o = { minX: Math.max(A.min.x, B.min.x), maxX: Math.min(A.max.x, B.max.x), minZ: Math.max(A.min.z, B.min.z), maxZ: Math.min(A.max.z, B.max.z) };
+  return o.maxX > o.minX && o.maxZ > o.minZ ? o : null;
+}
+
+function renderCompareInfo() {
+  const ov = overlapXZ();
+  const rows = [
+    [tr('Failas'), compareState.name],
+    [tr('Persidengimas'), ov ? units.fmtArea((ov.maxX - ov.minX) * (ov.maxZ - ov.minZ)) + ' ' + tr('(stačiakampis)') : '—'],
+  ];
+  $('#cmp-info').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+}
+
+function fillCompareRegions() {
+  const sel = $('#cmp-region');
+  const prev = sel.value;
+  const polys = items.filter((i) => ['area', 'volume'].includes(i.m.type) && i.m.points.length >= 3);
+  sel.innerHTML =
+    `<option value="">${tr('Visa persidengianti sritis')}</option>` +
+    polys.map((i) => `<option value="${i.m.id}">${escapeHtml(i.m.name || tr(TOOLS[i.m.type].label))}</option>`).join('');
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+async function runCompare() {
+  if (!cmp.loaded) return;
+  const ov = overlapXZ();
+  if (!ov) return toast('Modeliai nepersidengia – patikrinkite, ar abu turi tas pačias koordinates.', 'error');
+  const regionId = $('#cmp-region').value;
+  const region = regionId ? items.find((i) => String(i.m.id) === regionId)?.m : null;
+  const poly = region ? region.points.map((p) => viewer.localToWorld(p)) : null;
+  const bounds = poly
+    ? { minX: Math.min(...poly.map((p) => p.x)), maxX: Math.max(...poly.map((p) => p.x)), minZ: Math.min(...poly.map((p) => p.z)), maxZ: Math.max(...poly.map((p) => p.z)) }
+    : ov;
+  const ext = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
+  const cell = Math.max(ext / Math.max(200, settings.resolution * 2), metersToWorld(0.05));
+  const threshold = metersToWorld(Math.max(0, +$('#cmp-threshold').value || 0));
+  const mainAt = (x, z) => viewer.topHeightAt(x, z);
+  const cmpAt = (x, z) => cmp.heightAt(x, z);
+  const cmpIsOld = $('#cmp-order').value === 'old';
+  clearChangeLayer();
+  setLoading(true, tr('Skaičiuojami pokyčiai…'), 0);
+  try {
+    const res = await analyzeChange(cmpIsOld ? cmpAt : mainAt, cmpIsOld ? mainAt : cmpAt, bounds, {
+      cell, poly, threshold,
+      onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
+    });
+    if (!res.area) throw new Error(tr('Pasirinktoje srityje modeliai nepersidengia.'));
+    const mesh = buildChangeMesh(res, metersToWorld(0.03));
+    changeLayer.add(mesh);
+    changeLayer.visible = $('#cmp-show-map').checked;
+    compareState.result = { ...res, region: region ? region.name || tr(TOOLS[region.type].label) : tr('Visa persidengianti sritis'), cmpIsOld, range: mesh.userData.range, density: settings.density };
+    renderCompareResult();
+    viewer.requestRender();
+  } catch (e) {
+    toast(e.message || String(e), 'error', 8000);
+  } finally {
+    setLoading(false);
+  }
+}
+
+/** Pokyčių eilutės (UI ir PDF ataskaitai). */
+function compareRows(r = compareState?.result) {
+  if (!r) return [];
+  const m3 = (v) => units.toCubicMeters(v);
+  const rows = [
+    [tr('Sritis'), r.region],
+    [tr('Palyginta sritis'), units.fmtArea(r.area)],
+    [tr('Pridėta (pylimas)'), units.fmtVol(r.fill)],
+    [tr('Pašalinta (iškasa)'), units.fmtVol(r.cut)],
+    [tr('Grynasis pokytis'), (r.net > 0 ? '+' : '') + units.fmtVol(r.net)],
+  ];
+  if (r.density > 0) {
+    rows.push([tr('Pridėta masė ({d} t/m³)', { d: units.num(r.density, 2) }), `${units.num(m3(r.fill) * r.density, 1)} t`]);
+    rows.push([tr('Pašalinta masė ({d} t/m³)', { d: units.num(r.density, 2) }), `${units.num(m3(r.cut) * r.density, 1)} t`]);
+  }
+  rows.push(
+    [tr('Plotas, kur pridėta'), units.fmtArea(r.fillArea)],
+    [tr('Plotas, kur pašalinta'), units.fmtArea(r.cutArea)],
+    [tr('Didžiausias pakilimas'), units.fmtLen(r.maxUp)],
+    [tr('Didžiausias nusileidimas'), units.fmtLen(r.maxDown)],
+    [tr('Nejautrumo riba'), '±' + units.fmtLen(r.threshold)],
+    [tr('Tinklelio žingsnis'), units.fmtLen(r.grid.cell)],
+  );
+  return rows;
+}
+
+function renderCompareResult() {
+  const r = compareState?.result;
+  $('#cmp-result').hidden = !r;
+  if (!r) return;
+  $('#cmp-leg-min').textContent = '−' + units.fmtLen(r.range);
+  $('#cmp-leg-max').textContent = '+' + units.fmtLen(r.range);
+  $('#cmp-values').innerHTML = compareRows().map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+}
+
+$('#cmp-open').addEventListener('click', () => $('#cmp-input').click());
+$('#cmp-open-folder').addEventListener('click', () => $('#cmp-folder-input').click());
+for (const id of ['#cmp-input', '#cmp-folder-input'])
+  $(id).addEventListener('change', (e) => {
+    openCompareFiles([...e.target.files]);
+    e.target.value = '';
+  });
+$('#cmp-run').addEventListener('click', runCompare);
+$('#cmp-remove').addEventListener('click', clearCompare);
+$('#cmp-region').addEventListener('focus', fillCompareRegions);
+$('#cmp-region').addEventListener('mousedown', fillCompareRegions);
+$('#cmp-show-main').addEventListener('change', (e) => {
+  viewer.content.visible = e.target.checked;
+  viewer.requestRender();
+});
+$('#cmp-show-cmp').addEventListener('change', (e) => (cmp.visible = e.target.checked));
+$('#cmp-show-map').addEventListener('change', (e) => {
+  changeLayer.visible = e.target.checked;
+  viewer.requestRender();
+});
+cmp.visible = false;
+
+// ---------------------------------------------------------------------------
 // Žemėlapis po modeliu
 // ---------------------------------------------------------------------------
 const mapSource = () =>
@@ -1253,6 +1453,158 @@ function download(name, data, type) {
 }
 const baseName = () => (modelInfo?.name || 'modelis').replace(/\.[^.]+$/, '');
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+
+// ---------------------------------------------------------------------------
+// PDF ataskaita
+// ---------------------------------------------------------------------------
+const REPORT_SKIP = new Set(['checkpoint', 'detections']); // turi atskirus skyrius
+
+function reportAvailability() {
+  const ms = items.filter((i) => i.m.visible !== false);
+  return {
+    view: true,
+    top: true,
+    measurements: ms.some((i) => !REPORT_SKIP.has(i.m.type)),
+    change: !!compareState?.result,
+    checkpoints: !!checkpointStats(),
+    ai: ms.some((i) => i.m.type === 'detections' && i.m.options.items?.length),
+  };
+}
+
+function openReportDialog() {
+  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
+  tools.deactivate();
+  const dlg = $('#dlg-report');
+  $('#rep-title').value ||= tr('Matavimų ataskaita');
+  $('#rep-object').value = baseName();
+  $('#rep-author').value = settings.reportAuthor || '';
+  const av = reportAvailability();
+  dlg.querySelectorAll('#rep-sections input').forEach((cb) => {
+    const ok = av[cb.value];
+    cb.disabled = !ok;
+    cb.checked = ok && settings.reportSections?.[cb.value] !== false;
+    cb.closest('label').classList.toggle('disabled', !ok);
+  });
+  dlg.returnValue = '';
+  dlg.showModal();
+}
+
+$('#dlg-report').addEventListener('close', () => {
+  const dlg = $('#dlg-report');
+  if (dlg.returnValue !== 'ok') return;
+  const sections = {};
+  dlg.querySelectorAll('#rep-sections input').forEach((cb) => (sections[cb.value] = cb.checked && !cb.disabled));
+  settings.reportAuthor = $('#rep-author').value.trim();
+  settings.reportSections = Object.fromEntries([...dlg.querySelectorAll('#rep-sections input')].filter((cb) => !cb.disabled).map((cb) => [cb.value, cb.checked]));
+  saveSettings();
+  makeReport({
+    title: $('#rep-title').value.trim() || tr('Matavimų ataskaita'),
+    object: $('#rep-object').value.trim() || baseName(),
+    author: settings.reportAuthor,
+    notes: $('#rep-notes').value.trim(),
+    sections,
+  });
+});
+
+function reportContext({ title, object, author, notes, sections }) {
+  const visible = items.filter((i) => i.m.visible !== false).map((i) => i.m);
+  const labels = [];
+  const measurements = [];
+  for (const m of visible) {
+    const desc = describe(m, viewer, units, settings);
+    const color = TOOLS[m.type]?.color;
+    if (settings.labels) desc.labels.forEach((l) => labels.push({ world: viewer.localToWorld(l.pos), text: l.text, sub: l.sub, color: l.color || color }));
+    if (REPORT_SKIP.has(m.type)) continue;
+    const rows = m.points.map((p) => viewer.coordRows(p, units, settings.coordOrder));
+    measurements.push({
+      name: m.name,
+      type: tr(TOOLS[m.type]?.label || m.type),
+      value: desc.value || '—',
+      details: desc.details.map(([k, v]) => [tr(k), String(v)]),
+      coordNames: rows[0]?.map(([k]) => tr(k)) || [],
+      points: m.type === 'scale' ? [] : rows.map((r) => r.map(([, v]) => units.num(v, Math.max(3, units.precision)))),
+    });
+  }
+
+  let change = null;
+  const r = compareState?.result;
+  if (r) {
+    const g = r.grid;
+    change = {
+      rows: compareRows(r),
+      range: r.range,
+      fmtLen: (v) => units.fmtLen(v),
+      oldName: r.cmpIsOld ? compareState.name : modelInfo?.name,
+      newName: r.cmpIsOld ? modelInfo?.name : compareState.name,
+      bounds: { minX: g.minX, maxX: g.minX + (g.nx - 1) * g.cell, minZ: g.minZ, maxZ: g.minZ + (g.nz - 1) * g.cell },
+    };
+  }
+
+  let checkpoints = null;
+  const st = checkpointStats();
+  if (st) {
+    const p3 = Math.max(units.precision, 3);
+    const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
+    const f = (v) => `${v > 0 ? '+' : ''}${units.num(v, p3)}`;
+    const cps = items.filter((i) => i.m.type === 'checkpoint' && i.m.options.known);
+    checkpoints = {
+      summary: [
+        [tr('Taškų'), String(st.n)],
+        [tr('RMS plokštumoje'), units.fmtDisp(st.rmsXY, p3)],
+        [tr('RMS aukščio'), units.fmtDisp(st.rmsZ, p3)],
+        [tr('Vid. ΔH'), `${f(st.mean.z)} ${units.display}`],
+      ],
+      cols: [tr('Taškas'), `${geo ? 'ΔX (š.)' : 'ΔX'} (${units.display})`, `${geo ? 'ΔY (r.)' : 'ΔY'} (${units.display})`, `ΔH (${units.display})`, `${tr('Δ plokštumoje')} (${units.display})`],
+      rows: cps.map((i) => {
+        const c = checkpointResidual(i.m, viewer, units);
+        return [i.m.name, f(geo ? c.dy : c.dx), f(geo ? c.dx : c.dy), f(c.dz), units.num(Math.hypot(c.dx, c.dy), p3)];
+      }),
+    };
+  }
+
+  const detections = visible
+    .filter((m) => m.type === 'detections' && m.options.items?.length)
+    .map((m) => {
+      const [head, ...rows] = detectionTable(m);
+      const counts = {};
+      m.options.items.forEach((it) => (counts[it.cls] = (counts[it.cls] || 0) + 1));
+      return {
+        name: m.name,
+        summary: [
+          ...Object.entries(counts).map(([c, n]) => [tr(AI_CLASSES[c]?.many || c), String(n)]),
+          [tr('Vidutinis patikimumas'), units.fmtPercent((m.options.items.reduce((a, it) => a + it.score, 0) / m.options.items.length) * 100)],
+        ],
+        cols: head.map(String),
+        rows: rows.slice(0, 500).map((r) => r.map(String)),
+      };
+    });
+
+  const date = new Date().toLocaleString(locale(), { dateStyle: 'long', timeStyle: 'short' });
+  return {
+    viewer, units, t: tr, changeLayer,
+    meta: { title, object, author, notes, date },
+    sections, labels, measurements, change, checkpoints, detections,
+    modelRows: modelInfoRows(true),
+  };
+}
+
+async function makeReport(opts) {
+  setLoading(true, tr('Kuriama PDF ataskaita…'), 0.05);
+  try {
+    const { createReport } = await import('./report/report.js');
+    const blob = await createReport(reportContext(opts), (t) => ($('#loading-text').textContent = t));
+    const safe = opts.object.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'ataskaita';
+    download(`${safe}_ataskaita_${stamp()}.pdf`, blob);
+    toast('PDF ataskaita sukurta');
+  } catch (e) {
+    console.error(e);
+    toast(tr('Nepavyko sukurti ataskaitos: {e}', { e: e.message || e }), 'error', 9000);
+  } finally {
+    setLoading(false);
+  }
+}
+
+$('#btn-report').addEventListener('click', openReportDialog);
 
 $('#btn-export-csv').addEventListener('click', () => {
   if (!items.length) return toast('Nėra matavimų eksportui');

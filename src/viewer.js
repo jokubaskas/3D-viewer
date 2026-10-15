@@ -725,48 +725,13 @@ export class Viewer extends EventTarget {
     return NaN;
   }
 
-  /** Taškų debesiui sukuriamas aukščių tinklelis (maksimalus Y kiekviename langelyje). */
-  _buildPointGrid() {
-    const box = this.worldBox;
-    const size = box.getSize(new THREE.Vector3());
-    let total = 0;
-    for (const pc of this.pointClouds) total += pc.geometry.attributes.position.count;
-    const spacing = Math.sqrt((size.x * size.z) / Math.max(1, total));
-    const cell = Math.max(spacing * 1.6, Math.max(size.x, size.z) / 2048);
-    const nx = Math.ceil(size.x / cell) + 1, nz = Math.ceil(size.z / cell) + 1;
-    const grid = new Float32Array(nx * nz).fill(NaN);
-    const v = new THREE.Vector3();
-    for (const pc of this.pointClouds) {
-      const pos = pc.geometry.attributes.position;
-      const m = pc.matrixWorld;
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i).applyMatrix4(m);
-        if (!this._passesClip(v)) continue;
-        const ix = Math.floor((v.x - box.min.x) / cell), iz = Math.floor((v.z - box.min.z) / cell);
-        const k = iz * nx + ix;
-        if (!(grid[k] >= v.y)) grid[k] = v.y;
-      }
-    }
-    this._pointGrid = { grid, nx, nz, cell, minX: box.min.x, minZ: box.min.z, clipKey: `${this.clip.min}|${this.clip.max}` };
-  }
-
   _pointGridHeight(x, z) {
-    if (!this._pointGrid || this._pointGrid.clipKey !== `${this.clip.min}|${this.clip.max}`) this._buildPointGrid();
-    const g = this._pointGrid;
-    const ix = Math.floor((x - g.minX) / g.cell), iz = Math.floor((z - g.minZ) / g.cell);
-    if (ix < 0 || iz < 0 || ix >= g.nx || iz >= g.nz) return NaN;
-    const h = g.grid[iz * g.nx + ix];
-    if (!isNaN(h)) return h;
-    // Užpildome nedideles skyles kaimynų vidurkiu
-    let s = 0, n = 0;
-    for (let dz = -2; dz <= 2; dz++)
-      for (let dx = -2; dx <= 2; dx++) {
-        const jx = ix + dx, jz = iz + dz;
-        if (jx < 0 || jz < 0 || jx >= g.nx || jz >= g.nz) continue;
-        const hh = g.grid[jz * g.nx + jx];
-        if (!isNaN(hh)) { s += hh; n++; }
-      }
-    return n ? s / n : NaN;
+    const key = `${this.clip.min}|${this.clip.max}`;
+    if (!this._pointGrid || this._pointGrid.clipKey !== key) {
+      this._pointGrid = buildPointGrid(this.pointClouds, this.worldBox, (v) => this._passesClip(v));
+      this._pointGrid.clipKey = key;
+    }
+    return pointGridHeight(this._pointGrid, x, z);
   }
 
   // -------------------------------------------------------------------------
@@ -803,6 +768,47 @@ export class Viewer extends EventTarget {
     this.renderer.render(this.scene, this.camera);
     return this.renderer.domElement;
   }
+}
+
+/** Taškų debesiui sukuriamas aukščių tinklelis (maksimalus Y kiekviename langelyje), pasaulio koordinatėmis. */
+export function buildPointGrid(pointClouds, box, filter = null) {
+  const size = box.getSize(new THREE.Vector3());
+  let total = 0;
+  for (const pc of pointClouds) total += pc.geometry.attributes.position.count;
+  const spacing = Math.sqrt((size.x * size.z) / Math.max(1, total));
+  const cell = Math.max(spacing * 1.6, Math.max(size.x, size.z) / 2048);
+  const nx = Math.ceil(size.x / cell) + 1, nz = Math.ceil(size.z / cell) + 1;
+  const grid = new Float32Array(nx * nz).fill(NaN);
+  const v = new THREE.Vector3();
+  for (const pc of pointClouds) {
+    const pos = pc.geometry.attributes.position;
+    const m = pc.matrixWorld;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m);
+      if (filter && !filter(v)) continue;
+      const ix = Math.floor((v.x - box.min.x) / cell), iz = Math.floor((v.z - box.min.z) / cell);
+      const k = iz * nx + ix;
+      if (!(grid[k] >= v.y)) grid[k] = v.y;
+    }
+  }
+  return { grid, nx, nz, cell, minX: box.min.x, minZ: box.min.z };
+}
+
+export function pointGridHeight(g, x, z) {
+  const ix = Math.floor((x - g.minX) / g.cell), iz = Math.floor((z - g.minZ) / g.cell);
+  if (ix < 0 || iz < 0 || ix >= g.nx || iz >= g.nz) return NaN;
+  const h = g.grid[iz * g.nx + ix];
+  if (!isNaN(h)) return h;
+  // Užpildome nedideles skyles kaimynų vidurkiu
+  let s = 0, n = 0;
+  for (let dz = -2; dz <= 2; dz++)
+    for (let dx = -2; dx <= 2; dx++) {
+      const jx = ix + dx, jz = iz + dz;
+      if (jx < 0 || jz < 0 || jx >= g.nx || jz >= g.nz) continue;
+      const hh = g.grid[jz * g.nx + jx];
+      if (!isNaN(hh)) { s += hh; n++; }
+    }
+  return n ? s / n : NaN;
 }
 
 export function niceStep(raw) {

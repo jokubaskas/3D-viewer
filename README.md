@@ -39,6 +39,21 @@ Kiti patogumai:
 - Atvaizdavimas: tekstūra, apšviesta, reljefas (pilkas), aukščių spalvos su horizontalėmis.
 - Pjūvis pagal aukštį – paslėpti medžius / stogus ir matuoti, kas po jais.
 - Vaizdai iš viršaus / priekio / šono, ortografinė projekcija (`O`), dvigubas spustelėjimas – sukimosi centras.
+- **Palyginimas su kita data** (*Modelis → Palyginimas su kita data*). Įkeliamas to paties objekto modelis iš kitos datos: ZIP, aplankas ar failas, pvz. kitas ODM projektas. Programa jį padeda pagal koordinates ir tinkleliu palygina abu paviršius. Rezultatai:
+  - pridėtas, pašalintas ir grynasis tūris, masė pagal tankį;
+  - pokyčių plotai, didžiausias pakilimas ir nusileidimas;
+  - spalvotas pokyčių žemėlapis: raudona – pridėta, mėlyna – pašalinta.
+
+  Galima lyginti visą persidengiančią sritį arba pasirinktą *Plotas* / *Tūris* kontūrą. Pokyčiai, mažesni už nejautrumo ribą (numatyta 0,10 m), laikomi fotogrametrijos triukšmu. Patikrinta su pakeistu ODM modeliu: įterpta 157,08 m³ krūva apskaičiuota kaip 157,08 m³, 75,40 m³ duobė – kaip 74,27 m³.
+- **PDF ataskaita** (mygtukas *PDF* matavimų skiltyje). Joje gali būti:
+  - Atea logotipas, pavadinimas, objektas, autorius ir pastabos;
+  - modelio informacija (koordinačių ir aukščių sistema, matmenys);
+  - bendras vaizdas ir vaizdas iš viršaus su matavimais, mastelio juosta ir šiaurės rodykle;
+  - matavimų suvestinė ir detalės su taškų koordinatėmis;
+  - pokyčiai tarp datų su žemėlapiu ir legenda;
+  - kontroliniai taškai (RMS) ir AI aptikti objektai.
+
+  Skyrius galima pasirinkti. Šriftas – Inter (SIL OFL 1.1), įterptas su lietuviškomis raidėmis (`src/report/fonts.js`).
 - **Žemėlapis po modeliu** (`M` arba mygtukas su žemėlapio ženklu) – palydovinė nuotrauka (Esri), OpenStreetMap arba bet koks XYZ plytelių adresas (`https://…/{z}/{x}/{y}.png`). Žemėlapis dedamas pagal modelio koordinates (LKS-94 arba UTM). Kiekviena plytelė perskaičiuojama iš Web Mercator į modelio sistemą, todėl modelis atsiduria tikroje vietoje. Tikrinant su ODM projektu, žemėlapis nuo modelio buvo pasislinkęs ~4 cm. Galutinį tikslumą lemia pats žemėlapis: palydovinių nuotraukų paklaida dažnai siekia 1–3 m. Permatomumas keičiamas nustatymuose. Modeliams be koordinačių sistemos (pvz. OBJ be `coords.txt`) žemėlapis nerodomas. Reikia interneto ryšio.
 - Matavimų eksportas į **CSV** (Excel, lietuviškas formatas), išsaugojimas / įkėlimas **JSON**, ekrano kopija su etiketėmis (`P`).
 - Vienetai: m, cm, mm, km, ft; modelio vienetų ir mastelio nustatymai.
@@ -158,3 +173,5 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `deploy/` – Docker Compose: NodeODM + AI paslauga + nginx su programa
 - `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
+- `src/compare.js` – palyginimo modelis, pokyčių tinklelis, tūriai ir pokyčių žemėlapis
+- `src/report/` – PDF ataskaita (jsPDF, įkeliama tik kuriant ataskaitą) ir šriftas
