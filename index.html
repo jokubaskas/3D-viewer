@@ -131,6 +131,7 @@
 
         <div class="tab-pane active" data-pane="measurements">
           <div class="pane-actions">
+            <button class="btn btn-sm btn-primary" id="btn-report" title="PDF ataskaita su vaizdais ir matavimais"><span data-icon="report"></span>PDF</button>
             <button class="btn btn-sm btn-outline" id="btn-export-csv" title="Eksportuoti į CSV (Excel)"><span data-icon="table"></span>CSV</button>
             <button class="btn btn-sm btn-outline" id="btn-export-json" title="Išsaugoti matavimus (JSON)"><span data-icon="save"></span>Išsaugoti</button>
             <button class="btn btn-sm btn-outline" id="btn-import-json" title="Įkelti išsaugotus matavimus (JSON)"><span data-icon="upload"></span>Įkelti</button>
@@ -185,6 +186,39 @@
             <label class="row" id="row-map-url" hidden>Adresas <input id="map-url" class="num wide" style="text-align:left;width:190px" placeholder="https://…/{z}/{x}/{y}.png" /></label>
             <label class="row">Permatomumas <input type="range" id="map-opacity" min="0.2" max="1" step="0.05" value="1" /></label>
             <p class="muted small" id="map-note">Žemėlapis sulygiuojamas pagal modelio koordinates (LKS-94 arba UTM). Reikia interneto ryšio.</p>
+          </section>
+          <section class="card" id="cmp-card">
+            <h3>Palyginimas su kita data</h3>
+            <p class="muted small" id="cmp-empty">Įkelkite to paties objekto modelį iš kitos datos (ZIP, aplanką ar failą). Programa apskaičiuos, kiek medžiagos pridėta ir pašalinta, ir nuspalvins pokyčius.</p>
+            <div class="row">
+              <button class="btn btn-sm btn-outline" id="cmp-open"><span data-icon="open"></span>Įkelti modelį…</button>
+              <button class="btn btn-sm btn-outline" id="cmp-open-folder"><span data-icon="folder"></span>Aplanką…</button>
+            </div>
+            <input type="file" id="cmp-input" multiple hidden
+              accept=".obj,.mtl,.glb,.gltf,.bin,.ply,.stl,.fbx,.dae,.3mf,.las,.laz,.pcd,.xyz,.pts,.txt,.csv,.zip,.jpg,.jpeg,.png,.tif,.tiff,.webp" />
+            <input type="file" id="cmp-folder-input" webkitdirectory directory multiple hidden />
+            <div id="cmp-body" hidden>
+              <dl class="kv" id="cmp-info"></dl>
+              <label class="row">Įkeltas modelis yra
+                <select id="cmp-order">
+                  <option value="old">ankstesnis (bazinis)</option>
+                  <option value="new">vėlesnis</option>
+                </select>
+              </label>
+              <label class="row">Sritis <select id="cmp-region"></select></label>
+              <label class="row">Nejautrumo riba <input type="number" id="cmp-threshold" class="num" value="0.1" min="0" step="0.01" /> <span class="unit-label">m</span></label>
+              <label class="row check"><input type="checkbox" id="cmp-show-map" checked /> Rodyti pokyčių žemėlapį</label>
+              <label class="row check"><input type="checkbox" id="cmp-show-main" checked /> Rodyti pagrindinį modelį</label>
+              <label class="row check"><input type="checkbox" id="cmp-show-cmp" /> Rodyti palyginimo modelį</label>
+              <div class="row">
+                <button class="btn btn-sm btn-primary" id="cmp-run">Skaičiuoti pokyčius</button>
+                <button class="btn btn-sm btn-outline" id="cmp-remove" title="Pašalinti palyginimo modelį"><span data-icon="trash"></span></button>
+              </div>
+              <div id="cmp-result" hidden>
+                <div class="cmp-legend"><span id="cmp-leg-min"></span><div class="cmp-bar"></div><span id="cmp-leg-max"></span></div>
+                <dl class="kv" id="cmp-values"></dl>
+              </div>
+            </div>
           </section>
           <section class="card">
             <h3>Kontroliniai taškai</h3>
@@ -309,6 +343,28 @@
       <menu>
         <button value="cancel" class="btn btn-ghost">Atšaukti</button>
         <button value="ok" class="btn btn-primary" id="cal-ok">Taikyti</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-report">
+    <form method="dialog">
+      <h2>PDF ataskaita</h2>
+      <label class="row">Pavadinimas <input id="rep-title" class="num wide" style="text-align:left;width:240px" /></label>
+      <label class="row">Objektas <input id="rep-object" class="num wide" style="text-align:left;width:240px" /></label>
+      <label class="row">Parengė <input id="rep-author" class="num wide" style="text-align:left;width:240px" placeholder="Vardas Pavardė, įmonė" /></label>
+      <label class="row" style="align-items:flex-start">Pastabos <textarea id="rep-notes" rows="3" style="width:240px"></textarea></label>
+      <div class="rep-sections" id="rep-sections">
+        <label class="check"><input type="checkbox" value="view" checked /> Bendras vaizdas (dabartinis kampas)</label>
+        <label class="check"><input type="checkbox" value="top" checked /> Vaizdas iš viršaus su matavimais</label>
+        <label class="check"><input type="checkbox" value="measurements" checked /> Matavimai ir taškų koordinatės</label>
+        <label class="check"><input type="checkbox" value="change" checked /> Pokyčiai tarp datų</label>
+        <label class="check"><input type="checkbox" value="checkpoints" checked /> Kontroliniai taškai</label>
+        <label class="check"><input type="checkbox" value="ai" checked /> AI aptikti objektai</label>
+      </div>
+      <menu>
+        <button value="cancel" class="btn btn-ghost" formnovalidate>Atšaukti</button>
+        <button value="ok" class="btn btn-primary">Kurti PDF</button>
       </menu>
     </form>
   </dialog>

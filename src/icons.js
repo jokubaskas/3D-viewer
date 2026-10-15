@@ -35,6 +35,7 @@ export const ICONS = {
   volume: p('<path d="M2 19c3-1 4-9 10-10s7 9 10 10z" fill="currentColor" fill-opacity=".18"/><path d="M2 19h20" stroke-dasharray="2 2"/>'),
   profile: p('<path d="M3 20h18"/><path d="M3 15l4-5 4 3 4-7 6 6" /><path d="M3 4v16" opacity=".5"/>'),
   scale: p('<path d="M3 8h18v8H3z"/><path d="M7 8v3M11 8v4M15 8v3M19 8v4"/>'),
+  report: p('<path d="M6 3h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M8.5 13h7M8.5 16.5h5"/>'),
   map: p('<path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/>'),
   car: p('<path d="M5 17h14M6 17v2M18 17v2"/><path d="M4 13l2-5a2 2 0 0 1 1.9-1.4h8.2A2 2 0 0 1 18 8l2 5v4H4z"/><circle cx="8" cy="14" r="1" fill="currentColor"/><circle cx="16" cy="14" r="1" fill="currentColor"/>'),
   magic: p('<path d="M4 20 14 10"/><path d="M15 3v3M13.5 4.5h3M19 8v2M18 9h2M18 14v3M16.5 15.5h3"/><path d="m12 8 4 4"/>'),
