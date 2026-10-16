@@ -550,14 +550,17 @@ async function aiOutline(local) {
   const box = viewer.worldBox;
   const ext = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
   let S = Math.min(ext * 1.05, metersToWorld(80));
-  setLoading(true, tr('AI ieško objekto kontūro…'), 0.3);
+  const ac = startCancellable(tr('AI ieško objekto kontūro…'), 0.3);
+  const { signal } = ac;
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
+      signal.throwIfAborted();
       const half = S / 2;
       const img = await renderTopDown(viewer, { minX: P.x - half, maxX: P.x + half, minZ: P.z - half, maxZ: P.z + half, gsd: S / 1024, maxPx: 1024 });
       const [px, py] = img.toPixel(P.x, P.z);
       $('#loading-bar').style.width = `${40 + attempt * 20}%`;
-      const res = await (await aiClient()).segment(img.blob, px, py);
+      const res = await (await aiClient()).segment(img.blob, px, py, { signal });
+      signal.throwIfAborted();
       // Kontūras siekia vaizdo kraštą – objektas didesnis, didiname sritį
       if (res.touches_border && S < ext && attempt < 2) {
         S = Math.min(S * 2.2, ext * 1.05);
@@ -577,7 +580,8 @@ async function aiOutline(local) {
       return;
     }
   } catch (e) {
-    toast(e.message, 'error', 9000);
+    if (isAbort(e)) toast('AI skaičiavimas atšauktas');
+    else toast(e.message, 'error', 9000);
   } finally {
     setLoading(false);
   }
@@ -588,14 +592,17 @@ async function runDetection() {
   tools.deactivate();
   const classes = settings.aiClasses.length ? settings.aiClasses : ['car', 'truck', 'bus'];
   const box = viewer.worldBox;
-  setLoading(true, tr('Ruošiamas vaizdas iš viršaus…'), 0.1);
+  const ac = startCancellable(tr('Ruošiamas vaizdas iš viršaus…'), 0.1);
+  const { signal } = ac;
   try {
     await new Promise((r) => setTimeout(r, 30));
+    signal.throwIfAborted();
     const img = await renderTopDown(viewer, { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z, gsd: metersToWorld(0.06), maxPx: 6144 });
     const gsdM = units.toMeters(img.gsd);
     $('#loading-text').textContent = tr('AI ieško transporto… ({w}×{h} px, {g} cm/px)', { w: img.width, h: img.height, g: (gsdM * 100).toFixed(1) });
     $('#loading-bar').style.width = '50%';
-    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold, gsd: gsdM });
+    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold, gsd: gsdM, signal });
+    signal.throwIfAborted();
     const det = res.detections || [];
     if (!det.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
     const lift = metersToWorld(0.25);
@@ -653,7 +660,8 @@ async function runDetection() {
     );
     if (gsdM > 0.15) toast(tr('Modelis didelis – vaizdo raiška {g} cm/px, maži objektai gali būti praleisti.', { g: (gsdM * 100).toFixed(0) }), 'info', 8000);
   } catch (e) {
-    toast(e.message, 'error', 9000);
+    if (isAbort(e)) toast('AI skaičiavimas atšauktas');
+    else toast(e.message, 'error', 9000);
   } finally {
     setLoading(false);
   }
@@ -834,11 +842,30 @@ viewer.addEventListener('orientation', () => {
 // ---------------------------------------------------------------------------
 // Modelio įkėlimas
 // ---------------------------------------------------------------------------
+let loadingAbort = null; // atšaukiamo veiksmo valdiklis (žr. startCancellable)
 function setLoading(on, text = 'Įkeliama…', p = null) {
+  if (!on) {
+    loadingAbort = null;
+    $('#loading-cancel').hidden = true;
+  }
   $('#loading').hidden = !on;
   $('#loading-text').textContent = text;
   if (p != null) $('#loading-bar').style.width = `${Math.round(p * 100)}%`;
 }
+
+/**
+ * Atšaukiamas ilgas veiksmas: įkėlimo lange rodomas mygtukas „Atšaukti“ (taip pat Esc).
+ * @returns {AbortController}
+ */
+function startCancellable(text, p) {
+  const ac = new AbortController();
+  setLoading(true, text, p);
+  loadingAbort = ac;
+  $('#loading-cancel').hidden = false;
+  return ac;
+}
+const isAbort = (e) => e?.name === 'AbortError';
+$('#loading-cancel').addEventListener('click', () => loadingAbort?.abort());
 
 function guessUp(object, suggested) {
   if (suggested) return suggested;
@@ -1292,10 +1319,10 @@ async function runCompare() {
   const cmpAt = (x, z) => cmp.heightAt(x, z);
   const cmpIsOld = $('#cmp-order').value === 'old';
   clearChangeLayer();
-  setLoading(true, tr('Skaičiuojami pokyčiai…'), 0);
+  const ac = startCancellable(tr('Skaičiuojami pokyčiai…'), 0);
   try {
     const res = await analyzeChange(cmpIsOld ? cmpAt : mainAt, cmpIsOld ? mainAt : cmpAt, bounds, {
-      cell, poly, threshold,
+      cell, poly, threshold, signal: ac.signal,
       onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
     });
     if (!res.area) throw new Error(tr('Pasirinktoje srityje modeliai nepersidengia.'));
@@ -1306,7 +1333,8 @@ async function runCompare() {
     renderCompareResult();
     viewer.requestRender();
   } catch (e) {
-    toast(e.message || String(e), 'error', 8000);
+    if (isAbort(e)) toast('Skaičiavimas atšauktas');
+    else toast(e.message || String(e), 'error', 8000);
   } finally {
     setLoading(false);
   }
@@ -1813,6 +1841,10 @@ $('#btn-help').addEventListener('click', () => $('#dlg-help').showModal());
 // ---------------------------------------------------------------------------
 const KEY_TOOLS = Object.fromEntries(Object.entries(TOOLS).filter(([, t]) => t.key).map(([id, t]) => [t.key.toLowerCase(), id]));
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && loadingAbort) {
+    e.preventDefault();
+    return loadingAbort.abort();
+  }
   if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {

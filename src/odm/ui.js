@@ -4,6 +4,7 @@ import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
 import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
+import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
 import { t, locale } from '../i18n.js';
 
@@ -47,6 +48,7 @@ export function createOdmUI(app) {
   let geoid = null; // GeoidGrid
   let uploading = null; // {abort, project}
   let pollTimer = null;
+  let preview = null; // PhotoPreview – nuotraukų peržiūra ir srities pasirinkimas
 
   // ------------------------------------------------------------------ DOM
   const page = document.createElement('section');
@@ -252,94 +254,22 @@ export function createOdmUI(app) {
       </div>
       ${a.warnings.length ? `<ul class="odm-warn">${a.warnings.map((w) => `<li class="${w.level}">${esc(w.text)}</li>`).join('')}</ul>` : '<p class="small ok">Nuotraukų rinkinys tvarkingas.</p>'}
       ${extraFiles.length ? `<p class="small">${t('Pridėtas GCP failas: {f} (bus perduotas ODM).', { f: esc(extraFiles.map((f) => f.name).join(', ')) })}</p>` : ''}
-      <div class="odm-map-wrap">
-        <canvas id="odm-map"></canvas>
-        <div class="odm-legend small"><span class="dot fix"></span>FIX <span class="dot float"></span>FLOAT <span class="dot other"></span>be RTK <span class="muted">· LKS-94</span></div>
-        <div class="odm-map-tip small" hidden></div>
-      </div>`;
-    drawMap();
+      <h4 class="odm-sub">${t('Peržiūra ir apdorojama sritis')}</h4>
+      <p class="small muted" style="margin:0 0 8px">${t('Apytikslis vaizdas iš nuotraukų (pagal GPS, aukštį ir kameros kryptį). Jei visos teritorijos nereikia – pažymėkite sritį: ODM apdoros tik ją, o jos nedengiančios nuotraukos nebus įkeltos.')}</p>
+      <div class="odm-preview" id="odm-preview"></div>
+      <div class="odm-legend small"><span class="dot fix"></span>FIX <span class="dot float"></span>FLOAT <span class="dot other"></span>${t('be RTK')}</div>`;
+    preview?.dispose();
+    const rtkColor = (m) => (m.rtkFlag === 50 ? '#3cc443' : m.rtkFlag === 34 ? '#ffb627' : '#ff5e57');
+    preview = new PhotoPreview($('#odm-preview'), a.used, {
+      agl: a.agl,
+      rtkColor,
+      tooltip: (m) => `<b>${esc(m.name)}</b><br>RTK ${t(rtkLabel(m.rtkFlag))}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>${t('Aukštis {h} m (virš pakil. {r} m)', { h: nf(m.absAlt ?? m.alt, 2), r: nf(m.relAlt, 1) })}`,
+      onChange: () => updateStartSummary(),
+    });
   }
 
   const stat = (label, value, sub, cls = '') => `<div class="odm-stat ${cls}"><span class="muted small">${label}</span><b>${value}</b><span class="muted small">${sub || ''}</span></div>`;
 
-  function drawMap() {
-    const cv = $('#odm-map');
-    if (!cv || !analysis) return;
-    const wrap = cv.parentElement;
-    const W = wrap.clientWidth, H = 300, dpr = devicePixelRatio || 1;
-    cv.width = W * dpr;
-    cv.height = H * dpr;
-    cv.style.height = `${H}px`;
-    const g = cv.getContext('2d');
-    g.scale(dpr, dpr);
-    g.fillStyle = '#16191b';
-    g.fillRect(0, 0, W, H);
-    const pts = analysis.lks;
-    if (!pts.length) return;
-    let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
-    for (const [e, n] of pts) {
-      minE = Math.min(minE, e); maxE = Math.max(maxE, e);
-      minN = Math.min(minN, n); maxN = Math.max(maxN, n);
-    }
-    const pad = 24;
-    const s = Math.min((W - 2 * pad) / Math.max(maxE - minE, 1), (H - 2 * pad) / Math.max(maxN - minN, 1));
-    const ox = (W - (maxE - minE) * s) / 2, oy = (H - (maxN - minN) * s) / 2;
-    const P = (e, n) => [ox + (e - minE) * s, H - (oy + (n - minN) * s)];
-    // Skrydžio trajektorija pagal laiką
-    const order = analysis.used.map((m, i) => i).sort((a, b) => (analysis.used[a].date?.getTime() || 0) - (analysis.used[b].date?.getTime() || 0));
-    g.strokeStyle = 'rgba(255,255,255,.12)';
-    g.lineWidth = 1;
-    g.beginPath();
-    order.forEach((i, k) => {
-      const [x, y] = P(...pts[i]);
-      k ? g.lineTo(x, y) : g.moveTo(x, y);
-    });
-    g.stroke();
-    const color = (m) => (m.rtkFlag === 50 ? '#3cc443' : m.rtkFlag === 34 ? '#ffb627' : '#ff5e57');
-    analysis.used.forEach((m, i) => {
-      const [x, y] = P(...pts[i]);
-      g.fillStyle = color(m);
-      g.beginPath();
-      g.arc(x, y, 3, 0, Math.PI * 2);
-      g.fill();
-    });
-    // Mastelio juosta
-    const target = (W * 0.2) / s;
-    const p10 = Math.pow(10, Math.floor(Math.log10(target)));
-    const len = [1, 2, 5, 10].map((k) => k * p10).filter((v) => v <= target).pop() || p10;
-    g.fillStyle = '#c3cac6';
-    g.fillRect(12, H - 16, len * s, 3);
-    g.font = '11px Inter, Segoe UI, sans-serif';
-    g.fillText(`${nf(len)} m`, 12, H - 22);
-    // Šiaurės rodyklė
-    g.beginPath();
-    g.moveTo(W - 18, 12);
-    g.lineTo(W - 24, 28);
-    g.lineTo(W - 12, 28);
-    g.closePath();
-    g.fill();
-    g.fillText(t('Š'), W - 22, 42);
-
-    cv.onmousemove = (e) => {
-      const r = cv.getBoundingClientRect();
-      const mx = e.clientX - r.left, my = e.clientY - r.top;
-      let best = -1, bd = 64;
-      pts.forEach((p, i) => {
-        const [x, y] = P(...p);
-        const d = (x - mx) ** 2 + (y - my) ** 2;
-        if (d < bd) { bd = d; best = i; }
-      });
-      const tip = page.querySelector('.odm-map-tip');
-      if (best < 0) return (tip.hidden = true);
-      const m = analysis.used[best];
-      tip.hidden = false;
-      tip.style.left = `${mx + 12}px`;
-      tip.style.top = `${my + 12}px`;
-      tip.innerHTML = `<b>${esc(m.name)}</b><br>RTK ${t(rtkLabel(m.rtkFlag))}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>${t('Aukštis {h} m (virš pakil. {r} m)', { h: nf(m.absAlt ?? m.alt, 2), r: nf(m.relAlt, 1) })}`;
-    };
-    cv.onmouseleave = () => (page.querySelector('.odm-map-tip').hidden = true);
-  }
-  new ResizeObserver(() => !page.hidden && drawMap()).observe(page);
 
   // ------------------------------------------------------------------ Aukščiai / geoidas
   const geoidMode = () => page.querySelector('input[name="odm-geoid"]:checked')?.value;
@@ -422,28 +352,34 @@ export function createOdmUI(app) {
 
   function updateStartSummary() {
     if (!analysis) return;
-    const n = analysis.used.length;
+    const photos = preview?.hasSelection ? preview.selectedPhotos() : analysis.used;
+    const n = photos.length;
+    const bytes = photos.reduce((s, m) => s + m.size, 0);
     // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
     const perImg = { fast: 4, standard: 8, high: 18 }[preset];
-    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })} (${fmtBytes(analysis.totalBytes)}) · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}`;
+    const area = preview?.hasSelection ? ` · ${t('sritis {a} ha', { a: nf(preview.areaM2 / 1e4, 2) })}` : '';
+    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })}${n < analysis.used.length ? ` ${t('iš {n}', { n: nf(analysis.used.length) })}` : ''} (${fmtBytes(bytes)})${area} · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}`;
   }
 
   // ------------------------------------------------------------------ Paleidimas
   async function start() {
     if (!analysis?.used.length) return app.toast('Pirmiausia pasirinkite nuotraukas', 'error');
+    const photos = preview?.hasSelection ? preview.selectedPhotos() : analysis.used;
+    const boundary = preview?.hasSelection ? preview.boundaryGeoJSON() : null;
+    if (photos.length < 5) return app.toast('Pasirinktą sritį dengia per mažai nuotraukų – padidinkite sritį', 'error');
     if (uploading) return app.toast('Jau vyksta įkėlimas', 'error');
     const info = await checkServer(true);
     if (!info) return app.toast('Apdorojimo serveris nepasiekiamas', 'error');
-    if (info.maxImages && analysis.used.length > info.maxImages) return app.toast(t('Serveris priima iki {n} nuotraukų', { n: info.maxImages }), 'error');
+    if (info.maxImages && photos.length > info.maxImages) return app.toast(t('Serveris priima iki {n} nuotraukų', { n: info.maxImages }), 'error');
     if ($('#odm-hmode').value === 'ellipsoid' && geoidMode() === 'const' && !geoidFn()) {
       return app.toast('Įveskite geoido aukštį N arba pasirinkite kitą variantą', 'error');
     }
 
     const name = $('#odm-name').value.trim() || 'Projektas';
-    const entries = uniqueUploadNames(analysis.used);
+    const entries = uniqueUploadNames(photos);
     const geoTxt = buildGeoTxt(entries, $('#odm-hmode').value, geoidFn());
     const options = buildOdmOptions(preset, {
-      dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked,
+      dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked, boundary,
     });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
@@ -451,7 +387,7 @@ export function createOdmUI(app) {
 
     const project = {
       uuid: null, name, server: server.url, created: Date.now(), photos: entries.length,
-      rtkFix: analysis.rtk.fix, preset, heightSystem: heightSystem(), status: 'uploading', progress: 0,
+      rtkFix: photos.filter((m) => m.rtkFlag === 50).length, preset, area: boundary ? Math.round(preview.areaM2) : null, heightSystem: heightSystem(), status: 'uploading', progress: 0,
     };
     const ctrl = new AbortController();
     uploading = { abort: () => ctrl.abort(), project };
@@ -493,6 +429,8 @@ export function createOdmUI(app) {
   }
 
   function resetWizard() {
+    preview?.dispose();
+    preview = null;
     metas = [];
     analysis = null;
     extraFiles = [];

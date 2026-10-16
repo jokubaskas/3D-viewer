@@ -26,7 +26,8 @@ export class AiClient {
     let res;
     try {
       res = await fetch(this.url(path), init);
-    } catch {
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e; // atšaukė naudotojas
       throw new Error(t('AI paslauga nepasiekiama ({u}). Ar paleistas serveris su AI (docker compose)?', { u: this.base }));
     }
     const text = await res.text();
@@ -46,7 +47,7 @@ export class AiClient {
   }
 
   /** @returns {Promise<{width:number,height:number,detections:{class:string,score:number,box:number[]}[]}>} */
-  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0 } = {}) {
+  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0, signal } = {}) {
     const fd = new FormData();
     fd.append('image', blob, 'ortho.jpg');
     fd.append('classes', classes.join(','));
@@ -54,15 +55,15 @@ export class AiClient {
     fd.append('tile', String(tile));
     fd.append('overlap', String(overlap));
     if (gsd > 0) fd.append('gsd', String(gsd));
-    return this._req('detect', { method: 'POST', body: fd });
+    return this._req('detect', { method: 'POST', body: fd, signal });
   }
 
   /** @returns {Promise<{polygon:number[][], touches_border:boolean, score:number, area_px:number}>} */
-  segment(blob, x, y) {
+  segment(blob, x, y, { signal } = {}) {
     const fd = new FormData();
     fd.append('image', blob, 'ortho.jpg');
     fd.append('x', String(x));
     fd.append('y', String(y));
-    return this._req('segment', { method: 'POST', body: fd });
+    return this._req('segment', { method: 'POST', body: fd, signal });
   }
 }

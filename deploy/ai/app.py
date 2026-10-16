@@ -20,7 +20,8 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
@@ -37,6 +38,7 @@ app = FastAPI(title="Atea 3D AI", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _lock = threading.Lock()
+_det_lock = threading.Lock()  # detektorius – po vieną plytelę (kelios užklausos vienu metu)
 _detector = None
 _sam = None
 
@@ -185,8 +187,23 @@ def _refine(img: np.ndarray, box) -> Optional[dict]:
     return {"corners": pts.tolist(), "length": length, "width": width, "heading": heading}
 
 
+class Cancelled(Exception):
+    """Klientas atšaukė užklausą (uždarė ryšį)."""
+
+
+async def _check(request: Request):
+    if await request.is_disconnected():
+        raise Cancelled()
+
+
+def _predict(model, crop, threshold):
+    with _det_lock:
+        return model.predict(Image.fromarray(crop), threshold=threshold)
+
+
 @app.post("/detect")
 async def detect(
+    request: Request,
     image: UploadFile = File(...),
     classes: str = Form("car,truck,bus,motorcycle"),
     threshold: float = Form(0.5),
@@ -200,13 +217,24 @@ async def detect(
     gsd – vaizdo pikselio dydis metrais. Jei nurodytas, objektai patikrinami pagal tikrus matmenis,
     o klasė (automobilis / sunkvežimis / autobusas) patikslinama pagal ilgį.
     refine – kiekvienam objektui MobileSAM nustato tikslų (pasuktą) kontūrą.
+
+    Skaičiavimai vyksta atskiroje gijoje po vieną plytelę; jei programa atšaukia užklausą
+    (uždaro ryšį), darbas nutraukiamas ties kita plytele ir serveris iškart laisvas kitiems veiksmams.
     """
+    try:
+        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine)
+    except Cancelled:
+        print("[ai] /detect atšaukta", flush=True)
+        return {"cancelled": True, "detections": []}
+
+
+async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine):
     img = read_image(await image.read())
     want = {c.strip() for c in classes.split(",") if c.strip()} or VEHICLES
     # Iš viršaus COCO modelis dažnai painioja automobilį, sunkvežimį ir autobusą – ieškome visų,
     # o galutinę klasę nustatome pagal matmenis.
     search = want | (VEHICLES - {"motorcycle"} if want & VEHICLES and gsd > 0 else set())
-    model = get_detector()
+    model = await run_in_threadpool(get_detector)
     h, w = img.shape[:2]
     tile = max(256, min(tile, 2048))
     step = max(64, tile - overlap)
@@ -221,7 +249,8 @@ async def detect(
             if crop.size == 0 or crop.mean() < 2:  # tuščia (už modelio ribų)
                 continue
             n_tiles += 1
-            det = model.predict(Image.fromarray(crop), threshold=threshold)
+            await _check(request)
+            det = await run_in_threadpool(_predict, model, crop, threshold)
             for (x1, y1, x2, y2), s, c in zip(det.xyxy, det.confidence, det.class_id):
                 name = COCO.get(int(c))
                 if name not in search:
@@ -244,7 +273,9 @@ async def detect(
             box = [float(v) for v in b[i]]
             name = str(lab[i])
             d = {"class": name, "score": round(float(s[i]), 3), "box": [round(v, 1) for v in box]}
-            r = _refine(img, box) if refine else None
+            if refine:
+                await _check(request)
+            r = await run_in_threadpool(_refine, img, box) if refine else None
             if gsd > 0:
                 cls = _judge(name, r["length"] * gsd, r["width"] * gsd) if r else None
                 if not r:
@@ -297,11 +328,15 @@ async def segment(
                 nx, ny = map(float, p.split(","))
                 pts.append([nx, ny])
                 lbl.append(0)
-    pred = get_sam()
+    pred = await run_in_threadpool(get_sam)
     t0 = time.time()
-    with _lock:
-        pred.set_image(img)
-        masks, scores, _ = pred.predict(point_coords=np.array(pts), point_labels=np.array(lbl), multimask_output=True)
+
+    def run():
+        with _lock:
+            pred.set_image(img)
+            return pred.predict(point_coords=np.array(pts), point_labels=np.array(lbl), multimask_output=True)
+
+    masks, scores, _ = await run_in_threadpool(run)
     # Renkamės didžiausią patikimą kaukę (krūvos dažnai segmentuojamos per smulkiai)
     order = np.argsort(-scores)
     best = int(order[0])

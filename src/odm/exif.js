@@ -152,6 +152,7 @@ function parseDjiXmp(xmp, meta) {
   meta.stdHgt = num('RtkStdHgt');
   meta.gimbalPitch = num('GimbalPitchDegree');
   meta.yaw = num('FlightYawDegree');
+  meta.gimbalYaw = num('GimbalYawDegree');
   meta.xmpVersion = get('Version');
   // DJI XMP koordinatės tikslesnės už EXIF (daugiau skaitmenų)
   const lat = num('GpsLatitude') ?? num('Latitude');
