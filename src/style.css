@@ -472,3 +472,5 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 #dlg-odm-save .save-list { margin-bottom: 6px; }
 .save-crs-row { flex-wrap: wrap; gap: 6px; }
 .save-crs-row select { flex: 1 1 180px; min-width: 0; max-width: 100%; }
+.pv-mode { display: inline-flex; align-items: center; gap: 6px; }
+.pv-mode select { max-width: 260px; }

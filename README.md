@@ -92,7 +92,9 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    **Peržiūra ir apdorojama sritis.** Iš nuotraukų per kelias sekundes sudėliojamas apytikslis ortofoto. Kiekviena nuotrauka dedama pagal GPS, aukštį virš pakilimo vietos, kameros kryptį (`GimbalYawDegree`) ir objektyvą (35 mm ekvivalentas), po ja rodoma palydovinė nuotrauka.
    Jei visos teritorijos nereikia, pažymėkite sritį (*Žymėti sritį*, taškus galima tempti):
    - ODM gauna ją kaip `boundary` (GeoJSON) ir apkarpo taškų debesį, 3D modelį, DEM bei ortofoto;
-   - nuotraukos, kurių pėdsakas srities nedengia, neįkeliamos – mažiau duomenų, greitesnis apdorojimas.
+   - dar prieš įkėlimą atrenkamos tik nuotraukos, kuriose sritis **aiškiai matosi** (patenka į centrinius 60 % kadro); nuotraukos, kurios sritį tik užkabina kraštu ar visai jos nemato, pritemdomos ir neįkeliamos. Po to patikrinama, kad kiekvieną srities tašką (~400 taškų) matytų bent 5 atrinktos nuotraukos – jei ne, pridedamos artimiausios. Galima pasirinkti ir visas, bent kraštu liečiančias sritį.
+
+   Apdorojimo laikas daugiausia priklauso nuo **nuotraukų skaičiaus**, nes ODM riba apkarpo tik jau sukurtą tankų taškų debesį. Įprastame skrydyje (80 m, 75 % persidengimas) taip naudojama 13–50 % mažiau nuotraukų nei visų liečiančių: kuo mažesnė sritis, tuo daugiau sutaupoma.
 
    Peržiūra apytikslė: aukštis skaičiuojamas nuo pakilimo vietos, todėl kalvotoje vietovėje mastelis gali skirtis keliais procentais.
 2. **Nustatymai** – kokybė (greitas / standartinis / aukšta), DSM, DTM, ortofoto, aukščių sistema:

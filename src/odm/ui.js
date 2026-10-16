@@ -267,7 +267,7 @@ export function createOdmUI(app) {
       ${a.warnings.length ? `<ul class="odm-warn">${a.warnings.map((w) => `<li class="${w.level}">${esc(w.text)}</li>`).join('')}</ul>` : '<p class="small ok">Nuotraukų rinkinys tvarkingas.</p>'}
       ${extraFiles.length ? `<p class="small">${t('Pridėtas GCP failas: {f} (bus perduotas ODM).', { f: esc(extraFiles.map((f) => f.name).join(', ')) })}</p>` : ''}
       <h4 class="odm-sub">${t('Peržiūra ir apdorojama sritis')}</h4>
-      <p class="small muted" style="margin:0 0 8px">${t('Apytikslis vaizdas iš nuotraukų (pagal GPS, aukštį ir kameros kryptį). Jei visos teritorijos nereikia – pažymėkite sritį: ODM apdoros tik ją, o jos nedengiančios nuotraukos nebus įkeltos.')}</p>
+      <p class="small muted" style="margin:0 0 8px">${t('Apytikslis vaizdas iš nuotraukų (pagal GPS, aukštį ir kameros kryptį). Jei visos teritorijos nereikia – pažymėkite sritį: dar prieš įkėlimą bus atrinktos tik nuotraukos, kuriose ji aiškiai matosi (kitos pritemdomos ir neįkeliamos), o ODM apdoros tik pažymėtą sritį. Apdorojimo laikas priklauso nuo nuotraukų skaičiaus.')}</p>
       <div class="odm-preview" id="odm-preview"></div>
       <div class="odm-legend small"><span class="dot fix"></span>FIX <span class="dot float"></span>FLOAT <span class="dot other"></span>${t('be RTK')}</div>`;
     preview?.dispose();

@@ -733,4 +733,9 @@ export const EN = {
   'Pašalinti iš serverio': 'Remove from server',
   'Serveris atmetė užklausą': 'The server rejected the request',
   'Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.': 'The task was restarted without the selected area boundary (it had been passed incorrectly). The whole photo area will be processed.',
+  'Nuotraukos:': 'Photos:',
+  'kuriose sritis aiškiai matosi (greičiau)': 'where the area is clearly visible (faster)',
+  'visos, bent kraštu liečiančios sritį': 'all that touch the area, even at the edge',
+  'kiekvieną srities tašką mato ≥ {k} nuotr.': 'every point of the area is seen by ≥ {k} photos',
+  'Apytikslis vaizdas iš nuotraukų (pagal GPS, aukštį ir kameros kryptį). Jei visos teritorijos nereikia – pažymėkite sritį: dar prieš įkėlimą bus atrinktos tik nuotraukos, kuriose ji aiškiai matosi (kitos pritemdomos ir neįkeliamos), o ODM apdoros tik pažymėtą sritį. Apdorojimo laikas priklauso nuo nuotraukų skaičiaus.': 'Approximate view built from the photos (GPS, altitude and camera heading). If you do not need the whole site, mark an area: before uploading, only the photos in which it is clearly visible are selected (the others are dimmed and not uploaded), and ODM processes only the marked area. Processing time depends on the number of photos.',
 };
