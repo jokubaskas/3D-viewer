@@ -60,6 +60,15 @@ export class NodeODM {
     return this._json(await this._fetch(this.url(path), { method: 'POST', body: fd }));
   }
 
+  /** NodeODM /task/cancel, /remove, /restart priima tik urlencoded arba JSON kūną (ne multipart). */
+  async postEncoded(path, fields) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(fields)) if (v != null) body.append(k, v);
+    const data = await this._json(await this._fetch(this.url(path), { method: 'POST', body }));
+    if (data && data.success === false) throw new Error(data.error || t('Serveris atmetė užklausą'));
+    return data;
+  }
+
   /** Serverio informacija: versija, eilė, RAM, branduoliai. */
   info() {
     return this.get('info');
@@ -166,13 +175,13 @@ export class NodeODM {
   }
 
   cancel(uuid) {
-    return this.postForm('task/cancel', { uuid });
+    return this.postEncoded('task/cancel', { uuid });
   }
   remove(uuid) {
-    return this.postForm('task/remove', { uuid });
+    return this.postEncoded('task/remove', { uuid });
   }
   restart(uuid) {
-    return this.postForm('task/restart', { uuid });
+    return this.postEncoded('task/restart', { uuid });
   }
 
   downloadUrl(uuid) {

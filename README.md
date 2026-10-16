@@ -99,7 +99,7 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
    - Galima palikti elipsoidinius ir pataisyti kontroliniais taškais.
 3. **Apdorojimas** – nuotraukos įkeliamos dalimis (su pakartojimais), kartu siunčiamas `geo.txt` su perskaičiuotais aukščiais ir RTK tikslumais (FIX nuotraukos gauna didesnį svorį).
-   Eiga matoma projektų sąraše, naršyklę galima uždaryti. Serveris vienu metu apdoroja vieną užduotį (`NODEODM_PARALLEL`), todėl prie laukiančios užduoties parodoma, ko ji laukia. Užduotys, kurių nėra šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje), rodomos skiltyje *Kitos užduotys serveryje* – jas galima atšaukti arba pridėti į sąrašą. Jei serveris nieko neapdoroja, o užduotis nepradedama, NodeODM užstrigo: `docker compose restart nodeodm` (užduotys neprarandamos). Baigus – **„3D modelis“** arba **„Taškai“** atsidaro iškart.
+   Eiga matoma projektų sąraše, naršyklę galima uždaryti. Serveris vienu metu apdoroja vieną užduotį (`NODEODM_PARALLEL`), todėl prie laukiančios užduoties parodoma, ko ji laukia. Užduotys, kurių nėra šios naršyklės sąraše, rodomos skiltyje *Kitos užduotys serveryje* (ir baigtos) – jas galima pridėti į sąrašą, atšaukti arba pašalinti. Pvz. pradėtos kitame kompiuteryje arba atidarius programą kitu adresu ar prievadu: projektų sąrašas saugomas naršyklėje atskirai kiekvienam adresui. Jei serveris nieko neapdoroja, o užduotis nepradedama, NodeODM užstrigo: `docker compose restart nodeodm` (užduotys neprarandamos). Baigus – **„3D modelis“** arba **„Taškai“** atsidaro iškart.
 
 ### Koordinatės
 

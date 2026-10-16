@@ -491,18 +491,19 @@ export function createOdmUI(app) {
   function renderServerQueue() {
     const box = $('#odm-server-queue');
     const mine = new Set(projects.map((p) => p.uuid));
-    const others = serverTasks.filter((x) => !mine.has(x.uuid) && [STATUS.RUNNING, STATUS.QUEUED].includes(x.status?.code));
+    const others = serverTasks.filter((x) => !mine.has(x.uuid));
     if (!others.length) return (box.innerHTML = '');
     box.innerHTML = `
       <h4 class="odm-sub">${t('Kitos užduotys serveryje')}</h4>
-      <p class="small muted" style="margin:0 0 6px">${t('Šios užduotys užima serverio eilę, bet jų nėra šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje).')}</p>
+      <p class="small muted" style="margin:0 0 6px">${t('Šios užduotys yra serveryje, bet ne šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje ar kitu adresu). Pridėkite jas į sąrašą arba pašalinkite.')}</p>
       ${others.map((x) => `
         <div class="odm-proj" data-suuid="${esc(x.uuid)}">
-          <div class="odm-proj-head"><b>${esc(x.name || x.uuid.slice(0, 8))}</b>${x.status.code === STATUS.RUNNING ? `<span class="chip run">${t('Apdorojama {p} %', { p: nf(x.progress, 0) })}</span>` : '<span class="chip">Eilėje</span>'}</div>
+          <div class="odm-proj-head"><b>${esc(x.name || x.uuid.slice(0, 8))}</b>${statusChip({ statusCode: x.status?.code, progress: x.progress })}</div>
+          ${x.status?.code === STATUS.FAILED && x.status.errorMessage ? `<div class="small bad">${esc(x.status.errorMessage)}</div>` : ''}
           <div class="small muted">${x.dateCreated ? new Date(x.dateCreated).toLocaleString(locale()) : ''} · ${t('{n} nuotr.', { n: nf(x.imagesCount) })}${x.processingTime ? ` · ${fmtDur(x.processingTime)}` : ''}</div>
           <div class="odm-proj-actions">
             <button class="btn btn-sm btn-outline" data-sact="adopt">${t('Pridėti į sąrašą')}</button>
-            <button class="btn btn-sm btn-ghost danger" data-sact="cancel">${t('Atšaukti')}</button>
+            ${[STATUS.RUNNING, STATUS.QUEUED].includes(x.status?.code) ? `<button class="btn btn-sm btn-ghost danger" data-sact="cancel">${t('Atšaukti')}</button>` : `<button class="btn btn-sm btn-ghost icon-only danger" data-sact="remove" title="${t('Pašalinti iš serverio')}">${icon('trash')}</button>`}
           </div>
         </div>`).join('')}`;
     box.querySelectorAll('[data-sact]').forEach((b) =>
@@ -512,6 +513,8 @@ export function createOdmUI(app) {
         try {
           if (b.dataset.sact === 'adopt') {
             saveProject({ uuid, name: x.name || uuid.slice(0, 8), server: server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset: '', status: 'server', statusCode: x.status.code, progress: x.progress });
+          } else if (b.dataset.sact === 'remove') {
+            if (confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: x.name || uuid }))) await client.remove(uuid);
           } else if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: x.name || uuid }))) {
             await client.cancel(uuid);
           }
@@ -576,7 +579,12 @@ export function createOdmUI(app) {
         await c.restart(uuid);
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
-        await c.remove(uuid).catch(() => {});
+        try {
+          await c.remove(uuid);
+        } catch (e) {
+          // Jau nėra serveryje – tiesiog išimame iš sąrašo; kitaip neišimame, kad užduotis neliktų „nematoma“
+          if (!/not found|Invalid UUID/i.test(e.message)) throw e;
+        }
         removeProject(uuid);
       } else if (act === 'log') {
         const pre = btn.closest('.odm-proj').querySelector('.odm-log');
@@ -622,7 +630,7 @@ export function createOdmUI(app) {
       }
     }
     // Visa serverio eilė (ir užduotys, kurių nėra šiame sąraše) – kad būtų aišku, kodėl užduotis laukia
-    if (active || projects.some((p) => p.statusCode === STATUS.QUEUED)) {
+    if (active || projects.some((p) => p.statusCode === STATUS.QUEUED) || !page.hidden) {
       try {
         const list = await client.list();
         const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 30).map((x) => client.taskInfo(x.uuid).catch(() => null)));

@@ -729,4 +729,7 @@ export const EN = {
   'Kitos užduotys serveryje': 'Other tasks on the server',
   'Šios užduotys užima serverio eilę, bet jų nėra šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje).': 'These tasks occupy the server queue but are not in this browser’s list (for example, started on another computer).',
   'Pridėti į sąrašą': 'Add to list',
+  'Šios užduotys yra serveryje, bet ne šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje ar kitu adresu). Pridėkite jas į sąrašą arba pašalinkite.': 'These tasks are on the server but not in this browser’s list (for example, started on another computer or at another address). Add them to the list or remove them.',
+  'Pašalinti iš serverio': 'Remove from server',
+  'Serveris atmetė užklausą': 'The server rejected the request',
 };
