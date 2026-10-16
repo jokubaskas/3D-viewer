@@ -720,4 +720,13 @@ export const EN = {
   'Šio projekto rezultatuose nėra: {f} (galbūt išjungtas kuriant projektą).': 'This project has no {f} (it may have been turned off when the project was created).',
   'Atsisiuntimas atšauktas': 'Download cancelled',
   'AI paslauga per sena – perkurkite AI konteinerį (start-windows.bat).': 'The AI service is out of date. Rebuild the AI container (start-windows.bat).',
+  // Serverio eilė
+  'Nepavyksta gauti būsenos: {e}': 'Cannot get the status: {e}',
+  'Serverio eilės nepavyko patikrinti.': 'Could not check the server queue.',
+  'Laukia, kol baigsis: „{n}“ ({p} %){o}. Vieta eilėje: {k}.': 'Waiting for “{n}” to finish ({p} %){o}. Position in queue: {k}.',
+  'šios užduoties nėra jūsų sąraše, žr. žemiau': 'this task is not in your list, see below',
+  'Serveris šiuo metu nieko neapdoroja, bet užduotis nepradedama – NodeODM greičiausiai užstrigo. Perkraukite jį: aplanke deploy paleiskite „docker compose restart nodeodm“ (užduotys neprarandamos).': 'The server is not processing anything, yet the task does not start, so NodeODM is probably stuck. Restart it: in the deploy folder run “docker compose restart nodeodm” (tasks are kept).',
+  'Kitos užduotys serveryje': 'Other tasks on the server',
+  'Šios užduotys užima serverio eilę, bet jų nėra šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje).': 'These tasks occupy the server queue but are not in this browser’s list (for example, started on another computer).',
+  'Pridėti į sąrašą': 'Add to list',
 };

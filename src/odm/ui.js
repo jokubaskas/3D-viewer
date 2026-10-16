@@ -49,6 +49,8 @@ export function createOdmUI(app) {
   let uploading = null; // {abort, project}
   let pollTimer = null;
   let preview = null; // PhotoPreview – nuotraukų peržiūra ir srities pasirinkimas
+  let serverTasks = []; // visos serverio užduotys (ir tos, kurių nėra šios naršyklės sąraše)
+  let serverError = null;
 
   // ------------------------------------------------------------------ DOM
   const page = document.createElement('section');
@@ -74,6 +76,7 @@ export function createOdmUI(app) {
         <section class="card">
           <h3>Projektai</h3>
           <div id="odm-projects"></div>
+          <div id="odm-server-queue"></div>
         </section>
       </aside>
       <div class="odm-main">
@@ -470,7 +473,58 @@ export function createOdmUI(app) {
     return '<span class="chip">—</span>';
   }
 
+  /** Kodėl užduotis laukia: kas dabar vykdoma serveryje. */
+  function queueWhy(p) {
+    if (serverError) return t('Serverio eilės nepavyko patikrinti.');
+    const running = serverTasks.filter((x) => x.status?.code === STATUS.RUNNING);
+    const queued = serverTasks.filter((x) => x.status?.code === STATUS.QUEUED).sort((a, b) => (a.dateCreated || 0) - (b.dateCreated || 0));
+    const pos = queued.findIndex((x) => x.uuid === p.uuid);
+    if (running.length) {
+      const r = running[0];
+      const mine = projects.find((x) => x.uuid === r.uuid);
+      return t('Laukia, kol baigsis: „{n}“ ({p} %){o}. Vieta eilėje: {k}.', { n: esc(mine?.name || r.name || r.uuid.slice(0, 8)), p: nf(r.progress, 0), o: mine ? '' : ` – ${t('šios užduoties nėra jūsų sąraše, žr. žemiau')}`, k: pos + 1 || '—' });
+    }
+    if (serverTasks.length) return t('Serveris šiuo metu nieko neapdoroja, bet užduotis nepradedama – NodeODM greičiausiai užstrigo. Perkraukite jį: aplanke deploy paleiskite „docker compose restart nodeodm“ (užduotys neprarandamos).');
+    return '';
+  }
+
+  function renderServerQueue() {
+    const box = $('#odm-server-queue');
+    const mine = new Set(projects.map((p) => p.uuid));
+    const others = serverTasks.filter((x) => !mine.has(x.uuid) && [STATUS.RUNNING, STATUS.QUEUED].includes(x.status?.code));
+    if (!others.length) return (box.innerHTML = '');
+    box.innerHTML = `
+      <h4 class="odm-sub">${t('Kitos užduotys serveryje')}</h4>
+      <p class="small muted" style="margin:0 0 6px">${t('Šios užduotys užima serverio eilę, bet jų nėra šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje).')}</p>
+      ${others.map((x) => `
+        <div class="odm-proj" data-suuid="${esc(x.uuid)}">
+          <div class="odm-proj-head"><b>${esc(x.name || x.uuid.slice(0, 8))}</b>${x.status.code === STATUS.RUNNING ? `<span class="chip run">${t('Apdorojama {p} %', { p: nf(x.progress, 0) })}</span>` : '<span class="chip">Eilėje</span>'}</div>
+          <div class="small muted">${x.dateCreated ? new Date(x.dateCreated).toLocaleString(locale()) : ''} · ${t('{n} nuotr.', { n: nf(x.imagesCount) })}${x.processingTime ? ` · ${fmtDur(x.processingTime)}` : ''}</div>
+          <div class="odm-proj-actions">
+            <button class="btn btn-sm btn-outline" data-sact="adopt">${t('Pridėti į sąrašą')}</button>
+            <button class="btn btn-sm btn-ghost danger" data-sact="cancel">${t('Atšaukti')}</button>
+          </div>
+        </div>`).join('')}`;
+    box.querySelectorAll('[data-sact]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const uuid = b.closest('[data-suuid]').dataset.suuid;
+        const x = serverTasks.find((y) => y.uuid === uuid);
+        try {
+          if (b.dataset.sact === 'adopt') {
+            saveProject({ uuid, name: x.name || uuid.slice(0, 8), server: server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset: '', status: 'server', statusCode: x.status.code, progress: x.progress });
+          } else if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: x.name || uuid }))) {
+            await client.cancel(uuid);
+          }
+        } catch (e) {
+          app.toast(e.message, 'error');
+        }
+        poll();
+      }),
+    );
+  }
+
   function renderProjects() {
+    renderServerQueue();
     const box = $('#odm-projects');
     if (!projects.length) {
       box.innerHTML = '<p class="muted small">Projektų dar nėra.</p>';
@@ -485,6 +539,8 @@ export function createOdmUI(app) {
         <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(PRESETS[p.preset]?.label || ''))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
         ${p.statusCode === STATUS.RUNNING ? `<div class="progress"><div class="progress-bar" style="width:${p.progress || 0}%"></div></div>` : ''}
         ${p.statusCode === STATUS.FAILED && p.error ? `<div class="small bad">${esc(p.error)}</div>` : ''}
+        ${p.statusCode === STATUS.QUEUED && p.status !== 'uploading' ? `<div class="small muted odm-queue-why">${queueWhy(p)}</div>` : ''}
+        ${p.pollError ? `<div class="small bad">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}</div>` : ''}
         <div class="odm-proj-actions">
           ${p.statusCode === STATUS.COMPLETED ? `
             <button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
@@ -559,10 +615,24 @@ export function createOdmUI(app) {
           notify(t('Modelis „{n}“ paruoštas', { n: p.name }));
         }
         if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
+        p.pollError = null;
       } catch (e) {
         if (/not found|Invalid UUID|uuid/i.test(e.message)) p.status = 'missing';
+        else p.pollError = e.message;
       }
     }
+    // Visa serverio eilė (ir užduotys, kurių nėra šiame sąraše) – kad būtų aišku, kodėl užduotis laukia
+    if (active || projects.some((p) => p.statusCode === STATUS.QUEUED)) {
+      try {
+        const list = await client.list();
+        const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 30).map((x) => client.taskInfo(x.uuid).catch(() => null)));
+        serverTasks = infos.filter(Boolean);
+        serverError = null;
+        if (serverTasks.some((x) => x.status?.code === STATUS.RUNNING || x.status?.code === STATUS.QUEUED)) active = true;
+      } catch (e) {
+        serverError = e.message;
+      }
+    } else serverTasks = [];
     ls.set(LS_PROJECTS, projects);
     if (!page.hidden) renderProjects();
     else updateBadge();
