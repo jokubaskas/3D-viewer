@@ -202,9 +202,19 @@ export function buildGeoTxt(entries, mode, geoidN) {
   return lines.join('\n') + '\n';
 }
 
+/** NodeODM duomenų aplankas Docker atvaizde (opendronemap/nodeodm, deploy/docker-compose.yml). */
+export const NODEODM_DATA = '/var/www/data';
+export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.geojson`;
+
+/** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
+export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
+
 export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null } = {}) {
   const o = { ...PRESETS[presetKey].options };
-  // Pasirinkta sritis (GeoJSON, WGS84) – ODM apkarpo taškų debesį, DEM ir ortofoto; kitaip – automatinė riba
+  // Pasirinkta sritis – kelias iki kartu įkeliamo GeoJSON failo (WGS84). ODM apkarpo taškų debesį, DEM ir
+  // ortofoto; kitaip – automatinė riba. GeoJSON teksto tiesiogiai perduoti negalima: NodeODM, paleisdamas
+  // ODM, iš parinkčių reikšmių pašalina visas kabutes (shQuote), ir JSON sugenda. Kelias perduodamas kaip
+  // JSON eilutė ("/kelias") – ją priima NodeODM tikrinimas (tipas „json“), o pašalinus kabutes ODM gauna kelią.
   if (boundary) o.boundary = JSON.stringify(boundary);
   else o['auto-boundary'] = true;
   if (dsm) o.dsm = true;

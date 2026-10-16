@@ -732,4 +732,5 @@ export const EN = {
   'Šios užduotys yra serveryje, bet ne šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje ar kitu adresu). Pridėkite jas į sąrašą arba pašalinkite.': 'These tasks are on the server but not in this browser’s list (for example, started on another computer or at another address). Add them to the list or remove them.',
   'Pašalinti iš serverio': 'Remove from server',
   'Serveris atmetė užklausą': 'The server rejected the request',
+  'Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.': 'The task was restarted without the selected area boundary (it had been passed incorrectly). The whole photo area will be processed.',
 };
