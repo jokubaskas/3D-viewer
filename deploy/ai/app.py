@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
+import tempfile
 import threading
 import time
 from typing import Optional
@@ -20,7 +22,9 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
@@ -37,6 +41,7 @@ app = FastAPI(title="Atea 3D AI", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _lock = threading.Lock()
+_det_lock = threading.Lock()  # detektorius – po vieną plytelę (kelios užklausos vienu metu)
 _detector = None
 _sam = None
 
@@ -104,8 +109,85 @@ def health():
         "segmenter": "MobileSAM (Apache 2.0)",
         "detector_loaded": _detector is not None,
         "segmenter_loaded": _sam is not None,
+        "raster": _has_rasterio(),
         "weights": sorted(os.listdir(MODELS_DIR)) if os.path.isdir(MODELS_DIR) else [],
     }
+
+
+def _has_rasterio() -> bool:
+    try:
+        import rasterio  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# GeoTIFF perskaičiavimas į LKS-94 (ODM ortofoto / DSM / DTM kuriami UTM sistemoje)
+# ---------------------------------------------------------------------------
+def _warp_to_lks94(src_path: str, dst_path: str) -> dict:
+    import rasterio
+    from rasterio.enums import ColorInterp, Resampling
+    from rasterio.warp import calculate_default_transform, reproject
+
+    with rasterio.open(src_path) as src:
+        if src.crs is None:
+            raise HTTPException(400, "Rastras neturi koordinačių sistemos (ne GeoTIFF?)")
+        dst_crs = "EPSG:3346"
+        # Tas pats pikselio dydis kaip originale
+        res = (abs(src.transform.a), abs(src.transform.e))
+        transform, width, height = calculate_default_transform(src.crs, dst_crs, src.width, src.height, *src.bounds, resolution=res)
+        is_float = src.dtypes[0].startswith("float")
+        profile = src.profile.copy()
+        profile.update(
+            driver="GTiff", crs=dst_crs, transform=transform, width=width, height=height,
+            tiled=True, blockxsize=512, blockysize=512, compress="deflate", predictor=3 if is_float else 2,
+            BIGTIFF="IF_SAFER",
+        )
+        for k in ("photometric", "jpeg_quality", "interleave"):
+            profile.pop(k, None)
+        if src.count >= 3 and not is_float:
+            profile["photometric"] = "RGB"
+        interp = src.colorinterp
+        with rasterio.open(dst_path, "w", **profile) as dst:
+            dst.colorinterp = interp
+            for b in range(1, src.count + 1):
+                alpha = interp[b - 1] == ColorInterp.alpha
+                reproject(
+                    source=rasterio.band(src, b), destination=rasterio.band(dst, b),
+                    src_transform=src.transform, src_crs=src.crs, dst_transform=transform, dst_crs=dst_crs,
+                    src_nodata=src.nodata, dst_nodata=src.nodata,
+                    resampling=Resampling.nearest if alpha else Resampling.bilinear,
+                    num_threads=max(1, (os.cpu_count() or 2) - 1), warp_mem_limit=512,
+                )
+            # Peržiūros lygiai – greitesnis atidarymas GIS programose
+            factors = [f for f in (2, 4, 8, 16, 32) if min(width, height) // f >= 256]
+            if factors:
+                dst.build_overviews(factors, Resampling.average)
+        return {"width": width, "height": height, "src_crs": str(src.crs)}
+
+
+@app.post("/raster/lks94")
+async def raster_lks94(background: BackgroundTasks, file: UploadFile = File(...), name: str = Form("rastras")):
+    """Perskaičiuoja GeoTIFF (pvz. ODM ortofoto UTM) į LKS-94 (EPSG:3346). Grąžina naują GeoTIFF."""
+    if not _has_rasterio():
+        raise HTTPException(501, "AI paslaugoje neįdiegta rasterio (GDAL) – perkurkite AI konteinerį")
+    tmp = tempfile.mkdtemp(prefix="lks94_")
+    background.add_task(shutil.rmtree, tmp, True)
+    src_path, dst_path = os.path.join(tmp, "src.tif"), os.path.join(tmp, "dst.tif")
+    with open(src_path, "wb") as f:
+        await run_in_threadpool(shutil.copyfileobj, file.file, f, 8 << 20)
+    t0 = time.time()
+    try:
+        info = await run_in_threadpool(_warp_to_lks94, src_path, dst_path)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nepavyko perskaičiuoti rastro: {e}") from e
+    print(f"[ai] {name}: {info['src_crs']} -> EPSG:3346, {info['width']}x{info['height']} per {time.time() - t0:.1f} s", flush=True)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)[:80] or "rastras"
+    return FileResponse(dst_path, media_type="image/tiff", filename=f"{safe}_LKS94.tif")
 
 
 def _nms(boxes: np.ndarray, scores: np.ndarray, iou: float) -> list[int]:
@@ -185,8 +267,23 @@ def _refine(img: np.ndarray, box) -> Optional[dict]:
     return {"corners": pts.tolist(), "length": length, "width": width, "heading": heading}
 
 
+class Cancelled(Exception):
+    """Klientas atšaukė užklausą (uždarė ryšį)."""
+
+
+async def _check(request: Request):
+    if await request.is_disconnected():
+        raise Cancelled()
+
+
+def _predict(model, crop, threshold):
+    with _det_lock:
+        return model.predict(Image.fromarray(crop), threshold=threshold)
+
+
 @app.post("/detect")
 async def detect(
+    request: Request,
     image: UploadFile = File(...),
     classes: str = Form("car,truck,bus,motorcycle"),
     threshold: float = Form(0.5),
@@ -200,13 +297,24 @@ async def detect(
     gsd – vaizdo pikselio dydis metrais. Jei nurodytas, objektai patikrinami pagal tikrus matmenis,
     o klasė (automobilis / sunkvežimis / autobusas) patikslinama pagal ilgį.
     refine – kiekvienam objektui MobileSAM nustato tikslų (pasuktą) kontūrą.
+
+    Skaičiavimai vyksta atskiroje gijoje po vieną plytelę; jei programa atšaukia užklausą
+    (uždaro ryšį), darbas nutraukiamas ties kita plytele ir serveris iškart laisvas kitiems veiksmams.
     """
+    try:
+        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine)
+    except Cancelled:
+        print("[ai] /detect atšaukta", flush=True)
+        return {"cancelled": True, "detections": []}
+
+
+async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine):
     img = read_image(await image.read())
     want = {c.strip() for c in classes.split(",") if c.strip()} or VEHICLES
     # Iš viršaus COCO modelis dažnai painioja automobilį, sunkvežimį ir autobusą – ieškome visų,
     # o galutinę klasę nustatome pagal matmenis.
     search = want | (VEHICLES - {"motorcycle"} if want & VEHICLES and gsd > 0 else set())
-    model = get_detector()
+    model = await run_in_threadpool(get_detector)
     h, w = img.shape[:2]
     tile = max(256, min(tile, 2048))
     step = max(64, tile - overlap)
@@ -221,7 +329,8 @@ async def detect(
             if crop.size == 0 or crop.mean() < 2:  # tuščia (už modelio ribų)
                 continue
             n_tiles += 1
-            det = model.predict(Image.fromarray(crop), threshold=threshold)
+            await _check(request)
+            det = await run_in_threadpool(_predict, model, crop, threshold)
             for (x1, y1, x2, y2), s, c in zip(det.xyxy, det.confidence, det.class_id):
                 name = COCO.get(int(c))
                 if name not in search:
@@ -244,7 +353,9 @@ async def detect(
             box = [float(v) for v in b[i]]
             name = str(lab[i])
             d = {"class": name, "score": round(float(s[i]), 3), "box": [round(v, 1) for v in box]}
-            r = _refine(img, box) if refine else None
+            if refine:
+                await _check(request)
+            r = await run_in_threadpool(_refine, img, box) if refine else None
             if gsd > 0:
                 cls = _judge(name, r["length"] * gsd, r["width"] * gsd) if r else None
                 if not r:
@@ -297,11 +408,15 @@ async def segment(
                 nx, ny = map(float, p.split(","))
                 pts.append([nx, ny])
                 lbl.append(0)
-    pred = get_sam()
+    pred = await run_in_threadpool(get_sam)
     t0 = time.time()
-    with _lock:
-        pred.set_image(img)
-        masks, scores, _ = pred.predict(point_coords=np.array(pts), point_labels=np.array(lbl), multimask_output=True)
+
+    def run():
+        with _lock:
+            pred.set_image(img)
+            return pred.predict(point_coords=np.array(pts), point_labels=np.array(lbl), multimask_output=True)
+
+    masks, scores, _ = await run_in_threadpool(run)
     # Renkamės didžiausią patikimą kaukę (krūvos dažnai segmentuojamos per smulkiai)
     order = np.argsort(-scores)
     best = int(order[0])

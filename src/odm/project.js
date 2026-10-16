@@ -202,9 +202,11 @@ export function buildGeoTxt(entries, mode, geoidN) {
   return lines.join('\n') + '\n';
 }
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false } = {}) {
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null } = {}) {
   const o = { ...PRESETS[presetKey].options };
-  o['auto-boundary'] = true;
+  // Pasirinkta sritis (GeoJSON, WGS84) – ODM apkarpo taškų debesį, DEM ir ortofoto; kitaip – automatinė riba
+  if (boundary) o.boundary = JSON.stringify(boundary);
+  else o['auto-boundary'] = true;
   if (dsm) o.dsm = true;
   if (dtm) o.dtm = true;
   if (!ortho) o['skip-orthophoto'] = true;

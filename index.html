@@ -117,6 +117,7 @@
             <div class="spinner"></div>
             <div class="loading-text" id="loading-text">Įkeliama…</div>
             <div class="progress"><div class="progress-bar" id="loading-bar"></div></div>
+            <button class="btn btn-sm btn-outline loading-cancel" id="loading-cancel" hidden>Atšaukti <kbd>Esc</kbd></button>
           </div>
         </div>
       </section>
@@ -148,6 +149,33 @@
           <section class="card">
             <h3>Informacija</h3>
             <dl class="kv" id="model-info"><dt>Modelis</dt><dd>—</dd></dl>
+          </section>
+          <section class="card" id="save-card">
+            <h3>Išsaugoti kompiuteryje</h3>
+            <p class="muted small" id="save-note">3D modelis išsaugomas su tikromis koordinatėmis (LKS-94, jei modelis georeferencuotas) – tinka CAD ir GIS programoms.</p>
+            <div class="save-list">
+              <button class="btn btn-sm btn-outline" data-save="obj"><span data-icon="cube"></span>3D modelis – OBJ + tekstūros (ZIP)</button>
+              <button class="btn btn-sm btn-outline" data-save="glb"><span data-icon="cube"></span>3D modelis – GLB (peržiūros programoms)</button>
+              <button class="btn btn-sm btn-outline" data-save="las" hidden><span data-icon="save"></span>Taškų debesis – LAS</button>
+            </div>
+            <div id="save-odm" hidden>
+              <h4 class="save-sub">ODM rezultatai: <span id="save-odm-name"></span></h4>
+              <p class="muted small">Tikras ortofoto ir aukščių modeliai, sukurti ODM iš nuotraukų (ne vaizdas iš 3D modelio).</p>
+              <label class="row save-crs-row">Rastrų koordinatės
+                <select class="save-crs">
+                  <option value="lks">LKS-94 (perskaičiuojama)</option>
+                  <option value="orig">Originalios ODM (WGS84 / UTM)</option>
+                </select>
+              </label>
+              <div class="save-list">
+                <button class="btn btn-sm btn-outline" data-odm="ortho"><span data-icon="map"></span>Ortofoto (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="dsm"><span data-icon="mountain"></span>Paviršiaus modelis DSM (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="dtm"><span data-icon="mountain"></span>Reljefo modelis DTM (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="laz"><span data-icon="save"></span>Taškų debesis (LAZ, UTM)</button>
+                <button class="btn btn-sm btn-outline" data-odm="model"><span data-icon="cube"></span>3D modelis – ODM originalas (ZIP, UTM)</button>
+                <button class="btn btn-sm btn-ghost" data-odm="all"><span data-icon="save"></span>Visi rezultatai (all.zip)</button>
+              </div>
+            </div>
           </section>
           <section class="card">
             <h3>Atvaizdavimas</h3>
@@ -365,6 +393,30 @@
       <menu>
         <button value="cancel" class="btn btn-ghost" formnovalidate>Atšaukti</button>
         <button value="ok" class="btn btn-primary">Kurti PDF</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="dlg-odm-save">
+    <form method="dialog">
+      <h2>Atsisiųsti rezultatus</h2>
+      <p class="muted small"><b id="dlg-odm-save-name"></b><br>Tikras ortofoto ir aukščių modeliai, sukurti ODM iš nuotraukų. 3D modelį su LKS-94 koordinatėmis (OBJ / GLB) išsaugosite atidarę jį ir paspaudę <i>Modelis → Išsaugoti kompiuteryje</i>.</p>
+      <label class="row save-crs-row">Rastrų koordinatės
+                <select class="save-crs">
+                  <option value="lks">LKS-94 (perskaičiuojama)</option>
+                  <option value="orig">Originalios ODM (WGS84 / UTM)</option>
+                </select>
+              </label>
+      <div class="save-list">
+                <button class="btn btn-sm btn-outline" data-odm="ortho"><span data-icon="map"></span>Ortofoto (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="dsm"><span data-icon="mountain"></span>Paviršiaus modelis DSM (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="dtm"><span data-icon="mountain"></span>Reljefo modelis DTM (GeoTIFF)</button>
+                <button class="btn btn-sm btn-outline" data-odm="laz"><span data-icon="save"></span>Taškų debesis (LAZ, UTM)</button>
+                <button class="btn btn-sm btn-outline" data-odm="model"><span data-icon="cube"></span>3D modelis – ODM originalas (ZIP, UTM)</button>
+                <button class="btn btn-sm btn-ghost" data-odm="all"><span data-icon="save"></span>Visi rezultatai (all.zip)</button>
+              </div>
+      <menu>
+        <button value="cancel" class="btn btn-ghost">Uždaryti</button>
       </menu>
     </form>
   </dialog>
