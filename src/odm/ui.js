@@ -2,7 +2,7 @@
 import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
-import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
+import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
 import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
@@ -23,6 +23,15 @@ const ls = {
       localStorage.setItem(k, JSON.stringify(v));
     } catch { /* ignoruojame */ }
   },
+};
+
+/** UUID v4 (crypto.randomUUID veikia tik per HTTPS / localhost, getRandomValues – visur). */
+const uuidv4 = () => {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -369,6 +378,8 @@ export function createOdmUI(app) {
     if (!analysis?.used.length) return app.toast('Pirmiausia pasirinkite nuotraukas', 'error');
     const photos = preview?.hasSelection ? preview.selectedPhotos() : analysis.used;
     const boundary = preview?.hasSelection ? preview.boundaryGeoJSON() : null;
+    // Su riba – užduoties ID parenkame patys, kad ODM parinktyje būtų galima nurodyti failo kelią
+    const presetUuid = boundary ? uuidv4() : undefined;
     if (photos.length < 5) return app.toast('Pasirinktą sritį dengia per mažai nuotraukų – padidinkite sritį', 'error');
     if (uploading) return app.toast('Jau vyksta įkėlimas', 'error');
     const info = await checkServer(true);
@@ -382,10 +393,12 @@ export function createOdmUI(app) {
     const entries = uniqueUploadNames(photos);
     const geoTxt = buildGeoTxt(entries, $('#odm-hmode').value, geoidFn());
     const options = buildOdmOptions(preset, {
-      dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked, boundary,
+      dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked,
+      boundary: boundary ? boundaryPath(presetUuid) : null,
     });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
+    if (boundary) items.push({ name: 'boundary.geojson', file: new Blob([JSON.stringify(boundary)], { type: 'application/geo+json' }) });
     for (const f of extraFiles) items.push({ name: f.name, file: f });
 
     const project = {
@@ -402,7 +415,7 @@ export function createOdmUI(app) {
       <div class="progress big"><div class="progress-bar" id="odm-up-bar"></div></div>
       <div class="pane-actions" style="margin-top:10px"><button class="btn btn-sm btn-ghost danger" data-act="abort-upload">Nutraukti įkėlimą</button></div>`;
     try {
-      project.uuid = await client.init(name, options, ODM_OUTPUTS);
+      project.uuid = await client.init(name, options, ODM_OUTPUTS, presetUuid);
       saveProject(project);
       const t0 = performance.now();
       await client.upload(project.uuid, items, (sent, total, done) => {
@@ -576,7 +589,13 @@ export function createOdmUI(app) {
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
       } else if (act === 'restart') {
-        await c.restart(uuid);
+        const info = await c.taskInfo(uuid);
+        if (hasInlineBoundary(info.options)) {
+          // Sukurta senesne versija: riba perduota JSON tekstu, kurį NodeODM sugadina – kartojame be jos
+          const opts = info.options.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true });
+          await c.restart(uuid, opts);
+          app.toast('Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.', 'info', 9000);
+        } else await c.restart(uuid);
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         try {

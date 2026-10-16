@@ -54,10 +54,10 @@ export class NodeODM {
     return this._json(await this._fetch(this.url(path, params)));
   }
 
-  async postForm(path, fields) {
+  async postForm(path, fields, headers) {
     const fd = new FormData();
     for (const [k, v] of Object.entries(fields)) if (v != null) fd.append(k, v);
-    return this._json(await this._fetch(this.url(path), { method: 'POST', body: fd }));
+    return this._json(await this._fetch(this.url(path), { method: 'POST', body: fd, headers }));
   }
 
   /** NodeODM /task/cancel, /remove, /restart priima tik urlencoded arba JSON kūną (ne multipart). */
@@ -74,13 +74,17 @@ export class NodeODM {
     return this.get('info');
   }
 
-  /** @returns {Promise<string>} uuid */
-  async init(name, options, outputs) {
+  /**
+   * @param {string} [uuid] – iš anksto parinktas užduoties ID (NodeODM „set-uuid“), kad parinktyse
+   *   būtų galima nurodyti kelią iki kartu įkeliamo failo (pvz. boundary.geojson)
+   * @returns {Promise<string>} uuid
+   */
+  async init(name, options, outputs, uuid) {
     const r = await this.postForm('task/new/init', {
       name,
       options: JSON.stringify(options),
       outputs: outputs ? JSON.stringify(outputs) : null,
-    });
+    }, uuid ? { 'set-uuid': uuid } : undefined);
     if (!r.uuid) throw new Error(t('Serveris negrąžino užduoties ID'));
     return r.uuid;
   }
@@ -180,8 +184,8 @@ export class NodeODM {
   remove(uuid) {
     return this.postEncoded('task/remove', { uuid });
   }
-  restart(uuid) {
-    return this.postEncoded('task/restart', { uuid });
+  restart(uuid, options) {
+    return this.postEncoded('task/restart', { uuid, options: options ? JSON.stringify(options) : null });
   }
 
   downloadUrl(uuid) {
