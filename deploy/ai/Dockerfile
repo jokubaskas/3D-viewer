@@ -1,4 +1,4 @@
-# Atea 3D Matuoklis – vietinė AI paslauga (RF-DETR + MobileSAM, abu Apache 2.0)
+# Atea 3D Matuoklis – vietinė AI paslauga (RF-DETR + MobileSAM, abu Apache 2.0) ir GeoTIFF perskaičiavimas į LKS-94 (rasterio / GDAL)
 FROM python:3.11-slim
 
 # CPU versija pagal nutylėjimą; GPU: TORCH_INDEX=https://download.pytorch.org/whl/cu124
@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl libgl1
   && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir torch torchvision --index-url ${TORCH_INDEX}
-RUN pip install --no-cache-dir rfdetr fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless timm \
+RUN pip install --no-cache-dir rfdetr fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless timm rasterio \
   && pip install --no-cache-dir "git+https://github.com/ChaoningZhang/MobileSAM.git"
 
 # Modelių svoriai atsisiunčiami vieną kartą, kuriant vaizdą – vėliau internetas nebereikalingas

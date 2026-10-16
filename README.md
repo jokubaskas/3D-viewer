@@ -39,6 +39,11 @@ Kiti patogumai:
 - Atvaizdavimas: tekstūra, apšviesta, reljefas (pilkas), aukščių spalvos su horizontalėmis.
 - Pjūvis pagal aukštį – paslėpti medžius / stogus ir matuoti, kas po jais.
 - Vaizdai iš viršaus / priekio / šono, ortografinė projekcija (`O`), dvigubas spustelėjimas – sukimosi centras.
+- **Išsaugojimas kompiuteryje** (*Modelis → Išsaugoti kompiuteryje*).
+  - Atidarytas 3D modelis išsaugomas kaip **OBJ + tekstūros (ZIP)** su tikromis koordinatėmis: LKS-94 georeferencuotiems modeliams, Z – aukštis, 0,1 mm tikslumu, įskaitant kontrolinių taškų pataisą. Tinka CAD ir GIS programoms.
+  - Taip pat galima išsaugoti kaip **GLB** peržiūros programoms. GLB koordinatės santykinės, poslinkis įrašomas šakninio mazgo `extras.atea.offset`.
+  - Taškų debesis išsaugomas kaip **LAS** (1 mm tikslumu, su spalvomis).
+  - Modeliams, sukurtiems „Iš nuotraukų“ (ir projektų sąraše mygtukas *Atsisiųsti*), galima atsisiųsti tikrą ODM **ortofoto**, **DSM**, **DTM** (GeoTIFF), taškų debesį (LAZ) ir originalų ODM 3D modelį. Rastrai gali būti **perskaičiuoti į LKS-94** (EPSG:3346): tai daro AI paslauga su GDAL (`rasterio`), išlaikomas tas pats pikselio dydis, sukuriami peržiūros lygiai. Arba galima atsisiųsti originalią ODM sistemą (WGS84 / UTM).
 - **AI skaičiavimų atšaukimas** – transporto paiešką, AI kontūrą ar pokyčių skaičiavimą galima nutraukti mygtuku *Atšaukti* arba `Esc`. AI serveris tada nustoja skaičiuoti ties kita plytele, todėl iškart gali priimti kitą užklausą.
 - **Palyginimas su kita data** (*Modelis → Palyginimas su kita data*). Įkeliamas to paties objekto modelis iš kitos datos: ZIP, aplankas ar failas, pvz. kitas ODM projektas. Programa jį padeda pagal koordinates ir tinkleliu palygina abu paviršius. Rezultatai:
   - pridėtas, pašalintas ir grynasis tūris, masė pagal tankį;
@@ -178,7 +183,8 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja, nuotraukų peržiūra ir srities pasirinkimas (`preview.js`)
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai, žemėlapis po modeliu (`basemap.js`)
 - `deploy/` – Docker Compose: NodeODM + AI paslauga + nginx su programa
-- `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`)
+- `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`, `/raster/lks94` – GeoTIFF perskaičiavimas į LKS-94)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
+- `src/export.js` – 3D modelio išsaugojimas (OBJ su tekstūromis, GLB, LAS)
 - `src/compare.js` – palyginimo modelis, pokyčių tinklelis, tūriai ir pokyčių žemėlapis
 - `src/report/` – PDF ataskaita (jsPDF, įkeliama tik kuriant ataskaitą) ir šriftas

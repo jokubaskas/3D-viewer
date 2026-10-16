@@ -35,7 +35,7 @@ const fmtDur = (ms) => {
 };
 
 /**
- * @param {{toast:(msg:string,type?:string,ms?:number)=>void, openResult:(project:object, kind:'model'|'points')=>Promise<void>}} app
+ * @param {{toast:(msg:string,type?:string,ms?:number)=>void, openResult:(project:object, kind:'model'|'points')=>Promise<void>, saveResults:(project:object)=>void}} app
  */
 export function createOdmUI(app) {
   // Atidarius HTML failą tiesiai iš disko – serveris pagal deploy/ numatytuosius nustatymus
@@ -489,7 +489,7 @@ export function createOdmUI(app) {
           ${p.statusCode === STATUS.COMPLETED ? `
             <button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
             <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>
-            <a class="btn btn-sm btn-outline" href="${esc(new NodeODM(p.server, server.token).downloadUrl(p.uuid))}" download title="Atsisiųsti visus rezultatus (all.zip, UTM)"><span data-icon="save">${icon('save')}</span></a>` : ''}
+            <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
           ${p.status !== 'uploading' ? `<button class="btn btn-sm btn-ghost icon-only danger" data-pact="delete" title="Pašalinti">${icon('trash')}</button>` : ''}
@@ -507,6 +507,10 @@ export function createOdmUI(app) {
     if (!p) return;
     const c = new NodeODM(p.server, server.token);
     try {
+      if (act === 'save') {
+        app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid) });
+        return;
+      }
       if (act === 'model' || act === 'points') {
         await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid) }, act);
         close();

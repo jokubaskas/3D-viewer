@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
+import tempfile
 import threading
 import time
 from typing import Optional
@@ -20,7 +22,8 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -106,8 +109,85 @@ def health():
         "segmenter": "MobileSAM (Apache 2.0)",
         "detector_loaded": _detector is not None,
         "segmenter_loaded": _sam is not None,
+        "raster": _has_rasterio(),
         "weights": sorted(os.listdir(MODELS_DIR)) if os.path.isdir(MODELS_DIR) else [],
     }
+
+
+def _has_rasterio() -> bool:
+    try:
+        import rasterio  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# GeoTIFF perskaičiavimas į LKS-94 (ODM ortofoto / DSM / DTM kuriami UTM sistemoje)
+# ---------------------------------------------------------------------------
+def _warp_to_lks94(src_path: str, dst_path: str) -> dict:
+    import rasterio
+    from rasterio.enums import ColorInterp, Resampling
+    from rasterio.warp import calculate_default_transform, reproject
+
+    with rasterio.open(src_path) as src:
+        if src.crs is None:
+            raise HTTPException(400, "Rastras neturi koordinačių sistemos (ne GeoTIFF?)")
+        dst_crs = "EPSG:3346"
+        # Tas pats pikselio dydis kaip originale
+        res = (abs(src.transform.a), abs(src.transform.e))
+        transform, width, height = calculate_default_transform(src.crs, dst_crs, src.width, src.height, *src.bounds, resolution=res)
+        is_float = src.dtypes[0].startswith("float")
+        profile = src.profile.copy()
+        profile.update(
+            driver="GTiff", crs=dst_crs, transform=transform, width=width, height=height,
+            tiled=True, blockxsize=512, blockysize=512, compress="deflate", predictor=3 if is_float else 2,
+            BIGTIFF="IF_SAFER",
+        )
+        for k in ("photometric", "jpeg_quality", "interleave"):
+            profile.pop(k, None)
+        if src.count >= 3 and not is_float:
+            profile["photometric"] = "RGB"
+        interp = src.colorinterp
+        with rasterio.open(dst_path, "w", **profile) as dst:
+            dst.colorinterp = interp
+            for b in range(1, src.count + 1):
+                alpha = interp[b - 1] == ColorInterp.alpha
+                reproject(
+                    source=rasterio.band(src, b), destination=rasterio.band(dst, b),
+                    src_transform=src.transform, src_crs=src.crs, dst_transform=transform, dst_crs=dst_crs,
+                    src_nodata=src.nodata, dst_nodata=src.nodata,
+                    resampling=Resampling.nearest if alpha else Resampling.bilinear,
+                    num_threads=max(1, (os.cpu_count() or 2) - 1), warp_mem_limit=512,
+                )
+            # Peržiūros lygiai – greitesnis atidarymas GIS programose
+            factors = [f for f in (2, 4, 8, 16, 32) if min(width, height) // f >= 256]
+            if factors:
+                dst.build_overviews(factors, Resampling.average)
+        return {"width": width, "height": height, "src_crs": str(src.crs)}
+
+
+@app.post("/raster/lks94")
+async def raster_lks94(background: BackgroundTasks, file: UploadFile = File(...), name: str = Form("rastras")):
+    """Perskaičiuoja GeoTIFF (pvz. ODM ortofoto UTM) į LKS-94 (EPSG:3346). Grąžina naują GeoTIFF."""
+    if not _has_rasterio():
+        raise HTTPException(501, "AI paslaugoje neįdiegta rasterio (GDAL) – perkurkite AI konteinerį")
+    tmp = tempfile.mkdtemp(prefix="lks94_")
+    background.add_task(shutil.rmtree, tmp, True)
+    src_path, dst_path = os.path.join(tmp, "src.tif"), os.path.join(tmp, "dst.tif")
+    with open(src_path, "wb") as f:
+        await run_in_threadpool(shutil.copyfileobj, file.file, f, 8 << 20)
+    t0 = time.time()
+    try:
+        info = await run_in_threadpool(_warp_to_lks94, src_path, dst_path)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Nepavyko perskaičiuoti rastro: {e}") from e
+    print(f"[ai] {name}: {info['src_crs']} -> EPSG:3346, {info['width']}x{info['height']} per {time.time() - t0:.1f} s", flush=True)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in name)[:80] or "rastras"
+    return FileResponse(dst_path, media_type="image/tiff", filename=f"{safe}_LKS94.tif")
 
 
 def _nms(boxes: np.ndarray, scores: np.ndarray, iou: float) -> list[int]:

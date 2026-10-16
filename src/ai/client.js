@@ -58,6 +58,32 @@ export class AiClient {
     return this._req('detect', { method: 'POST', body: fd, signal });
   }
 
+  /**
+   * GeoTIFF perskaičiavimas į LKS-94 (EPSG:3346) AI paslaugoje (GDAL).
+   * @returns {Promise<Blob>}
+   */
+  async toLks94(file, name, { signal } = {}) {
+    const fd = new FormData();
+    fd.append('file', file, 'rastras.tif');
+    fd.append('name', name);
+    let res;
+    try {
+      res = await fetch(this.url('raster/lks94'), { method: 'POST', body: fd, signal });
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      throw new Error(t('AI paslauga nepasiekiama ({u}). Ar paleistas serveris su AI (docker compose)?', { u: this.base }));
+    }
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        msg = (await res.json()).detail || msg;
+      } catch { /* ne JSON */ }
+      if (res.status === 404) msg = t('AI paslauga per sena – perkurkite AI konteinerį (start-windows.bat).');
+      throw new Error(msg);
+    }
+    return res.blob();
+  }
+
   /** @returns {Promise<{polygon:number[][], touches_border:boolean, score:number, area_px:number}>} */
   segment(blob, x, y, { signal } = {}) {
     const fd = new FormData();
