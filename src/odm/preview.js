@@ -60,6 +60,11 @@ const polyArea = (P) => Math.abs(P.reduce((s, [x, y], i) => s + x * P[(i + 1) % 
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+// Nuotraukų atranka pagal sritį
+const CORE = 0.6; // sritis turi patekti į centrinę kadro dalį (60 % pločio ir aukščio) – ten ji tikrai matosi
+const MIN_VIEWS = 5; // kiekvieną srities tašką turi matyti bent tiek atrinktų nuotraukų (ODM užtenka 3–5)
+const SAMPLES = 400; // tikrinamų srities taškų skaičius
+
 export class PhotoPreview {
   /**
    * @param {HTMLElement} host – konteineris (canvas + įrankių juosta)
@@ -83,6 +88,8 @@ export class PhotoPreview {
     this.showMap = true;
     this.showPhotos = true;
     this.showPoints = true;
+    this.mode = 'visible'; // 'visible' – sritis matosi kadro centre; 'all' – visos, bent kraštu liečiančios sritį
+    this._sel = null;
     this._raf = 0;
 
     host.innerHTML = `
@@ -92,6 +99,12 @@ export class PhotoPreview {
         <label class="check small"><input type="checkbox" data-pv="photos" checked /> ${t('Nuotraukos')}</label>
         <label class="check small"><input type="checkbox" data-pv="map" checked /> ${t('Žemėlapis')}</label>
         <label class="check small"><input type="checkbox" data-pv="points" checked /> ${t('Kadrų vietos')}</label>
+        <label class="small pv-mode">${t('Nuotraukos:')}
+          <select data-pv="mode">
+            <option value="visible">${t('kuriose sritis aiškiai matosi (greičiau)')}</option>
+            <option value="all">${t('visos, bent kraštu liečiančios sritį')}</option>
+          </select>
+        </label>
         <span class="pv-status small muted"></span>
       </div>
       <div class="pv-canvas-wrap">
@@ -108,6 +121,10 @@ export class PhotoPreview {
     host.querySelector('[data-pv=photos]').onchange = (e) => ((this.showPhotos = e.target.checked), this.redraw());
     host.querySelector('[data-pv=map]').onchange = (e) => ((this.showMap = e.target.checked), this.redraw());
     host.querySelector('[data-pv=points]').onchange = (e) => ((this.showPoints = e.target.checked), this.redraw());
+    host.querySelector('[data-pv=mode]').onchange = (e) => {
+      this.mode = e.target.value;
+      this._changed();
+    };
     this._bindInput();
     this.fit();
     this._updateHint();
@@ -175,8 +192,11 @@ export class PhotoPreview {
   }
 
   _drawPhotos(g, dpr) {
-    const order = this.fp.map((_, i) => i).sort((a, b) => (this.photos[a].date?.getTime() || 0) - (this.photos[b].date?.getTime() || 0));
+    const sel = this.hasSelection ? this.selectedSet() : null;
+    // Atmestos – pirmiau ir pritemdytos, atrinktos – virš jų
+    const order = this.fp.map((_, i) => i).sort((a, b) => (sel ? sel.has(a) - sel.has(b) : 0) || (this.photos[a].date?.getTime() || 0) - (this.photos[b].date?.getTime() || 0));
     for (const i of order) {
+      g.globalAlpha = sel && !sel.has(i) ? 0.3 : 1;
       const f = this.fp[i], bmp = this.thumbs.get(i);
       if (!f.gsd || !f.nadir) continue;
       const s = this.scale;
@@ -197,6 +217,7 @@ export class PhotoPreview {
       const cx = bmp.width * 0.08, cy = bmp.height * 0.08;
       g.drawImage(bmp, cx, cy, bmp.width - 2 * cx, bmp.height - 2 * cy, cx, cy, bmp.width - 2 * cx, bmp.height - 2 * cy);
     }
+    g.globalAlpha = 1;
   }
 
   _drawTiles(g, dpr) {
@@ -363,6 +384,7 @@ export class PhotoPreview {
     if (this.closed) {
       const n = this.selectedSet().size;
       parts.push(t('Sritis {a} ha · nuotraukų: {n} iš {m}', { a: new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format(polyArea(this.poly) / 1e4), n, m: this.photos.length }));
+      if (this._minViews != null) parts.push(t('kiekvieną srities tašką mato ≥ {k} nuotr.', { k: this._minViews }));
     }
     this.status.textContent = parts.join(' · ');
   }
@@ -371,16 +393,59 @@ export class PhotoPreview {
     return this.closed && this.poly.length >= 3;
   }
 
-  /** Nuotraukos, kurių pėdsakas dengia sritį (kitų ODM nereikia). */
+  /**
+   * Nuotraukos, kurių reikia pasirinktai sričiai (atranka vyksta naršyklėje, prieš įkeliant į serverį).
+   * „visible“: sritis patenka į centrinę kadro dalį; po to tikrinama, ar kiekvieną srities tašką mato
+   * bent MIN_VIEWS nuotraukų – jei ne, pridedamos artimiausios jį matančios. „all“: visos, kurių pėdsakas
+   * bent kraštu liečia sritį. Nuotraukos, kurios srities visai nemato, neįtraukiamos niekada.
+   */
   selectedSet() {
-    const out = new Set();
     if (!this.hasSelection) return new Set(this.fp.map((_, i) => i));
+    const key = `${this.mode}|${this.poly.map((p) => p.join(',')).join(';')}`;
+    if (this._sel?.key === key) return this._sel.set;
+    const out = new Set();
+    const touching = [];
     this.fp.forEach((f, i) => {
       // Be pėdsako (nėra aukščio / objektyvo) arba įstriža nuotrauka – paliekame (gali matyti sritį iš toliau)
       if (!f.corners || !f.nadir) return out.add(i);
-      if (polysIntersect(f.corners, this.poly)) out.add(i);
+      if (!polysIntersect(f.corners, this.poly)) return; // srities nemato
+      touching.push(i);
+      if (this.mode === 'all') return out.add(i);
+      const core = f.corners.map(([e, n]) => [f.e + (e - f.e) * CORE, f.n + (n - f.n) * CORE]);
+      if (polysIntersect(core, this.poly)) out.add(i);
     });
+    // Padengimo patikra srities taškuose
+    const pts = this._samplePoints();
+    const sees = (i, [x, y]) => this.fp[i].corners && pointInPoly(x, y, this.fp[i].corners);
+    let minViews = Infinity;
+    for (const p of pts) {
+      let n = 0;
+      for (const i of out) if (sees(i, p)) n++;
+      if (n < MIN_VIEWS && this.mode !== 'all') {
+        const extra = touching.filter((i) => !out.has(i) && sees(i, p)).sort((a, b) => Math.hypot(this.fp[a].e - p[0], this.fp[a].n - p[1]) - Math.hypot(this.fp[b].e - p[0], this.fp[b].n - p[1]));
+        for (const i of extra) {
+          if (n >= MIN_VIEWS) break;
+          out.add(i);
+          n++;
+        }
+      }
+      minViews = Math.min(minViews, n);
+    }
+    this._minViews = pts.length ? minViews : null;
+    this._sel = { key, set: out };
     return out;
+  }
+
+  /** Tolygiai išdėstyti taškai srities viduje. */
+  _samplePoints() {
+    const P = this.poly;
+    const xs = P.map((p) => p[0]), ys = P.map((p) => p[1]);
+    const step = Math.max(Math.sqrt(polyArea(P) / SAMPLES), 0.5);
+    const out = [];
+    for (let y = Math.min(...ys) + step / 2; y < Math.max(...ys); y += step)
+      for (let x = Math.min(...xs) + step / 2; x < Math.max(...xs); x += step) if (pointInPoly(x, y, P)) out.push([x, y]);
+    // Ir patys kampai – kraštai svarbiausi
+    return out.concat(P.map(([x, y]) => [x, y]));
   }
 
   selectedPhotos() {
