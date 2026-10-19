@@ -52,6 +52,11 @@ if errorlevel 1 (
   echo [KLAIDA] Programa neatsako adresu http://localhost:%PORT%
   docker compose exec -T web wget -q -O /dev/null http://127.0.0.1/ >nul 2>nul
   if not errorlevel 1 (
+    powershell -NoProfile -Command "$o=@(); foreach($c in (Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue)){ $p=Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; if($p -and $p.ProcessName -notmatch '^com\.docker|^docker|^vpnkit'){ $o+=('  '+$p.ProcessName+'  PID '+$c.OwningProcess+'  adresas '+$c.LocalAddress) } }; if($o.Count){ Write-Host ''; Write-Host 'Prievada %PORT% uzima ir kita programa - narsykle jungiasi prie jos, o ne prie Docker:'; $o | Select-Object -Unique | ForEach-Object { Write-Host $_ }; Write-Host 'Uzdarykite ja (arba: taskkill /PID <numeris> /F) ir paleiskite si faila is naujo.'; Write-Host 'Kol kas programa turetu atsidaryti adresu http://127.0.0.1:%PORT%'; exit 2 }; exit 0"
+    if errorlevel 2 (
+      pause
+      exit /b 1
+    )
     echo.
     echo Programa konteineryje VEIKIA, bet Windows jos nepasiekia prievadu %PORT% - sutriko Docker Desktop prievadu persiuntimas.
     echo Dazniausiai padeda:
