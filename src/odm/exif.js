@@ -1,4 +1,4 @@
-// Drono nuotraukų metaduomenų (EXIF + DJI XMP) skaitymas naršyklėje.
+// Drono nuotraukų metaduomenų (EXIF + DJI / Anzu XMP) skaitymas naršyklėje.
 // Skaitoma tik failo pradžia (iki ~1 MB), todėl 1000 nuotraukų apdorojama per kelias sekundes.
 
 const RTK_LABELS = { 50: 'FIX', 34: 'FLOAT', 16: 'SINGLE', 0: 'NĖRA' };
@@ -137,7 +137,8 @@ function parseTiff(dv, t0, meta) {
 
 function parseDjiXmp(xmp, meta) {
   const get = (k) => {
-    const m = xmp.match(new RegExp(`drone-dji:${k}="([^"]*)"`)) || xmp.match(new RegExp(`<drone-dji:${k}>([^<]*)<`));
+    // DJI rašo „drone-dji:“, Anzu (Raptor T ir kt.) ir kai kurie kiti gamintojai – „drone:“
+    const m = xmp.match(new RegExp(`(?:drone-dji|drone):${k}="([^"]*)"`)) || xmp.match(new RegExp(`<(?:drone-dji|drone):${k}>([^<]*)<`));
     return m ? m[1].trim() : null;
   };
   const num = (k) => {
@@ -154,6 +155,9 @@ function parseDjiXmp(xmp, meta) {
   meta.yaw = num('FlightYawDegree');
   meta.gimbalYaw = num('GimbalYawDegree');
   meta.xmpVersion = get('Version');
+  const src = (get('ImageSource') || '').toLowerCase();
+  if (/infrared|thermal|^ir/.test(src)) meta.channel = 'thermal';
+  else if (/zoom/.test(src)) meta.channel = 'zoom';
   // DJI XMP koordinatės tikslesnės už EXIF (daugiau skaitmenų)
   const lat = num('GpsLatitude') ?? num('Latitude');
   const lon = num('GpsLongitude') ?? num('GpsLongtitude') ?? num('Longitude');

@@ -86,7 +86,7 @@ YOLO (Ultralytics) sąmoningai nenaudojamas dėl AGPL licencijos.
 
 Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
 
-1. **Nuotraukos** – nutempkite aplanką. Naršyklė perskaito EXIF ir DJI XMP (pirmus ~0,5 MB kiekvienos nuotraukos, 1000 nuotraukų per kelias sekundes) ir parodo:
+1. **Nuotraukos** – nutempkite aplanką. Naršyklė perskaito EXIF ir XMP (DJI `drone-dji:`, Anzu Raptor T ir kt. `drone:`) (pirmus ~0,5 MB kiekvienos nuotraukos, 1000 nuotraukų per kelias sekundes) ir parodo:
    RTK FIX / FLOAT dalį, RTK tikslumą (`RtkStdLat/Lon/Hgt`), skrydžio aukštį, GSD, plotą, skrydžio žemėlapį LKS-94 ir įspėjimus.
    DJI Mavic 3T terminės (`_T`) ir priartinimo (`_Z`) nuotraukos praleidžiamos automatiškai. `gcp_list.txt` (jei pridėtas) perduodamas ODM.
    **Peržiūra ir apdorojama sritis.** Iš nuotraukų per kelias sekundes sudėliojamas apytikslis ortofoto. Kiekviena nuotrauka dedama pagal GPS, aukštį virš pakilimo vietos, kameros kryptį (`GimbalYawDegree`) ir objektyvą (35 mm ekvivalentas), po ja rodoma palydovinė nuotrauka.

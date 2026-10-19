@@ -11,18 +11,30 @@ $envFile = Join-Path $PSScriptRoot '.env'
 $text = ''
 if (Test-Path $envFile) { $text = [IO.File]::ReadAllText($envFile) }
 
-function Test-Free([int]$p) {
+function Test-Bind($addr, [int]$p) {
   try {
-    $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $p)
+    $l = [Net.Sockets.TcpListener]::new($addr, $p)
     $l.Start(); $l.Stop(); return $true
   } catch { return $false }
 }
 
+# Laisvas turi buti ir IPv4, ir IPv6 localhost ([::1]) - narsykle „localhost“ pirmiausia jungiasi per [::1],
+# todel kita programa, uzemusi tik [::1]:prievada, „pavogia“ visus narsykles rysius.
+function Test-Free([int]$p) {
+  if (-not (Test-Bind ([Net.IPAddress]::Any) $p)) { return $false }
+  if ([Net.Sockets.Socket]::OSSupportsIPv6 -and -not (Test-Bind ([Net.IPAddress]::IPv6Loopback) $p)) { return $false }
+  return $true
+}
+
+# Kas klauso prievado (be Docker): "pavadinimas (PID n)"
 function Get-Owner([int]$p) {
   try {
-    $c = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction Stop | Select-Object -First 1
-    $pr = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
-    if ($pr) { return "$($pr.ProcessName) (PID $($c.OwningProcess))" }
+    $out = @()
+    foreach ($c in (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction Stop)) {
+      $pr = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
+      if ($pr -and $pr.ProcessName -notmatch '^com\.docker|^docker|^vpnkit') { $out += "$($pr.ProcessName) (PID $($c.OwningProcess), $($c.LocalAddress))" }
+    }
+    if ($out.Count) { return ($out | Select-Object -Unique) -join ', ' }
   } catch {}
   return $null
 }

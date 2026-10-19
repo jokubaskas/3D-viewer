@@ -272,7 +272,7 @@ export function createOdmUI(app) {
         ${stat('Skrydžio aukštis', a.agl != null ? `${nf(a.agl, 0)} m` : '—', 'virš pakilimo vietos')}
         ${stat('GSD', a.gsd != null ? `${nf(a.gsd * 100, 2)} cm/px` : '—', 'žemės pikselio dydis')}
         ${stat('Plotas', `${nf(a.areaM2 / 10000, 2)} ha`, 'pagal nuotraukų vietas')}
-        ${stat('Kamera', esc(a.models.join(', ') || '—'), a.versions.length ? `DJI XMP ${esc(a.versions.join(', '))}` : '')}
+        ${stat('Kamera', esc(a.models.join(', ') || '—'), a.versions.length ? `XMP ${esc(a.versions.join(', '))}` : '')}
         ${stat('Laikas', a.timeFrom ? a.timeFrom.toLocaleDateString(locale()) : '—', a.timeFrom ? `${a.timeFrom.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}–${a.timeTo.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}` : '')}
       </div>
       ${a.warnings.length ? `<ul class="odm-warn">${a.warnings.map((w) => `<li class="${w.level}">${esc(w.text)}</li>`).join('')}</ul>` : '<p class="small ok">Nuotraukų rinkinys tvarkingas.</p>'}
