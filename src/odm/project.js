@@ -227,3 +227,85 @@ export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = tru
   }
   return Object.entries(o).map(([name, value]) => ({ name, value }));
 }
+
+// ---------------------------------------------------------------------------
+// Nepavykusios užduoties priežastis ir pakartojimas su mažesniu atminties poreikiu
+// ---------------------------------------------------------------------------
+/** ODM etapai eilės tvarka (--rerun-from reikšmės). */
+export const ODM_STAGES = ['dataset', 'split', 'merge', 'opensfm', 'openmvs', 'odm_filterpoints', 'odm_meshing', 'mvs_texturing', 'odm_georeferencing', 'odm_dem', 'odm_orthophoto', 'odm_report', 'odm_postprocess'];
+const STAGE_LABELS = {
+  dataset: 'nuotraukų nuskaitymas',
+  opensfm: 'nuotraukų sujungimas (OpenSfM)',
+  openmvs: 'taškų debesies tankinimas (OpenMVS)',
+  odm_filterpoints: 'taškų debesies filtravimas',
+  odm_meshing: '3D tinklo kūrimas',
+  mvs_texturing: 'tekstūravimas',
+  odm_georeferencing: 'georeferencija',
+  odm_dem: 'DSM / DTM',
+  odm_orthophoto: 'ortofoto',
+  odm_report: 'ataskaita',
+};
+
+/**
+ * Pagal ODM žurnalą nustato, kodėl užduotis nepavyko.
+ * @param {string[]} lines – žurnalo eilutės (užtenka paskutinių ~200)
+ * @returns {{kind:'memory'|'boundary'|'disk'|'reconstruction'|'other', stage:string|null, stageLabel:string, text:string, line:string}}
+ */
+export function diagnoseFailure(lines, options = []) {
+  const log = (lines || []).join('\n');
+  let stage = null;
+  for (const m of log.matchAll(/Running (\w+) stage/g)) stage = m[1];
+  // Konkretiausia klaidos eilutė (bendras „strange error code“ / „report it“ – tik jei nieko kito nėra)
+  const rev = [...(lines || [])].reverse().filter((l) => !/please report it|human-readable information/i.test(l));
+  const errLine =
+    rev.find((l) => /out of memory|bad_alloc|MemoryError|terminated by signal|no PLY|No OpenMVS scenes|empty point cloud|No space left|ExitException|Not enough|Reconstruction/i.test(l)) ||
+    rev.find((l) => /error|exception|killed|failed|uh oh|cannot|could not/i.test(l)) ||
+    '';
+  const hasBoundary = (options || []).some((o) => o.name === 'boundary');
+  const stageLabel = t(STAGE_LABELS[stage] || stage || '');
+  const r = (kind, text) => ({ kind, stage, stageLabel, text, line: errLine.trim().slice(0, 300) });
+  if (/no space left on device|disk quota/i.test(log)) return r('disk', t('Serveryje baigėsi vieta diske. Atlaisvinkite vietos (pašalinkite senus projektus) ir kartokite.'));
+  if (/ran out of memory|out of memory|std::bad_alloc|MemoryError|Killed|exit code:? ?(137|-9|3221226505)|returned non-zero exit status -?9\b|no PLY files available|No OpenMVS scenes found|Cannot allocate memory|terminated by signal 9\b|Processing failed \(9\)/i.test(log))
+    return r('memory', t('Pritrūko operatyviosios atminties (RAM) etape „{s}“. Kartokite su mažesniu atminties poreikiu arba skirkite Docker daugiau RAM.', { s: stageLabel || '—' }));
+  if (/empty point cloud/i.test(log) && hasBoundary) return r('boundary', t('Po apkarpymo pagal pasirinktą sritį neliko taškų. Patikrinkite, ar sritis patenka į nufotografuotą teritoriją, arba kartokite be ribos.'));
+  if (/empty point cloud|Dense reconstruction failed|not enough|Reconstruction (could not|failed)|No reconstructions|has no images|Not enough images/i.test(log))
+    return r('reconstruction', t('Nepavyko sujungti nuotraukų į modelį – per mažas persidengimas, nėra GPS arba nuotraukos per tamsios / neryškios.'));
+  return r('other', stage ? t('Klaida etape „{s}“.', { s: stageLabel }) : t('ODM apdorojimas nutrūko.'));
+}
+
+const QUALITY_DOWN = { ultra: 'high', high: 'medium', medium: 'low', low: 'lowest', lowest: 'lowest' };
+const QUALITY_LABELS = { ultra: 'itin aukšta', high: 'aukšta', medium: 'vidutinė', low: 'žema', lowest: 'žemiausia' };
+
+/**
+ * Parinktys pakartojimui su mažesniu RAM poreikiu: taškų debesies (ir, jei reikia, požymių) kokybė viena pakopa
+ * žemiau, mažesnis tinklas; tęsiama nuo nutrūkusio etapo, jau atlikti etapai (pvz. 2 val. sujungimas) nekartojami.
+ * @returns {{options:{name:string,value:any}[], changes:string[]}}
+ */
+export function lowerMemoryOptions(options, stage) {
+  const map = new Map((options || []).filter((o) => o.name !== 'rerun-from' && o.name !== 'rerun-all' && o.name !== 'rerun').map((o) => [o.name, o.value]));
+  const changes = [];
+  const down = (name, def, label) => {
+    const cur = String(map.get(name) ?? def);
+    const next = QUALITY_DOWN[cur] || cur;
+    if (next !== cur) {
+      map.set(name, next);
+      changes.push(t('{l}: {a} → {b}', { l: label, a: t(QUALITY_LABELS[cur] || cur), b: t(QUALITY_LABELS[next] || next) }));
+    }
+  };
+  const si = ODM_STAGES.indexOf(stage);
+  // Požymiai (OpenSfM) mažinami tik jei nutrūko pats sujungimas – kitaip jo rezultatai panaudojami
+  if (stage === 'opensfm' || stage === 'dataset') down('feature-quality', 'high', t('Požymių kokybė'));
+  if (si < 0 || si <= ODM_STAGES.indexOf('odm_filterpoints')) down('pc-quality', 'medium', t('Taškų debesies kokybė'));
+  const depth = Number(map.get('mesh-octree-depth') || 11);
+  if (depth > 10) {
+    map.set('mesh-octree-depth', depth - 1);
+    changes.push(t('Tinklo detalumas (octree): {a} → {b}', { a: depth, b: depth - 1 }));
+  }
+  const size = Number(map.get('mesh-size') || 200000);
+  if (size > 200000) {
+    map.set('mesh-size', Math.round(size / 2));
+    changes.push(t('Tinklo trikampių: {a} → {b}', { a: size, b: Math.round(size / 2) }));
+  }
+  if (si > 0 && stage !== 'dataset') map.set('rerun-from', stage);
+  return { options: [...map].map(([name, value]) => ({ name, value })), changes };
+}

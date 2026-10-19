@@ -421,6 +421,14 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .chip.ok { background: var(--atea-green-soft); color: var(--atea-green-text); }
 .chip.run { background: rgba(255,182,39,.14); color: #ffcf6e; }
 .chip.bad { background: rgba(255,107,94,.14); color: var(--danger); }
+.odm-errline { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.rs-diag .odm-warn { margin: 0 0 12px; }
+.rs-diag code { word-break: break-word; color: var(--muted); }
+.rs-opts { display: flex; flex-direction: column; gap: 6px; }
+.rs-opt { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--line-2); border-radius: 8px; cursor: pointer; }
+.rs-opt:has(input:checked) { border-color: var(--atea-green); background: var(--atea-green-soft); }
+.rs-opt input { margin-top: 3px; accent-color: var(--atea-green); }
+.rs-opt > span { display: flex; flex-direction: column; gap: 2px; }
 .odm-page input[type=radio] { accent-color: var(--atea-green); margin: 0; }
 @media (max-width: 1000px) { .odm-body { grid-template-columns: 1fr; overflow-y: auto; } .odm-grid2 { grid-template-columns: 1fr; } .odm-side, .odm-main { overflow: visible; } }
 

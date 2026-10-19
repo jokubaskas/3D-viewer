@@ -2,7 +2,7 @@
 import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
-import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
+import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
 import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
@@ -168,6 +168,19 @@ export function createOdmUI(app) {
       </div>
     </div>`;
   document.getElementById('app').append(page);
+  const dlgRestart = document.createElement('dialog');
+  dlgRestart.className = 'dialog';
+  dlgRestart.innerHTML = `<form method="dialog">
+      <h2>Kartoti apdorojimą</h2>
+      <p class="small"><b class="rs-name"></b></p>
+      <div class="rs-diag"></div>
+      <div class="rs-opts"></div>
+      <menu>
+        <button value="cancel" class="btn btn-ghost">Atšaukti</button>
+        <button value="ok" class="btn btn-primary">Kartoti</button>
+      </menu>
+    </form>`;
+  page.append(dlgRestart);
 
   const $ = (q) => page.querySelector(q);
   $('#odm-url').value = server.url;
@@ -565,7 +578,8 @@ export function createOdmUI(app) {
         <div class="odm-proj-head"><b>${esc(p.name)}</b>${statusChip(p)}</div>
         <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(PRESETS[p.preset]?.label || ''))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
         ${p.statusCode === STATUS.RUNNING ? `<div class="progress"><div class="progress-bar" style="width:${p.progress || 0}%"></div></div>` : ''}
-        ${p.statusCode === STATUS.FAILED && p.error ? `<div class="small bad">${esc(p.error)}</div>` : ''}
+        ${p.statusCode === STATUS.FAILED && (p.diag || p.error) ? `<div class="small bad">${esc(p.diag?.text || p.error)}</div>${p.diag?.line ? `<div class="small muted odm-errline" title="${esc(p.diag.line)}">${esc(p.diag.line)}</div>` : ''}` : ''}
+        ${p.retryNote && p.statusCode !== STATUS.FAILED ? `<div class="small muted">${t('Kartojama: {c}', { c: esc(p.retryNote) })}</div>` : ''}
         ${p.statusCode === STATUS.QUEUED && p.status !== 'uploading' ? `<div class="small muted odm-queue-why">${queueWhy(p)}</div>` : ''}
         ${p.pollError ? `<div class="small bad">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}</div>` : ''}
         <div class="odm-proj-actions">
@@ -600,13 +614,7 @@ export function createOdmUI(app) {
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
       } else if (act === 'restart') {
-        const info = await c.taskInfo(uuid);
-        if (hasInlineBoundary(info.options)) {
-          // Sukurta senesne versija: riba perduota JSON tekstu, kurį NodeODM sugadina – kartojame be jos
-          const opts = info.options.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true });
-          await c.restart(uuid, opts);
-          app.toast('Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.', 'info', 9000);
-        } else await c.restart(uuid);
+        await openRestart(p, c);
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         try {
@@ -632,13 +640,79 @@ export function createOdmUI(app) {
     poll();
   }
 
+  /** Nepavykusios užduoties priežastis pagal ODM žurnalą. */
+  async function diagnose(c, uuid, options) {
+    try {
+      const lines = await c.output(uuid, -250).catch(() => c.output(uuid, 0));
+      return diagnoseFailure(Array.isArray(lines) ? lines.slice(-250) : [], options);
+    } catch {
+      return null;
+    }
+  }
+
+  /** „Kartoti“: tais pačiais nustatymais, su mažesniu RAM poreikiu, be srities ribos arba viską iš naujo. */
+  async function openRestart(p, c) {
+    const info = await c.taskInfo(p.uuid);
+    const none = { kind: 'other', stage: null, text: '' };
+    const diag = info.status?.code === STATUS.CANCELED ? none : (await diagnose(c, p.uuid, info.options)) || p.diag || none;
+    let options = info.options || [];
+    const inline = hasInlineBoundary(options);
+    // Sukurta senesne versija: riba perduota JSON tekstu, kurį NodeODM sugadina – kartojame be jos
+    if (inline) options = options.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true });
+    const base = options.filter((o) => !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
+    const low = lowerMemoryOptions(options, diag.stage);
+    const hasBoundary = options.some((o) => o.name === 'boundary');
+    let ram = '';
+    if (diag.kind === 'memory') {
+      const si = await c.info().catch(() => null);
+      if (si?.totalMemory) ram = t('Apdorojimo serveriui (Docker) skirta {m} RAM.', { m: fmtBytes(si.totalMemory) });
+    }
+    const choices = [];
+    if (low.changes.length)
+      choices.push({ id: 'low', title: t('Su mažesniu atminties poreikiu'), desc: `${low.changes.join('; ')}.${diag.stage && diag.stage !== 'dataset' && diag.stage !== 'opensfm' ? ` ${t('Tęsiama nuo etapo „{s}“ – jau atlikti etapai nekartojami.', { s: diag.stageLabel })}` : ''}`, options: low.options });
+    if (hasBoundary && diag.kind === 'boundary')
+      choices.push({ id: 'nob', title: t('Be pasirinktos srities ribos'), desc: t('Apdorojama visa nuotraukų teritorija.'), options: base.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true }, { name: 'rerun-from', value: 'odm_filterpoints' }) });
+    choices.push({ id: 'same', title: t('Tais pačiais nustatymais'), desc: t('Tęsiama nuo nutrūkusios vietos. Tinka, jei klaida buvo atsitiktinė (pvz. serveris buvo perkrautas).'), options: inline ? options : undefined });
+    choices.push({ id: 'all', title: t('Viską iš naujo'), desc: t('Visi etapai kartojami nuo pradžių (ilgiausia).'), options: base.concat({ name: 'rerun-all', value: true }) });
+    const def = diag.kind === 'memory' && low.changes.length ? 'low' : diag.kind === 'boundary' && hasBoundary ? 'nob' : 'same';
+
+    dlgRestart.querySelector('.rs-name').textContent = p.name;
+    dlgRestart.querySelector('.rs-diag').innerHTML = diag.text
+      ? `<div class="odm-warn"><li class="${diag.kind === 'other' ? 'warn' : 'error'}">${esc(diag.text)}${ram ? `<br><span class="muted">${esc(ram)} ${esc(t('Docker Desktop: daugiau RAM skiriama faile %UserProfile%\\.wslconfig (memory=…), po to – wsl --shutdown.'))}</span>` : ''}${diag.line ? `<br><code class="small">${esc(diag.line)}</code>` : ''}</li></div>`
+      : '';
+    dlgRestart.querySelector('.rs-opts').innerHTML = choices
+      .map((ch) => `<label class="rs-opt"><input type="radio" name="rs" value="${ch.id}" ${ch.id === def ? 'checked' : ''}><span><b>${esc(ch.title)}</b><span class="small muted">${esc(ch.desc)}</span></span></label>`)
+      .join('');
+    const res = await new Promise((resolve) => {
+      dlgRestart.addEventListener('close', () => resolve(dlgRestart.returnValue), { once: true });
+      dlgRestart.showModal();
+    });
+    if (res !== 'ok') return;
+    const ch = choices.find((x) => x.id === dlgRestart.querySelector('input[name=rs]:checked')?.value) || choices[0];
+    await c.restart(p.uuid, ch.options);
+    if (inline) app.toast('Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.', 'info', 9000);
+    // Kitaip būsena nebebūtų tikrinama ir projektas liktų „Nepavyko“
+    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: ch.id === 'low' ? low.changes.join('; ') : ch.id === 'nob' ? t('be srities ribos') : ch.id === 'all' ? t('viskas iš naujo') : '' });
+    ls.set(LS_PROJECTS, projects);
+    renderProjects();
+    app.toast('Užduotis paleista iš naujo', 'info');
+  }
+
   async function poll() {
     clearTimeout(pollTimer);
     let active = false;
     for (const p of projects) {
       if (!p.uuid || p.status === 'uploading' || p.status === 'missing') continue;
       if (p.statusCode === STATUS.COMPLETED || p.statusCode === STATUS.CANCELED) continue;
-      if (p.statusCode === STATUS.FAILED && p._polledFailed) continue;
+      if (p.statusCode === STATUS.FAILED && p._polledFailed) {
+        // Senesnės versijos projektai – priežastis dar nenustatyta
+        if (p.diag === undefined) {
+          const c = new NodeODM(serverFor(p), server.token);
+          const i = await c.taskInfo(p.uuid).catch(() => null);
+          p.diag = i ? await diagnose(c, p.uuid, i.options) : null;
+        }
+        continue;
+      }
       try {
         const i = await new NodeODM(serverFor(p), server.token).taskInfo(p.uuid);
         const prev = p.statusCode;
@@ -647,7 +721,10 @@ export function createOdmUI(app) {
         p.progress = i.progress;
         p.processingTime = i.processingTime;
         p.status = 'server';
-        if (p.statusCode === STATUS.FAILED) p._polledFailed = true;
+        if (p.statusCode === STATUS.FAILED && !p._polledFailed) {
+          p._polledFailed = true;
+          p.diag = await diagnose(new NodeODM(serverFor(p), server.token), p.uuid, i.options);
+        }
         if (prev !== STATUS.COMPLETED && p.statusCode === STATUS.COMPLETED) {
           app.toast(t('Modelis „{n}“ paruoštas!', { n: p.name }), 'info', 8000);
           notify(t('Modelis „{n}“ paruoštas', { n: p.name }));
