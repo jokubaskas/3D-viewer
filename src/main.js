@@ -12,6 +12,7 @@ import { fitPlaneNormal } from './compute.js';
 import { ProfileChart } from './profile.js';
 import { Gizmo } from './gizmo.js';
 import { createOdmUI } from './odm/ui.js';
+import { createLiveUI } from './live/ui.js';
 import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
@@ -1962,9 +1963,23 @@ const odmUI = createOdmUI({
     }
   },
 });
-$('#btn-odm').addEventListener('click', () => odmUI.open());
-$('#btn-odm-2').addEventListener('click', () => odmUI.open());
-$('#odm-badge').addEventListener('click', () => odmUI.open());
+const openOdm = () => (liveUI.close(), odmUI.open());
+$('#btn-odm').addEventListener('click', openOdm);
+$('#btn-odm-2').addEventListener('click', openOdm);
+$('#odm-badge').addEventListener('click', openOdm);
+
+// ---------------------------------------------------------------------------
+// Tiesioginė transliacija
+// ---------------------------------------------------------------------------
+const liveUI = createLiveUI({
+  toast,
+  onActive: (n) => $('#btn-live').classList.toggle('live-on', n > 0),
+});
+$('#btn-live').addEventListener('click', () => {
+  if (liveUI.isOpen) return liveUI.close();
+  if (odmUI.isOpen) odmUI.close();
+  liveUI.open();
+});
 
 // Skydelis mažuose ekranuose
 $('#btn-panel').addEventListener('click', () => $('#sidepanel').classList.toggle('open'));
@@ -1981,7 +1996,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2035,6 +2050,7 @@ onLangChange(() => {
   updateScaleBadge();
   applyClip();
   odmUI.rerender();
+  liveUI.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
     $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });

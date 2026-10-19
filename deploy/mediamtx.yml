@@ -1,0 +1,51 @@
+# MediaMTX – tiesioginių transliacijų tarpininkas (Atea 3D Matuoklis → „Transliacija“).
+# Naršyklė RTSP / RTMP / SRT tiesiogiai rodyti negali: MediaMTX juos paima ir perduoda
+# naršyklei per WebRTC (~0,3 s vėlavimas) arba HLS (~1–3 s). Programa šaltinius prideda per API
+# (prieiga tik per web konteinerio nginx – /live/api/), o dronas ar kamera gali transliaciją
+# siųsti ir tiesiai čia: rtmp://<kompiuterio-IP>:1935/<pavadinimas>, rtsp://<IP>:8554/<pavadinimas>.
+logLevel: info
+
+# API pasiekiamas tik Docker tinkle (prievadas nepublikuojamas), todėl leidžiamas be slaptažodžio
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+
+api: true
+apiAddress: :9997
+
+rtsp: true
+rtspAddress: :8554
+# Tik TCP: UDP per Docker prievadų persiuntimą dažnai nepraeina
+rtspTransports: [tcp]
+rtmp: true
+rtmpAddress: :1935
+srt: true
+srtAddress: :8890
+moq: false
+
+hls: true
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+hlsVariant: lowLatency
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+webrtc: true
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+# Docker konteinerio IP naršyklei nepasiekiamas – skelbiami kompiuterio adresai (prievadas 8189 publikuojamas).
+# Žiūrint iš kito tinklo kompiuterio, pridėkite šio kompiuterio IP per .env: LIVE_HOSTS=127.0.0.1,192.168.1.10
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+
+paths:
+  # Bet koks pavadinimas: transliaciją gali siųsti dronas / kamera arba ją prideda programa
+  all_others:

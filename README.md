@@ -161,6 +161,46 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 Programa bus `http://serveris:8080`, NodeODM – per `/odm/` (programoje numatytas adresas). Rezultatai serveryje laikomi 30 dienų (`NODEODM_KEEP_MINUTES`).
 Vieno failo versijai (`release/…html`) nurodykite pilną adresą, pvz. `http://serveris:8080/odm/`.
 
+## Tiesioginė transliacija
+
+Viršutinėje juostoje spauskite **„Transliacija“** ir įklijuokite nuorodą. Vienu metu galima žiūrėti kelias transliacijas (1, 2×2, 3×3 tinklelis). Prie kiekvienos yra mygtukai:
+- kadras PNG;
+- įrašas (MP4 arba WebM);
+- garsas;
+- visas ekranas;
+- prisijungimas iš naujo.
+
+Nutrūkus ryšiui programa jungiasi iš naujo pati. Jei ryšys nutrūksta įrašant, jau įrašyta dalis išsaugoma. Transliacijos toliau rodomos ir įrašomos, kai grįžtate į 3D vaizdą. Nuorodos įsimenamos šioje naršyklėje.
+
+| Nuoroda | Kaip rodoma | Vėlavimas |
+|---|---|---|
+| `rtsp://`, `rtmp://`, `srt://` (dronai, IP kameros) | per serverio MediaMTX → WebRTC, jei nepavyksta – HLS | ~0,2–0,5 s (WebRTC) |
+| `…m3u8` (HLS) | tiesiogiai; jei šaltinis neleidžia (CORS) – per serverį | 1–3 s |
+| `…/whep` (WebRTC), MediaMTX `:8889/kelias` | tiesiogiai | ~0,2 s |
+| MP4 / WebM, MJPEG, `snapshot.jpg` | tiesiogiai (kadras atnaujinamas kas sekundę) | — |
+| YouTube, Twitch, Vimeo | įterptas grotuvas (be kadrų ir įrašymo) | — |
+
+**Drono transliacija į kompiuterį.** Valdymo pulte (DJI Pilot 2, Anzu Smart Control ir kt.):
+1. Pasirinkite **Transliacija → RTMP**.
+2. Įveskite adresą `rtmp://<kompiuterio-IP>:1935/drone`. IP sužinosite komanda `ipconfig` → *IPv4 Address*.
+3. Transliacija atsiras skiltyje „Gaunamos transliacijos“. Spustelėkite ją, kad pradėtumėte žiūrėti.
+
+Taip pat priimama RTSP (`rtsp://IP:8554/drone`) ir SRT (`srt://IP:8890?streamid=publish:drone`).
+
+Reikalavimai:
+- pultas ir kompiuteris turi būti tame pačiame tinkle;
+- Windows užkarda turi leisti Docker Desktop.
+
+Paslauga veikia `deploy/` serveryje (konteineris `mediamtx`, nustatymai `deploy/mediamtx.yml`). Naudojami prievadai:
+- 1935 – RTMP;
+- 8554 – RTSP;
+- 8890/udp – SRT;
+- 8189 – WebRTC.
+
+RTMP ir RTSP prievadus galima pakeisti `.env` faile (`LIVE_RTMP_PORT`, `LIVE_RTSP_PORT`). Žiūrint per WebRTC iš kito kompiuterio, į `LIVE_HOSTS` įrašykite serverio IP, pvz. `LIVE_HOSTS=127.0.0.1,192.168.1.10`. Be šio nustatymo vaizdas bus rodomas per HLS.
+
+Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari. H.265 (HEVC) rodomas tik naršyklėse, kurios jį palaiko (Chrome / Edge su aparatiniu dekodavimu, Safari).
+
 ## Kūrimas
 
 ```bash
@@ -184,9 +224,10 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)
 - `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja, nuotraukų peržiūra ir srities pasirinkimas (`preview.js`)
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai, žemėlapis po modeliu (`basemap.js`)
-- `deploy/` – Docker Compose: NodeODM + AI paslauga + nginx su programa
+- `deploy/` – Docker Compose: NodeODM + AI paslauga + MediaMTX (transliacijos) + nginx su programa
 - `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`, `/raster/lks94` – GeoTIFF perskaičiavimas į LKS-94)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
 - `src/export.js` – 3D modelio išsaugojimas (OBJ su tekstūromis, GLB, LAS)
 - `src/compare.js` – palyginimo modelis, pokyčių tinklelis, tūriai ir pokyčių žemėlapis
+- `src/live/` – tiesioginės transliacijos: nuorodos atpažinimas ir MediaMTX klientas (`sources.js`), grotuvas su WebRTC / HLS / MJPEG, kadrais ir įrašymu (`player.js`), sąsaja (`ui.js`)
 - `src/report/` – PDF ataskaita (jsPDF, įkeliama tik kuriant ataskaitą) ir šriftas
