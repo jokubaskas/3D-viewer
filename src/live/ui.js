@@ -288,6 +288,9 @@ export function createLiveUI(app) {
     if (s.fps > 0.5) parts.push(`${nf(s.fps, 0)} fps`);
     if (s.kbps > 0) parts.push(s.kbps > 1000 ? `${nf(s.kbps / 1000, 1)} Mb/s` : `${nf(s.kbps, 0)} kb/s`);
     if (s.latency > 0 && isFinite(s.latency)) parts.push(t('vėlavimas {s} s', { s: nf(s.latency, 1) }));
+    // Įterptas tinklalapis: kitos svetainės turinio naršyklė neleidžia nei kopijuoti, nei įrašyti
+    if (live && p.embedded && !/^(YouTube|Twitch|Vimeo)$/.test(p.mode)) parts.push(t('Tinklalapis, ne vaizdo srautas – kadrų ir įrašymo nėra. Įklijuokite .m3u8 / rtsp:// nuorodą'));
+    else if (live && p.embedded) parts.push(t('Įterptas grotuvas – kadrų ir įrašymo nėra'));
     el.querySelector('.live-stat').textContent = live ? parts.join(' · ') : '';
     const msg = el.querySelector('.live-msg');
     msg.hidden = live || p.state === 'idle';

@@ -860,4 +860,6 @@ export const EN = {
   "Užduotis paleista iš naujo": "Task restarted",
   "be srities ribos": "without boundary",
   "viskas iš naujo": "everything from scratch",
+  "Tinklalapis, ne vaizdo srautas – kadrų ir įrašymo nėra. Įklijuokite .m3u8 / rtsp:// nuorodą": "A web page, not a video stream – no snapshots or recording. Paste a .m3u8 / rtsp:// link",
+  "Įterptas grotuvas – kadrų ir įrašymo nėra": "Embedded player – no snapshots or recording",
 };

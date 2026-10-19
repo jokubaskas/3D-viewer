@@ -79,15 +79,21 @@ export class LivePlayer {
     if (c.kind === 'gateway') return [['gw-webrtc'], ['gw-hls']];
     if (c.kind === 'embed') return [['embed', c.embed]];
     let kind = c.kind;
-    if (kind === 'auto') kind = (await probeKind(c.url, signal)) || 'guess';
+    let url = c.url;
+    this.srcUrl = null; // srautas, rastas grotuvo tinklalapyje
+    if (kind === 'auto') {
+      const p = await probeKind(c.url, signal);
+      kind = p?.kind || 'guess';
+      if (p?.url) url = this.srcUrl = p.url;
+    }
     const direct = {
-      whep: [['webrtc', c.url]],
-      hls: [['hls', c.url]],
-      file: [['file', c.url]],
-      mjpeg: [['mjpeg', c.url]],
-      image: [['image', c.url]],
-      embed: [['embed', c.url]],
-      guess: [['file', c.url], ['hls', c.url], ['mjpeg', c.url]],
+      whep: [['webrtc', url]],
+      hls: [['hls', url]],
+      file: [['file', url]],
+      mjpeg: [['mjpeg', url]],
+      image: [['image', url]],
+      embed: [['embed', url]],
+      guess: [['file', url], ['hls', url], ['mjpeg', url]],
     }[kind];
     // HLS be CORS leidimo naršyklė perskaityti negali – tada per serverį
     const server = kind === 'hls' || kind === 'guess' ? [['gw-webrtc'], ['gw-hls']] : [];
@@ -142,7 +148,7 @@ export class LivePlayer {
 
   async attempt(mode, url, signal) {
     if (mode === 'gw-webrtc' || mode === 'gw-hls') {
-      const name = this.stream.path || (await this.gateway.addSource(this.stream.url));
+      const name = this.stream.path || (await this.gateway.addSource(this.srcUrl || this.stream.url));
       this.gwName = name;
       if (mode === 'gw-webrtc') return this.playWebrtc(await this.gateway.whepUrl(name), signal, t('WebRTC per serverį'));
       return this.playHls(await this.gateway.hlsUrl(name), signal, t('HLS per serverį'));
@@ -285,6 +291,7 @@ export class LivePlayer {
     this.host.replaceChildren(f);
     this.el = f;
     this.mode = classify(this.stream.url).label || t('Puslapis');
+    this.embedded = true;
   }
 
   // ---------------------------------------------------------------- stebėjimas
@@ -461,6 +468,7 @@ export class LivePlayer {
     this.el = null;
     this.stats = {};
     this._bytes = 0;
+    this.embedded = false;
   }
 
   stop(notify = true) {

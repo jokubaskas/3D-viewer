@@ -57,17 +57,44 @@ export function classify(raw) {
   return { kind: 'auto', url, label: 'HTTP' };
 }
 
-/** Pagal turinio tipą (jei serveris leidžia jį perskaityti) patikslina „auto“ nuorodą. */
+/**
+ * Srauto nuoroda tinklalapyje (grotuvo puslapyje): .m3u8 (HLS) arba …/whep (WebRTC).
+ * @returns {{kind:'hls'|'whep', url:string}|null}
+ */
+export function findStreamInHtml(html, pageUrl) {
+  const text = String(html || '').replace(/\\\//g, '/'); // JSON: "https:\/\/…"
+  const m =
+    text.match(/(?:https?:)?\/\/[^\s"'<>`()]+?\.m3u8(?:\?[^\s"'<>`()]*)?/i) ||
+    text.match(/["'`]([^"'`\s<>]+?\.m3u8(?:\?[^"'`\s<>]*)?)["'`]/i) ||
+    text.match(/(?:https?:)?\/\/[^\s"'<>`()]+?\/whep\b/i) ||
+    text.match(/["'`]([^"'`\s<>]+?\/whep)["'`]/i);
+  if (!m) return null;
+  try {
+    const url = new URL(m[1] || m[0], pageUrl).href;
+    return { kind: /\/whep$/i.test(url) ? 'whep' : 'hls', url };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pagal turinio tipą (jei serveris leidžia jį perskaityti) patikslina „auto“ nuorodą.
+ * Grotuvo tinklalapyje ieškoma tikrojo srauto – įterpto puslapio negalima nei įrašyti, nei kopijuoti kadrų.
+ * @returns {Promise<{kind:string, url?:string}|null>}
+ */
 export async function probeKind(url, signal) {
   try {
     const r = await fetch(url, { method: 'GET', signal, cache: 'no-store' });
     const type = (r.headers.get('content-type') || '').toLowerCase();
+    if (/text\/html/.test(type)) {
+      const html = (await r.text()).slice(0, 2_000_000);
+      return findStreamInHtml(html, r.url || url) || { kind: 'embed' };
+    }
     r.body?.cancel().catch(() => {});
-    if (/mpegurl/.test(type)) return 'hls';
-    if (/multipart\/x-mixed-replace/.test(type)) return 'mjpeg';
-    if (/^image\//.test(type)) return 'image';
-    if (/^video\//.test(type)) return 'file';
-    if (/text\/html/.test(type)) return 'embed';
+    if (/mpegurl/.test(type)) return { kind: 'hls' };
+    if (/multipart\/x-mixed-replace/.test(type)) return { kind: 'mjpeg' };
+    if (/^image\//.test(type)) return { kind: 'image' };
+    if (/^video\//.test(type)) return { kind: 'file' };
     return null;
   } catch (e) {
     if (e.name === 'AbortError') throw e;
