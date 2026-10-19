@@ -95,6 +95,7 @@ echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
 echo  Vieno failo versijai (release\...html) adresai: http://localhost:%PORT%/odm/ ir http://localhost:%PORT%/ai/
 echo  Raktas (reikia tik jungiantis tiesiogiai, ne per localhost:%PORT%):
 for /f "tokens=2 delims==" %%a in ('findstr /b "NODEODM_TOKEN=" .env') do echo     %%a
+echo  Transliacija is drono: pulte RTMP adresas rtmp://^<sio-kompiuterio-IP^>:1935/drone
 echo  Sustabdyti: docker compose down  (siame aplanke)
 echo ============================================================
 start "" http://localhost:%PORT%

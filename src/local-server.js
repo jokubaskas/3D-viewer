@@ -21,7 +21,9 @@ async function probe(port) {
     const ai = await getJson(base + 'ai/health', ctl.signal).catch(() => null);
     if (ai && 'segmenter' in ai) return true;
     const odm = await getJson(base + 'odm/info', ctl.signal).catch(() => null);
-    return !!(odm && 'engineVersion' in odm);
+    if (odm && 'engineVersion' in odm) return true;
+    const live = await getJson(base + 'live/api/v3/paths/list', ctl.signal).catch(() => null);
+    return !!(live && 'items' in live);
   } finally {
     clearTimeout(timer);
   }

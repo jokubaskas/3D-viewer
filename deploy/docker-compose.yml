@@ -39,6 +39,27 @@ services:
     expose:
       - "8000"
 
+  # Tiesioginės transliacijos: RTSP / RTMP / SRT → WebRTC / HLS naršyklei
+  mediamtx:
+    image: bluenviron/mediamtx:${MEDIAMTX_TAG:-1.21.2}
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      - MTX_WEBRTCADDITIONALHOSTS=${LIVE_HOSTS:-127.0.0.1}
+    expose:
+      - "9997"
+      - "8888"
+      - "8889"
+    ports:
+      # Dronas / kamera siunčia transliaciją į kompiuterį (pvz. rtmp://192.168.1.10:1935/drone)
+      - "${LIVE_RTMP_PORT:-1935}:1935"
+      - "${LIVE_RTSP_PORT:-8554}:8554"
+      - "${LIVE_SRT_PORT:-8890}:8890/udp"
+      # WebRTC vaizdas naršyklei
+      - "8189:8189/udp"
+      - "8189:8189/tcp"
+
   web:
     build:
       context: ..
