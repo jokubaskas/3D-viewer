@@ -50,9 +50,22 @@ powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){try{$r=Invoke-WebReques
 if errorlevel 1 (
   echo.
   echo [KLAIDA] Programa neatsako adresu http://localhost:%PORT%
-  echo Konteineriu busena ir programos ^(web^) pranesimai - nusiuskite juos, jei reikia pagalbos:
-  docker compose ps
-  docker compose logs --tail 40 web
+  docker compose exec -T web wget -q -O /dev/null http://127.0.0.1/ >nul 2>nul
+  if not errorlevel 1 (
+    echo.
+    echo Programa konteineryje VEIKIA, bet Windows jos nepasiekia prievadu %PORT% - sutriko Docker Desktop prievadu persiuntimas.
+    echo Dazniausiai padeda:
+    echo   1. Uzdarykite Docker Desktop ^(Quit Docker Desktop^).
+    echo   2. Komandu eiluteje paleiskite:  wsl --shutdown
+    echo   3. Vel paleiskite Docker Desktop, palaukite, ir paleiskite si faila is naujo.
+    echo Jei nepadeda - patikrinkite, ar prievado neuzima kita programa ir ar jis nera rezervuotas Windows:
+    netstat -ano | findstr ":%PORT% "
+    netsh interface ipv4 show excludedportrange protocol=tcp
+  ) else (
+    echo Konteineriu busena ir programos ^(web^) pranesimai - nusiuskite juos, jei reikia pagalbos:
+    docker compose ps
+    docker compose logs --tail 40 web
+  )
   pause
   exit /b 1
 )
