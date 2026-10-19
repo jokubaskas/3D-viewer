@@ -105,10 +105,14 @@ export class LivePlayer {
     const via = this.stream.via || 'auto';
     if (c.kind === 'invalid') throw new Error(t('Netinkama nuoroda'));
     if (c.kind === 'gateway') return [['gw-webrtc'], ['gw-hls']];
-    if (c.kind === 'embed') return [['embed', c.embed]];
+    if (c.kind === 'embed') {
+      if (via === 'server') throw Object.assign(new Error(t('Per serverį galima rodyti tik vaizdo srautą (RTSP, RTMP, HLS, WebRTC), ne tinklalapį – pasirinkite „Automatiškai“')), { sourceDown: true });
+      return [['embed', c.embed]];
+    }
     let kind = c.kind;
     let url = c.url;
     this.srcUrl = null; // srautas, rastas grotuvo tinklalapyje
+    this.gwSource = null; // šaltinis serveriui (MediaMTX), jei jis skiriasi nuo nuorodos
     if (kind === 'auto') {
       const p = await probeKind(c.url, signal);
       kind = p?.kind || 'guess';
@@ -124,8 +128,24 @@ export class LivePlayer {
       // Nežinoma nuoroda, kurios turinio perskaityti negalima (CORS): bandoma kaip srautas, kitaip – įterpiamas puslapis
       guess: [['file', url], ['hls', url], ['mjpeg', url], ['embed', url]],
     }[kind];
-    // HLS be CORS leidimo naršyklė perskaityti negali – tada per serverį
-    const server = kind === 'hls' || kind === 'guess' ? [['gw-webrtc'], ['gw-hls']] : [];
+    if ((kind === 'embed' || kind === 'guess') && via === 'server' && !this.srcUrl)
+      throw Object.assign(new Error(t('Per serverį galima rodyti tik vaizdo srautą (RTSP, RTMP, HLS, WebRTC), ne tinklalapį – pasirinkite „Automatiškai“')), { sourceDown: true });
+    // HLS be CORS leidimo naršyklė perskaityti negali – tada per serverį.
+    // WebRTC (WHEP): serveris pats prisijungia (whep:// / wheps://, raktas – whepBearerToken) ir perduoda vaizdą toliau
+    let server = kind === 'hls' || kind === 'guess' ? [['gw-webrtc'], ['gw-hls']] : [];
+    if (kind === 'whep') {
+      const a = authFor(url, this.stream.auth);
+      const u = new URL(a.url);
+      const bearer = /^Bearer\s+(.+)$/i.exec(a.headers.Authorization || '')?.[1];
+      const basic = /^Basic\s+(.+)$/i.exec(a.headers.Authorization || '')?.[1];
+      if (basic) {
+        const [user, ...pass] = atob(basic).split(':');
+        u.username = encodeURIComponent(user);
+        u.password = encodeURIComponent(pass.join(':'));
+      }
+      this.gwSource = { url: u.href.replace(/^http(s?):/i, 'whep$1:'), extra: bearer ? { whepBearerToken: bearer } : {} };
+      server = [['gw-webrtc'], ['gw-hls']];
+    }
     if (kind === 'guess' && via !== 'server') return direct;
     if (via === 'server') return server.length ? server : direct;
     if (via === 'direct') return direct;
@@ -178,10 +198,10 @@ export class LivePlayer {
 
   async attempt(mode, url, signal) {
     if (mode === 'gw-webrtc' || mode === 'gw-hls') {
-      const name = this.stream.path || (await this.gateway.addSource(this.srcUrl || this.stream.url));
+      const name = this.stream.path || (this.gwSource ? await this.gateway.addSource(this.gwSource.url, this.gwSource.extra) : await this.gateway.addSource(this.srcUrl || this.stream.url));
       this.gwName = name;
-      if (mode === 'gw-webrtc') return this.playWebrtc(await this.gateway.whepUrl(name), signal, t('WebRTC per serverį'));
-      return this.playHls(await this.gateway.hlsUrl(name), signal, t('HLS per serverį'));
+      if (mode === 'gw-webrtc') return this.playWebrtc(await this.gateway.whepUrl(name), signal, t('WebRTC per serverį'), false);
+      return this.playHls(await this.gateway.hlsUrl(name), signal, t('HLS per serverį'), false);
     }
     if (mode === 'webrtc') return this.playWebrtc(url, signal, 'WebRTC');
     if (mode === 'hls') return this.playHls(url, signal, 'HLS');
@@ -203,7 +223,8 @@ export class LivePlayer {
     return v;
   }
 
-  async playWebrtc(whep, signal, label) {
+  /** @param {boolean} useAuth – siųsti naudotojo raktą (ne mūsų serveriui) */
+  async playWebrtc(whep, signal, label, useAuth = true) {
     const v = this.video();
     const pc = (this.pc = new RTCPeerConnection());
     pc.addTransceiver('video', { direction: 'recvonly' });
@@ -218,7 +239,7 @@ export class LivePlayer {
       const timer = setTimeout(res, 1500);
       pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && (clearTimeout(timer), res()));
     });
-    const auth = authFor(whep, this.stream.path ? '' : this.stream.auth);
+    const auth = authFor(whep, useAuth ? this.stream.auth : '');
     whep = auth.url;
     this.authHeaders = auth.headers;
     const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...auth.headers }, body: pc.localDescription.sdp, signal });
@@ -252,12 +273,12 @@ export class LivePlayer {
     this.mode = label;
   }
 
-  async playHls(url, signal, label) {
+  async playHls(url, signal, label, useAuth = true) {
     const v = this.video();
     const native = v.canPlayType('application/vnd.apple.mpegurl');
     const { default: Hls } = await import('hls.js/light');
     if (Hls.isSupported()) {
-      const auth = authFor(url, this.stream.path ? '' : this.stream.auth);
+      const auth = authFor(url, useAuth ? this.stream.auth : '');
       url = auth.url;
       const hls = (this.hls = new Hls({ xhrSetup: (xhr) => Object.entries(auth.headers).forEach(([k, v]) => xhr.setRequestHeader(k, v)), lowLatencyMode: true, liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.5, backBufferLength: 10, manifestLoadingMaxRetry: 2 }));
       const fatal = new Promise((_, rej) =>

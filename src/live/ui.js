@@ -165,6 +165,11 @@ export function createLiveUI(app) {
       streams.unshift(s);
     } else s.via = $('#live-via').value;
     if ($('#live-auth').value.trim()) s.auth = $('#live-auth').value.trim();
+    const open = tiles.get(s.id);
+    if (open) {
+      open.player.retries = 0;
+      open.player.start();
+    }
     save();
     $('#live-url').value = '';
     $('#live-name').value = '';

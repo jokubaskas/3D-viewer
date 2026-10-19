@@ -869,4 +869,5 @@ export const EN = {
   "Pavadinimas ir raktas": "Name and key",
   "Serveris nepriėmė rakto – patikrinkite jį (raktai dažnai galioja tik ribotą laiką)": "The server rejected the key – check it (keys are often valid only for a limited time)",
   "Serveris reikalauja prisijungimo – prie transliacijos įveskite raktą (✎ → Raktas)": "The server requires login – enter a key for the stream (✎ → Key)",
+  "Per serverį galima rodyti tik vaizdo srautą (RTSP, RTMP, HLS, WebRTC), ne tinklalapį – pasirinkite „Automatiškai“": "Only a video stream (RTSP, RTMP, HLS, WebRTC) can be shown via the server, not a web page – choose “Automatic”",
 };
