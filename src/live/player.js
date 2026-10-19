@@ -6,6 +6,9 @@ import { t } from '../i18n.js';
 const START_TIMEOUT = 12000; // per kiek laiko turi pasirodyti vaizdas
 const STALL_TIMEOUT = 10000; // kiek laiko be naujų kadrų laikoma nutrūkimu
 
+/** Ar galima įrašyti ekraną (skirtuką): reikia saugaus konteksto – https, localhost ar file://. */
+export const canCaptureScreen = () => !!navigator.mediaDevices?.getDisplayMedia && (window.isSecureContext || location.protocol === 'file:');
+
 const sleep = (ms, signal) =>
   new Promise((res, rej) => {
     const id = setTimeout(res, ms);
@@ -93,10 +96,12 @@ export class LivePlayer {
       mjpeg: [['mjpeg', url]],
       image: [['image', url]],
       embed: [['embed', url]],
-      guess: [['file', url], ['hls', url], ['mjpeg', url]],
+      // Nežinoma nuoroda, kurios turinio perskaityti negalima (CORS): bandoma kaip srautas, kitaip – įterpiamas puslapis
+      guess: [['file', url], ['hls', url], ['mjpeg', url], ['embed', url]],
     }[kind];
     // HLS be CORS leidimo naršyklė perskaityti negali – tada per serverį
     const server = kind === 'hls' || kind === 'guess' ? [['gw-webrtc'], ['gw-hls']] : [];
+    if (kind === 'guess' && via !== 'server') return direct;
     if (via === 'server') return server.length ? server : direct;
     if (via === 'direct') return direct;
     return [...direct, ...server];
@@ -363,7 +368,26 @@ export class LivePlayer {
 
   // ---------------------------------------------------------------- veiksmai
   get canCapture() {
-    return this.state === 'live' && (this.el instanceof HTMLVideoElement || this.el instanceof HTMLImageElement);
+    return this.state === 'live' && (this.el instanceof HTMLVideoElement || this.el instanceof HTMLImageElement || (this.embedded && canCaptureScreen()));
+  }
+
+  /**
+   * Įterptas tinklalapis: kitos svetainės turinio skaityti negalima, todėl įrašomas pats skirtukas
+   * (naršyklė paprašo leidimo) ir apkarpomas iki grotuvo lango (Region Capture – Chrome / Edge).
+   */
+  async captureEmbed() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: 'exclude',
+      systemAudio: 'exclude',
+    });
+    const [track] = stream.getVideoTracks();
+    if (window.CropTarget && track?.cropTo && this.el) await track.cropTo(await window.CropTarget.fromElement(this.el));
+    stream._stop = () => stream.getTracks().forEach((x) => x.stop());
+    return stream;
   }
 
   setMuted(m) {
@@ -382,8 +406,24 @@ export class LivePlayer {
   }
 
   /** Kadras kaip PNG. */
-  snapshot() {
-    const el = this.el;
+  async snapshot() {
+    if (this.embedded) {
+      const stream = await this.captureEmbed();
+      try {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.srcObject = stream;
+        await v.play();
+        await new Promise((r) => setTimeout(r, 300)); // apkarpymas pritaikomas ne iš karto
+        return await this.frameToPng(v);
+      } finally {
+        stream._stop();
+      }
+    }
+    return this.frameToPng(this.el);
+  }
+
+  frameToPng(el) {
     const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight;
     if (!w || !h) throw new Error(t('Dar nėra vaizdo'));
     const c = document.createElement('canvas');
@@ -399,11 +439,15 @@ export class LivePlayer {
     });
   }
 
-  /** Įrašymo pradžia; grąžina Promise<Blob>, kuris išsipildo sustabdžius. */
-  startRecording() {
+  /** Įrašymo pradžia; įrašas (Blob) gaunamas per stopRecording(). */
+  async startRecording() {
     const el = this.el;
     let stream;
-    if (this.media) stream = this.media;
+    if (this.embedded) {
+      stream = await this.captureEmbed();
+      // Naudotojas paspaudė „Nebendrinti“ – įrašas baigiamas ir išsaugomas
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => this.recorder && this.stopRecording().then((r) => r && this.onRecordingCut?.(r, true)));
+    } else if (this.media) stream = this.media;
     else if (el instanceof HTMLVideoElement) stream = (el.captureStream || el.mozCaptureStream)?.call(el);
     else if (el instanceof HTMLImageElement) {
       // MJPEG / kadrai: piešiama į drobę

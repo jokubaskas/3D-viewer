@@ -228,10 +228,10 @@ export function createLiveUI(app) {
       <div class="live-view"><div class="live-host"></div>
         <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span></div>
         <div class="live-msg" hidden></div>
-        <span class="live-rec" hidden></span>
       </div>
       <div class="live-bar">
         <b class="live-title">${esc(stream.name)}</b>
+        <span class="live-rec" hidden></span>
         <span class="live-tools">
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
@@ -243,7 +243,7 @@ export function createLiveUI(app) {
       </div>`;
     $('#live-grid').append(el);
     const player = new LivePlayer(el.querySelector('.live-host'), stream, gateway, { onState: () => renderTile(stream.id) });
-    player.onRecordingCut = (r) => saveRecording(stream, r, true);
+    player.onRecordingCut = (r, userStopped) => (el.classList.remove('capturing'), saveRecording(stream, r, !userStopped));
     tiles.set(stream.id, { stream, player, el });
     layout();
     player.start();
@@ -289,8 +289,7 @@ export function createLiveUI(app) {
     if (s.kbps > 0) parts.push(s.kbps > 1000 ? `${nf(s.kbps / 1000, 1)} Mb/s` : `${nf(s.kbps, 0)} kb/s`);
     if (s.latency > 0 && isFinite(s.latency)) parts.push(t('vėlavimas {s} s', { s: nf(s.latency, 1) }));
     // Įterptas tinklalapis: kitos svetainės turinio naršyklė neleidžia nei kopijuoti, nei įrašyti
-    if (live && p.embedded && !/^(YouTube|Twitch|Vimeo)$/.test(p.mode)) parts.push(t('Tinklalapis, ne vaizdo srautas – kadrų ir įrašymo nėra. Įklijuokite .m3u8 / rtsp:// nuorodą'));
-    else if (live && p.embedded) parts.push(t('Įterptas grotuvas – kadrų ir įrašymo nėra'));
+    if (live && p.embedded) parts.push(p.canCapture ? t('Tinklalapis – kadras ir įrašas imami iš ekrano (naršyklė paprašys leidimo bendrinti skirtuką)') : t('Tinklalapis – įrašyti galima tik programą atidarius per localhost arba https'));
     el.querySelector('.live-stat').textContent = live ? parts.join(' · ') : '';
     const msg = el.querySelector('.live-msg');
     msg.hidden = live || p.state === 'idle';
@@ -338,7 +337,10 @@ export function createLiveUI(app) {
       renderTile(s.id);
     } else if (act === 'snap') {
       try {
-        download(await p.snapshot(), `${safe(s.name)}_${stamp()}.png`);
+        // Įterpto puslapio kadras imamas iš ekrano – užrašai ant vaizdo paslepiami
+        if (p.embedded) el.classList.add('capturing');
+        const png = await p.snapshot().finally(() => !p.recorder && el.classList.remove('capturing'));
+        download(png, `${safe(s.name)}_${stamp()}.png`);
         el.classList.add('flash');
         setTimeout(() => el.classList.remove('flash'), 250);
       } catch (err) {
@@ -348,12 +350,14 @@ export function createLiveUI(app) {
       if (p.recorder) stopRec(tile);
       else {
         try {
-          p.startRecording();
+          if (p.embedded) el.classList.add('capturing');
+          await p.startRecording();
           el.querySelector('[data-tact=rec]').classList.add('recording');
           el.querySelector('[data-tact=rec]').innerHTML = icon('stop');
           tickRec();
         } catch (err) {
-          app.toast(err.message, 'error', 6000);
+          el.classList.remove('capturing');
+          app.toast(err.name === 'NotAllowedError' ? 'Įrašymas atšauktas – nesuteiktas leidimas bendrinti skirtuką' : err.message, 'error', 6000);
         }
       }
     }
@@ -367,6 +371,7 @@ export function createLiveUI(app) {
   });
 
   async function stopRec(tile) {
+    tile.el.classList.remove('capturing');
     const btn = tile.el.querySelector('[data-tact=rec]');
     btn.classList.remove('recording');
     btn.innerHTML = icon('record');
