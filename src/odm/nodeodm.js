@@ -46,7 +46,11 @@ export class NodeODM {
     try {
       return await fetch(url, init);
     } catch {
-      throw new Error(t('Nepavyko prisijungti prie {u} – ar paleistas apdorojimo serveris (Docker)?', { u: this.base }));
+      const local = /localhost|127\.0\.0\.1/.test(this.base) && !this.base.startsWith(location.origin);
+      throw new Error(
+        t('Nepavyko prisijungti prie {u} – ar paleistas apdorojimo serveris (Docker)?', { u: this.base }) +
+          (local ? ' ' + t('Jei start-windows.bat parodė kitą adresą (pvz. http://localhost:8081), atidarykite programą tuo adresu arba „Iš nuotraukų“ → „Apdorojimo serveris“ įrašykite jį ir spauskite „Tikrinti ryšį“.') : ''),
+      );
     }
   }
 

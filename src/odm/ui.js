@@ -34,6 +34,9 @@ const uuidv4 = () => {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 };
 
+/** Vietinis Atea serveris (deploy/): „./odm/“ arba http://localhost:PRIEVADAS/odm/. */
+const isLocalOdm = (u) => /^(\.\/odm\/?|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/odm\/?)$/i.test(String(u || '').trim());
+
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nf = (v, d = 0) => (v == null || !isFinite(v) ? '—' : new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v));
 const fmtBytes = (b) => (b > 1e9 ? `${nf(b / 1e9, 1)} GB` : `${nf(b / 1e6, 0)} MB`);
@@ -50,8 +53,16 @@ export function createOdmUI(app) {
   // Atidarius HTML failą tiesiai iš disko – serveris pagal deploy/ numatytuosius nustatymus
   const server = ls.get(LS_SERVER, { url: location.protocol === 'file:' ? 'http://localhost:8080/odm/' : './odm/', token: '' });
   if (location.protocol === 'file:' && /^\.\//.test(server.url)) server.url = 'http://localhost:8080/odm/';
+  // Programa atidaryta per vietinį serverį (http://localhost:PRIEVADAS): ODM pasiekiamas tuo pačiu adresu.
+  // start-windows.bat gali parinkti kitą prievadą (8081…), todėl įsimintas absoliutus vietinis adresas pasensta.
+  if (location.protocol !== 'file:' && isLocalOdm(server.url) && !server.url.startsWith('./') && !server.url.startsWith(location.origin)) {
+    server.url = './odm/';
+    ls.set(LS_SERVER, server);
+  }
   let projects = ls.get(LS_PROJECTS, []);
   let client = new NodeODM(server.url, server.token);
+  /** Projekto serveris: vietiniam serveriui – dabartinis adresas (prievadas galėjo pasikeisti). */
+  const serverFor = (p) => (isLocalOdm(p.server) ? server.url : p.server);
   let analysis = null;
   let metas = [];
   let geoid = null; // GeoidGrid
@@ -577,7 +588,7 @@ export function createOdmUI(app) {
   async function projectAction(uuid, act, btn) {
     const p = projects.find((x) => x.uuid === uuid);
     if (!p) return;
-    const c = new NodeODM(p.server, server.token);
+    const c = new NodeODM(serverFor(p), server.token);
     try {
       if (act === 'save') {
         app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid) });
@@ -629,7 +640,7 @@ export function createOdmUI(app) {
       if (p.statusCode === STATUS.COMPLETED || p.statusCode === STATUS.CANCELED) continue;
       if (p.statusCode === STATUS.FAILED && p._polledFailed) continue;
       try {
-        const i = await new NodeODM(p.server, server.token).taskInfo(p.uuid);
+        const i = await new NodeODM(serverFor(p), server.token).taskInfo(p.uuid);
         const prev = p.statusCode;
         p.statusCode = i.status?.code;
         p.error = i.status?.errorMessage;
