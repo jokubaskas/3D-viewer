@@ -863,4 +863,10 @@ export const EN = {
   "Tinklalapis – kadras ir įrašas imami iš ekrano (naršyklė paprašys leidimo bendrinti skirtuką)": "Web page – snapshots and recordings are taken from the screen (the browser will ask to share the tab)",
   "Tinklalapis – įrašyti galima tik programą atidarius per localhost arba https": "Web page – recording only works when the app is opened via localhost or https",
   "Įrašymas atšauktas – nesuteiktas leidimas bendrinti skirtuką": "Recording cancelled – permission to share the tab was not given",
+  "Raktas / prisijungimas (nebūtinas)": "Key / login (optional)",
+  "Jei serveris reikalauja prisijungimo: raktas (token, JWT), „Bearer …“ arba vartotojas:slaptažodis": "If the server requires login: a key (token, JWT), “Bearer …” or user:password",
+  "Raktas / prisijungimas (jei serveris jo reikalauja; palikite tuščią, jei nereikia)": "Key / login (if the server requires it; leave empty if not)",
+  "Pavadinimas ir raktas": "Name and key",
+  "Serveris nepriėmė rakto – patikrinkite jį (raktai dažnai galioja tik ribotą laiką)": "The server rejected the key – check it (keys are often valid only for a limited time)",
+  "Serveris reikalauja prisijungimo – prie transliacijos įveskite raktą (✎ → Raktas)": "The server requires login – enter a key for the stream (✎ → Key)",
 };

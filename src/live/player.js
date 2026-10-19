@@ -9,6 +9,31 @@ const STALL_TIMEOUT = 10000; // kiek laiko be naujų kadrų laikoma nutrūkimu
 /** Ar galima įrašyti ekraną (skirtuką): reikia saugaus konteksto – https, localhost ar file://. */
 export const canCaptureScreen = () => !!navigator.mediaDevices?.getDisplayMedia && (window.isSecureContext || location.protocol === 'file:');
 
+/**
+ * Prisijungimas prie WHEP / HLS serverio: „Bearer …“, „Basic …“, „vartotojas:slaptažodis“ arba tik raktas (JWT ir pan.).
+ * Vartotojas ir slaptažodis nuorodoje (https://v:s@…) taip pat paverčiami antrašte – fetch jų adrese neleidžia.
+ * @returns {{url:string, headers:Record<string,string>}}
+ */
+export function authFor(rawUrl, auth) {
+  let url = rawUrl;
+  let a = String(auth || '').trim();
+  try {
+    const u = new URL(rawUrl);
+    if (u.username || u.password) {
+      if (!a) a = `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`;
+      u.username = '';
+      u.password = '';
+      url = u.href;
+    }
+  } catch { /* ne URL */ }
+  if (!a) return { url, headers: {} };
+  let h;
+  if (/^(Bearer|Basic|Token)\s/i.test(a)) h = a;
+  else if (a.includes(':') && !a.startsWith('ey')) h = `Basic ${btoa(unescape(encodeURIComponent(a)))}`;
+  else h = `Bearer ${a}`;
+  return { url, headers: { Authorization: h } };
+}
+
 const sleep = (ms, signal) =>
   new Promise((res, rej) => {
     const id = setTimeout(res, ms);
@@ -193,7 +218,10 @@ export class LivePlayer {
       const timer = setTimeout(res, 1500);
       pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && (clearTimeout(timer), res()));
     });
-    const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp, signal });
+    const auth = authFor(whep, this.stream.path ? '' : this.stream.auth);
+    whep = auth.url;
+    this.authHeaders = auth.headers;
+    const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...auth.headers }, body: pc.localDescription.sdp, signal });
     if (!r.ok) {
       let msg = await r.text().catch(() => '');
       try {
@@ -202,6 +230,11 @@ export class LivePlayer {
       if (/timed out|no one is publishing|no stream is available/i.test(msg)) {
         const err = new Error(t('Šaltinis neatsako – patikrinkite adresą, slaptažodį ir ar kamera / dronas pasiekiami iš šio kompiuterio'));
         err.sourceDown = true;
+        throw err;
+      }
+      if (r.status === 401 || r.status === 403 || /authentication|unauthori[sz]ed|forbidden/i.test(msg)) {
+        const err = new Error(t(auth.headers.Authorization ? 'Serveris nepriėmė rakto – patikrinkite jį (raktai dažnai galioja tik ribotą laiką)' : 'Serveris reikalauja prisijungimo – prie transliacijos įveskite raktą (✎ → Raktas)'));
+        err.sourceDown = true; // kiti būdai nepadės
         throw err;
       }
       if (/codecs? not supported/i.test(msg)) msg = t('naršyklė nepalaiko vaizdo kodeko ({m})', { m: msg.slice(0, 120) });
@@ -224,7 +257,9 @@ export class LivePlayer {
     const native = v.canPlayType('application/vnd.apple.mpegurl');
     const { default: Hls } = await import('hls.js/light');
     if (Hls.isSupported()) {
-      const hls = (this.hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.5, backBufferLength: 10, manifestLoadingMaxRetry: 2 }));
+      const auth = authFor(url, this.stream.path ? '' : this.stream.auth);
+      url = auth.url;
+      const hls = (this.hls = new Hls({ xhrSetup: (xhr) => Object.entries(auth.headers).forEach(([k, v]) => xhr.setRequestHeader(k, v)), lowLatencyMode: true, liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.5, backBufferLength: 10, manifestLoadingMaxRetry: 2 }));
       const fatal = new Promise((_, rej) =>
         hls.on(Hls.Events.ERROR, (_e, d) => {
           if (!d.fatal) return;
@@ -495,7 +530,7 @@ export class LivePlayer {
   teardown() {
     clearInterval(this._statTimer);
     if (this.recorder) this.stopRecording().then((r) => r && this.onRecordingCut?.(r));
-    if (this.whepSession) fetch(this.whepSession, { method: 'DELETE' }).catch(() => {});
+    if (this.whepSession) fetch(this.whepSession, { method: 'DELETE', headers: this.authHeaders || {} }).catch(() => {});
     this.whepSession = null;
     this.hls?.destroy();
     this.hls = null;

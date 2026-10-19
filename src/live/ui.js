@@ -80,6 +80,7 @@ export function createLiveUI(app) {
             <input id="live-url" class="live-input" placeholder="rtsp://…, rtmp://…, https://….m3u8, YouTube…" spellcheck="false" />
             <div id="live-kind" class="small muted live-kind"></div>
             <input id="live-name" class="live-input" placeholder="Pavadinimas (nebūtinas)" />
+            <input id="live-auth" class="live-input" type="password" autocomplete="off" placeholder="Raktas / prisijungimas (nebūtinas)" title="Jei serveris reikalauja prisijungimo: raktas (token, JWT), „Bearer …“ arba vartotojas:slaptažodis" />
             <label class="row">Rodymas
               <select id="live-via">
                 <option value="auto">Automatiškai</option>
@@ -163,9 +164,11 @@ export function createLiveUI(app) {
       s = { id: id(), name, url, via: $('#live-via').value, muted: true };
       streams.unshift(s);
     } else s.via = $('#live-via').value;
+    if ($('#live-auth').value.trim()) s.auth = $('#live-auth').value.trim();
     save();
     $('#live-url').value = '';
     $('#live-name').value = '';
+    $('#live-auth').value = '';
     $('#live-kind').textContent = '';
     show(s);
   });
@@ -187,7 +190,7 @@ export function createLiveUI(app) {
             <span class="live-dot ${tiles.get(s.id)?.player.state || ''}"></span>
             <span class="live-item-text"><b>${esc(s.name)}</b><span class="muted small">${esc(shortUrl(s.url))}</span></span>
           </button>
-          <button class="btn btn-ghost btn-sm icon-only" data-lact="rename" title="${esc(t('Pervadinti'))}">${icon('edit')}</button>
+          <button class="btn btn-ghost btn-sm icon-only" data-lact="rename" title="${esc(t('Pavadinimas ir raktas'))}">${icon('edit')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-lact="delete" title="${esc(t('Pašalinti'))}">${icon('trash')}</button>
         </div>`,
           )
@@ -201,11 +204,18 @@ export function createLiveUI(app) {
     if (act === 'toggle') tiles.has(s.id) ? hide(s.id) : show(s);
     else if (act === 'rename') {
       const n = prompt(t('Pavadinimas'), s.name);
-      if (n?.trim()) {
-        s.name = n.trim();
-        save();
-        const tile = tiles.get(s.id);
-        if (tile) tile.el.querySelector('.live-title').textContent = s.name;
+      if (n === null) return;
+      if (n.trim()) s.name = n.trim();
+      const a = prompt(t('Raktas / prisijungimas (jei serveris jo reikalauja; palikite tuščią, jei nereikia)'), s.auth || '');
+      if (a !== null) s.auth = a.trim() || undefined;
+      save();
+      const tile = tiles.get(s.id);
+      if (tile) {
+        tile.el.querySelector('.live-title').textContent = s.name;
+        if (a !== null) {
+          tile.player.retries = 0;
+          tile.player.start();
+        }
       }
     } else if (act === 'delete') {
       if (!confirm(t('Pašalinti „{n}“?', { n: s.name }))) return;
