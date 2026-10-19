@@ -24,14 +24,15 @@ if not exist ".env" (
   echo Sukurtas nustatymu failas .env su nauju slaptu raktu.
 )
 
-rem Senas (ar nepasileides) programos konteineris atlaisvina prievada
-docker compose rm -s -f web >nul 2>nul
-
-rem Laisvas prievadas: jei 8080 uzimtas kitos programos, parenkamas kitas (8081, 8082...)
+rem Prievadas: tas pats kaip veikiancios programos, kitaip 8080 (tik jei jis uzimtas kitos programos - 8081...).
+rem Prievadas turi buti pastovus - narsykle projektu sarasa saugo atskirai kiekvienam adresui.
 set "PORT="
 for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0free-port.ps1"`) do set "PORT=%%p"
 if not defined PORT set "PORT=8080"
-if not "%PORT%"=="8080" echo Prievadas 8080 uzimtas kitos programos - naudojamas %PORT%.
+if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - projektu sarasas narsykleje bus atskiras.
+
+rem Senas (ar nepasileides) programos konteineris - sukuriamas is naujo
+docker compose rm -s -f web >nul 2>nul
 
 echo.
 echo Paleidziama (pirma karta atsisiuncia ~6 GB: OpenDroneMap + AI modeliai, gali uztrukti 15-30 min.)...
@@ -39,6 +40,19 @@ echo Jei serveris jau veike, jis bus atnaujintas.
 docker compose up -d --build
 if errorlevel 1 (
   echo [KLAIDA] Nepavyko paleisti. Perziurekite klaidas auksciau.
+  pause
+  exit /b 1
+)
+
+echo.
+echo Tikrinama, ar atsidaro programa (iki 1 min.)...
+powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://localhost:%PORT%/'; if($r.StatusCode -eq 200){exit 0}}catch{}; Start-Sleep 2}; exit 1"
+if errorlevel 1 (
+  echo.
+  echo [KLAIDA] Programa neatsako adresu http://localhost:%PORT%
+  echo Konteineriu busena ir programos ^(web^) pranesimai - nusiuskite juos, jei reikia pagalbos:
+  docker compose ps
+  docker compose logs --tail 40 web
   pause
   exit /b 1
 )
