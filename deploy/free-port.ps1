@@ -1,8 +1,9 @@
 # Atea 3D Matuoklis - parenka prievada programai ir iraso ji i .env (WEB_PORT). Isveda pasirinkta prievada.
 # Naudoja start-windows.bat. Prievadas turi likti pastovus: narsykle projektu sarasa ir nustatymus saugo
 # atskirai kiekvienam adresui (localhost:8080 ir localhost:8081 - skirtingi).
-#   1) Jei musu programos konteineris jau veikia - naudojamas jo prievadas.
-#   2) Kitaip - 8080 (Docker Desktop prievada po konteinerio sustabdymo atlaisvina per kelias sekundes - palaukiame).
+#   0) Jei 8080 laisvas - 8080.
+#   1) Jei 8080 uzima musu pacios programos konteineris - jo prievadas.
+#   2) Kitaip - laukiama 8080 (Docker Desktop prievada po konteinerio sustabdymo atlaisvina per kelias sekundes).
 #   3) Tik jei 8080 tikrai uzimtas kitos programos - kitas laisvas (8081...) ir parodoma, kas uzima 8080.
 param([int]$Preferred = 8080)
 
@@ -32,14 +33,17 @@ function Save-Port([int]$p) {
   if ($t -ne $text) { [IO.File]::WriteAllText($envFile, $t) }
 }
 
-# 1) Musu programos konteineris jau veikia
+# 0) 8080 laisvas - visada ji (net jei programa siuo metu veikia kitu prievadu - grizta i pastovu adresa)
 $port = $null
-Push-Location $PSScriptRoot
+if (Test-Free $Preferred) { $port = $Preferred }
+
+# 1) Musu programos konteineris jau veikia (8080 uzimtas - galbut paties musu konteinerio)
+if (-not $port) { Push-Location $PSScriptRoot
 try {
   $cur = (& docker compose port web 80 2>$null) | Select-Object -First 1
   if ($cur -match ':(\d+)\s*$') { $port = [int]$Matches[1] }
 } catch {}
-Pop-Location
+Pop-Location }
 
 # 2) Pageidaujamas prievadas (palaukiame, kol Docker ji atlaisvins)
 if (-not $port) {
