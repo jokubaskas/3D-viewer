@@ -528,7 +528,8 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .live-badge.connecting { color: #ffcf6e; }
 .live-stat { font-size: 11px; color: #e6e6e6; background: rgba(20,23,25,.6); padding: 3px 7px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .live-stat:empty { display: none; }
-.live-rec { position: absolute; right: 10px; bottom: 10px; font-size: 12px; font-weight: 700; color: #fff; background: #d93a32; padding: 3px 8px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.live-tile.capturing .live-overlay { display: none; }
+.live-rec { margin-left: auto; flex: none; font-size: 11.5px; font-weight: 700; color: #fff; background: #d93a32; padding: 3px 8px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .live-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 20px; text-align: center; color: var(--ink-2); font-size: 13.5px; background: rgba(0,0,0,.55); }
 .live-msg span { max-width: 460px; overflow-wrap: anywhere; }
 .live-spin { width: 26px; height: 26px; border: 3px solid var(--line); border-top-color: var(--atea-green-text); border-radius: 50%; animation: spin 0.9s linear infinite; }

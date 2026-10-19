@@ -80,6 +80,7 @@ export function createLiveUI(app) {
             <input id="live-url" class="live-input" placeholder="rtsp://…, rtmp://…, https://….m3u8, YouTube…" spellcheck="false" />
             <div id="live-kind" class="small muted live-kind"></div>
             <input id="live-name" class="live-input" placeholder="Pavadinimas (nebūtinas)" />
+            <input id="live-auth" class="live-input" type="password" autocomplete="off" placeholder="Raktas / prisijungimas (nebūtinas)" title="Jei serveris reikalauja prisijungimo: raktas (token, JWT), „Bearer …“ arba vartotojas:slaptažodis" />
             <label class="row">Rodymas
               <select id="live-via">
                 <option value="auto">Automatiškai</option>
@@ -163,9 +164,11 @@ export function createLiveUI(app) {
       s = { id: id(), name, url, via: $('#live-via').value, muted: true };
       streams.unshift(s);
     } else s.via = $('#live-via').value;
+    if ($('#live-auth').value.trim()) s.auth = $('#live-auth').value.trim();
     save();
     $('#live-url').value = '';
     $('#live-name').value = '';
+    $('#live-auth').value = '';
     $('#live-kind').textContent = '';
     show(s);
   });
@@ -187,7 +190,7 @@ export function createLiveUI(app) {
             <span class="live-dot ${tiles.get(s.id)?.player.state || ''}"></span>
             <span class="live-item-text"><b>${esc(s.name)}</b><span class="muted small">${esc(shortUrl(s.url))}</span></span>
           </button>
-          <button class="btn btn-ghost btn-sm icon-only" data-lact="rename" title="${esc(t('Pervadinti'))}">${icon('edit')}</button>
+          <button class="btn btn-ghost btn-sm icon-only" data-lact="rename" title="${esc(t('Pavadinimas ir raktas'))}">${icon('edit')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-lact="delete" title="${esc(t('Pašalinti'))}">${icon('trash')}</button>
         </div>`,
           )
@@ -201,11 +204,18 @@ export function createLiveUI(app) {
     if (act === 'toggle') tiles.has(s.id) ? hide(s.id) : show(s);
     else if (act === 'rename') {
       const n = prompt(t('Pavadinimas'), s.name);
-      if (n?.trim()) {
-        s.name = n.trim();
-        save();
-        const tile = tiles.get(s.id);
-        if (tile) tile.el.querySelector('.live-title').textContent = s.name;
+      if (n === null) return;
+      if (n.trim()) s.name = n.trim();
+      const a = prompt(t('Raktas / prisijungimas (jei serveris jo reikalauja; palikite tuščią, jei nereikia)'), s.auth || '');
+      if (a !== null) s.auth = a.trim() || undefined;
+      save();
+      const tile = tiles.get(s.id);
+      if (tile) {
+        tile.el.querySelector('.live-title').textContent = s.name;
+        if (a !== null) {
+          tile.player.retries = 0;
+          tile.player.start();
+        }
       }
     } else if (act === 'delete') {
       if (!confirm(t('Pašalinti „{n}“?', { n: s.name }))) return;
@@ -228,10 +238,10 @@ export function createLiveUI(app) {
       <div class="live-view"><div class="live-host"></div>
         <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span></div>
         <div class="live-msg" hidden></div>
-        <span class="live-rec" hidden></span>
       </div>
       <div class="live-bar">
         <b class="live-title">${esc(stream.name)}</b>
+        <span class="live-rec" hidden></span>
         <span class="live-tools">
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
@@ -243,7 +253,7 @@ export function createLiveUI(app) {
       </div>`;
     $('#live-grid').append(el);
     const player = new LivePlayer(el.querySelector('.live-host'), stream, gateway, { onState: () => renderTile(stream.id) });
-    player.onRecordingCut = (r) => saveRecording(stream, r, true);
+    player.onRecordingCut = (r, userStopped) => (el.classList.remove('capturing'), saveRecording(stream, r, !userStopped));
     tiles.set(stream.id, { stream, player, el });
     layout();
     player.start();
@@ -288,6 +298,8 @@ export function createLiveUI(app) {
     if (s.fps > 0.5) parts.push(`${nf(s.fps, 0)} fps`);
     if (s.kbps > 0) parts.push(s.kbps > 1000 ? `${nf(s.kbps / 1000, 1)} Mb/s` : `${nf(s.kbps, 0)} kb/s`);
     if (s.latency > 0 && isFinite(s.latency)) parts.push(t('vėlavimas {s} s', { s: nf(s.latency, 1) }));
+    // Įterptas tinklalapis: kitos svetainės turinio naršyklė neleidžia nei kopijuoti, nei įrašyti
+    if (live && p.embedded) parts.push(p.canCapture ? t('Tinklalapis – kadras ir įrašas imami iš ekrano (naršyklė paprašys leidimo bendrinti skirtuką)') : t('Tinklalapis – įrašyti galima tik programą atidarius per localhost arba https'));
     el.querySelector('.live-stat').textContent = live ? parts.join(' · ') : '';
     const msg = el.querySelector('.live-msg');
     msg.hidden = live || p.state === 'idle';
@@ -335,7 +347,10 @@ export function createLiveUI(app) {
       renderTile(s.id);
     } else if (act === 'snap') {
       try {
-        download(await p.snapshot(), `${safe(s.name)}_${stamp()}.png`);
+        // Įterpto puslapio kadras imamas iš ekrano – užrašai ant vaizdo paslepiami
+        if (p.embedded) el.classList.add('capturing');
+        const png = await p.snapshot().finally(() => !p.recorder && el.classList.remove('capturing'));
+        download(png, `${safe(s.name)}_${stamp()}.png`);
         el.classList.add('flash');
         setTimeout(() => el.classList.remove('flash'), 250);
       } catch (err) {
@@ -345,12 +360,14 @@ export function createLiveUI(app) {
       if (p.recorder) stopRec(tile);
       else {
         try {
-          p.startRecording();
+          if (p.embedded) el.classList.add('capturing');
+          await p.startRecording();
           el.querySelector('[data-tact=rec]').classList.add('recording');
           el.querySelector('[data-tact=rec]').innerHTML = icon('stop');
           tickRec();
         } catch (err) {
-          app.toast(err.message, 'error', 6000);
+          el.classList.remove('capturing');
+          app.toast(err.name === 'NotAllowedError' ? 'Įrašymas atšauktas – nesuteiktas leidimas bendrinti skirtuką' : err.message, 'error', 6000);
         }
       }
     }
@@ -364,6 +381,7 @@ export function createLiveUI(app) {
   });
 
   async function stopRec(tile) {
+    tile.el.classList.remove('capturing');
     const btn = tile.el.querySelector('[data-tact=rec]');
     btn.classList.remove('recording');
     btn.innerHTML = icon('record');

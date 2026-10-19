@@ -6,6 +6,34 @@ import { t } from '../i18n.js';
 const START_TIMEOUT = 12000; // per kiek laiko turi pasirodyti vaizdas
 const STALL_TIMEOUT = 10000; // kiek laiko be naujų kadrų laikoma nutrūkimu
 
+/** Ar galima įrašyti ekraną (skirtuką): reikia saugaus konteksto – https, localhost ar file://. */
+export const canCaptureScreen = () => !!navigator.mediaDevices?.getDisplayMedia && (window.isSecureContext || location.protocol === 'file:');
+
+/**
+ * Prisijungimas prie WHEP / HLS serverio: „Bearer …“, „Basic …“, „vartotojas:slaptažodis“ arba tik raktas (JWT ir pan.).
+ * Vartotojas ir slaptažodis nuorodoje (https://v:s@…) taip pat paverčiami antrašte – fetch jų adrese neleidžia.
+ * @returns {{url:string, headers:Record<string,string>}}
+ */
+export function authFor(rawUrl, auth) {
+  let url = rawUrl;
+  let a = String(auth || '').trim();
+  try {
+    const u = new URL(rawUrl);
+    if (u.username || u.password) {
+      if (!a) a = `${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`;
+      u.username = '';
+      u.password = '';
+      url = u.href;
+    }
+  } catch { /* ne URL */ }
+  if (!a) return { url, headers: {} };
+  let h;
+  if (/^(Bearer|Basic|Token)\s/i.test(a)) h = a;
+  else if (a.includes(':') && !a.startsWith('ey')) h = `Basic ${btoa(unescape(encodeURIComponent(a)))}`;
+  else h = `Bearer ${a}`;
+  return { url, headers: { Authorization: h } };
+}
+
 const sleep = (ms, signal) =>
   new Promise((res, rej) => {
     const id = setTimeout(res, ms);
@@ -79,18 +107,26 @@ export class LivePlayer {
     if (c.kind === 'gateway') return [['gw-webrtc'], ['gw-hls']];
     if (c.kind === 'embed') return [['embed', c.embed]];
     let kind = c.kind;
-    if (kind === 'auto') kind = (await probeKind(c.url, signal)) || 'guess';
+    let url = c.url;
+    this.srcUrl = null; // srautas, rastas grotuvo tinklalapyje
+    if (kind === 'auto') {
+      const p = await probeKind(c.url, signal);
+      kind = p?.kind || 'guess';
+      if (p?.url) url = this.srcUrl = p.url;
+    }
     const direct = {
-      whep: [['webrtc', c.url]],
-      hls: [['hls', c.url]],
-      file: [['file', c.url]],
-      mjpeg: [['mjpeg', c.url]],
-      image: [['image', c.url]],
-      embed: [['embed', c.url]],
-      guess: [['file', c.url], ['hls', c.url], ['mjpeg', c.url]],
+      whep: [['webrtc', url]],
+      hls: [['hls', url]],
+      file: [['file', url]],
+      mjpeg: [['mjpeg', url]],
+      image: [['image', url]],
+      embed: [['embed', url]],
+      // Nežinoma nuoroda, kurios turinio perskaityti negalima (CORS): bandoma kaip srautas, kitaip – įterpiamas puslapis
+      guess: [['file', url], ['hls', url], ['mjpeg', url], ['embed', url]],
     }[kind];
     // HLS be CORS leidimo naršyklė perskaityti negali – tada per serverį
     const server = kind === 'hls' || kind === 'guess' ? [['gw-webrtc'], ['gw-hls']] : [];
+    if (kind === 'guess' && via !== 'server') return direct;
     if (via === 'server') return server.length ? server : direct;
     if (via === 'direct') return direct;
     return [...direct, ...server];
@@ -142,7 +178,7 @@ export class LivePlayer {
 
   async attempt(mode, url, signal) {
     if (mode === 'gw-webrtc' || mode === 'gw-hls') {
-      const name = this.stream.path || (await this.gateway.addSource(this.stream.url));
+      const name = this.stream.path || (await this.gateway.addSource(this.srcUrl || this.stream.url));
       this.gwName = name;
       if (mode === 'gw-webrtc') return this.playWebrtc(await this.gateway.whepUrl(name), signal, t('WebRTC per serverį'));
       return this.playHls(await this.gateway.hlsUrl(name), signal, t('HLS per serverį'));
@@ -182,7 +218,10 @@ export class LivePlayer {
       const timer = setTimeout(res, 1500);
       pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && (clearTimeout(timer), res()));
     });
-    const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp, signal });
+    const auth = authFor(whep, this.stream.path ? '' : this.stream.auth);
+    whep = auth.url;
+    this.authHeaders = auth.headers;
+    const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...auth.headers }, body: pc.localDescription.sdp, signal });
     if (!r.ok) {
       let msg = await r.text().catch(() => '');
       try {
@@ -191,6 +230,11 @@ export class LivePlayer {
       if (/timed out|no one is publishing|no stream is available/i.test(msg)) {
         const err = new Error(t('Šaltinis neatsako – patikrinkite adresą, slaptažodį ir ar kamera / dronas pasiekiami iš šio kompiuterio'));
         err.sourceDown = true;
+        throw err;
+      }
+      if (r.status === 401 || r.status === 403 || /authentication|unauthori[sz]ed|forbidden/i.test(msg)) {
+        const err = new Error(t(auth.headers.Authorization ? 'Serveris nepriėmė rakto – patikrinkite jį (raktai dažnai galioja tik ribotą laiką)' : 'Serveris reikalauja prisijungimo – prie transliacijos įveskite raktą (✎ → Raktas)'));
+        err.sourceDown = true; // kiti būdai nepadės
         throw err;
       }
       if (/codecs? not supported/i.test(msg)) msg = t('naršyklė nepalaiko vaizdo kodeko ({m})', { m: msg.slice(0, 120) });
@@ -213,7 +257,9 @@ export class LivePlayer {
     const native = v.canPlayType('application/vnd.apple.mpegurl');
     const { default: Hls } = await import('hls.js/light');
     if (Hls.isSupported()) {
-      const hls = (this.hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.5, backBufferLength: 10, manifestLoadingMaxRetry: 2 }));
+      const auth = authFor(url, this.stream.path ? '' : this.stream.auth);
+      url = auth.url;
+      const hls = (this.hls = new Hls({ xhrSetup: (xhr) => Object.entries(auth.headers).forEach(([k, v]) => xhr.setRequestHeader(k, v)), lowLatencyMode: true, liveSyncDurationCount: 2, maxLiveSyncPlaybackRate: 1.5, backBufferLength: 10, manifestLoadingMaxRetry: 2 }));
       const fatal = new Promise((_, rej) =>
         hls.on(Hls.Events.ERROR, (_e, d) => {
           if (!d.fatal) return;
@@ -285,6 +331,7 @@ export class LivePlayer {
     this.host.replaceChildren(f);
     this.el = f;
     this.mode = classify(this.stream.url).label || t('Puslapis');
+    this.embedded = true;
   }
 
   // ---------------------------------------------------------------- stebėjimas
@@ -356,7 +403,26 @@ export class LivePlayer {
 
   // ---------------------------------------------------------------- veiksmai
   get canCapture() {
-    return this.state === 'live' && (this.el instanceof HTMLVideoElement || this.el instanceof HTMLImageElement);
+    return this.state === 'live' && (this.el instanceof HTMLVideoElement || this.el instanceof HTMLImageElement || (this.embedded && canCaptureScreen()));
+  }
+
+  /**
+   * Įterptas tinklalapis: kitos svetainės turinio skaityti negalima, todėl įrašomas pats skirtukas
+   * (naršyklė paprašo leidimo) ir apkarpomas iki grotuvo lango (Region Capture – Chrome / Edge).
+   */
+  async captureEmbed() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: true,
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      surfaceSwitching: 'exclude',
+      systemAudio: 'exclude',
+    });
+    const [track] = stream.getVideoTracks();
+    if (window.CropTarget && track?.cropTo && this.el) await track.cropTo(await window.CropTarget.fromElement(this.el));
+    stream._stop = () => stream.getTracks().forEach((x) => x.stop());
+    return stream;
   }
 
   setMuted(m) {
@@ -375,8 +441,24 @@ export class LivePlayer {
   }
 
   /** Kadras kaip PNG. */
-  snapshot() {
-    const el = this.el;
+  async snapshot() {
+    if (this.embedded) {
+      const stream = await this.captureEmbed();
+      try {
+        const v = document.createElement('video');
+        v.muted = true;
+        v.srcObject = stream;
+        await v.play();
+        await new Promise((r) => setTimeout(r, 300)); // apkarpymas pritaikomas ne iš karto
+        return await this.frameToPng(v);
+      } finally {
+        stream._stop();
+      }
+    }
+    return this.frameToPng(this.el);
+  }
+
+  frameToPng(el) {
     const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight;
     if (!w || !h) throw new Error(t('Dar nėra vaizdo'));
     const c = document.createElement('canvas');
@@ -392,11 +474,15 @@ export class LivePlayer {
     });
   }
 
-  /** Įrašymo pradžia; grąžina Promise<Blob>, kuris išsipildo sustabdžius. */
-  startRecording() {
+  /** Įrašymo pradžia; įrašas (Blob) gaunamas per stopRecording(). */
+  async startRecording() {
     const el = this.el;
     let stream;
-    if (this.media) stream = this.media;
+    if (this.embedded) {
+      stream = await this.captureEmbed();
+      // Naudotojas paspaudė „Nebendrinti“ – įrašas baigiamas ir išsaugomas
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => this.recorder && this.stopRecording().then((r) => r && this.onRecordingCut?.(r, true)));
+    } else if (this.media) stream = this.media;
     else if (el instanceof HTMLVideoElement) stream = (el.captureStream || el.mozCaptureStream)?.call(el);
     else if (el instanceof HTMLImageElement) {
       // MJPEG / kadrai: piešiama į drobę
@@ -444,7 +530,7 @@ export class LivePlayer {
   teardown() {
     clearInterval(this._statTimer);
     if (this.recorder) this.stopRecording().then((r) => r && this.onRecordingCut?.(r));
-    if (this.whepSession) fetch(this.whepSession, { method: 'DELETE' }).catch(() => {});
+    if (this.whepSession) fetch(this.whepSession, { method: 'DELETE', headers: this.authHeaders || {} }).catch(() => {});
     this.whepSession = null;
     this.hls?.destroy();
     this.hls = null;
@@ -461,6 +547,7 @@ export class LivePlayer {
     this.el = null;
     this.stats = {};
     this._bytes = 0;
+    this.embedded = false;
   }
 
   stop(notify = true) {
