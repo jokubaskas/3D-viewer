@@ -123,7 +123,7 @@ Prielaidos ir tikslumas:
 2. Atsisiųskite visą projektą (GitHub → **Code → Download ZIP**) ir išskleiskite.
 3. Atidarykite aplanką `deploy` ir dukart spustelėkite **`start-windows.bat`**.
    Jis sukurs `.env` su slaptu raktu, paleis serverį ir atidarys `http://localhost:8080`.
-   Jei prievadas 8080 jau užimtas kitos programos, failas pats parinks laisvą (8081, 8082…), įrašys jį į `deploy/.env` (`WEB_PORT`) ir atidarys teisingą adresą.
+   Programa visada paleidžiama tuo pačiu adresu **http://localhost:8080**: jei ji jau veikia, naudojamas jos prievadas; po sustabdymo palaukiama, kol Docker atlaisvins 8080. Kitas prievadas (8081…) parenkamas tik tada, kai 8080 tikrai užimtas kitos programos – tada parodoma, kuri programa jį užima. Pastovus adresas svarbus: naršyklė projektų sąrašą ir nustatymus saugo atskirai kiekvienam adresui. Paleidęs failas patikrina, ar programa atsidaro; jei ne – parodo konteinerių būseną ir `web` pranešimus.
 4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
 
 Kai naudojate vieno failo versiją (`release/…html`), programa pati suranda vietinį serverį prievaduose 8080–8099 (pvz. `http://localhost:8081/odm/` ir `/ai/`). Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
