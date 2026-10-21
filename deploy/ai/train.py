@@ -235,7 +235,8 @@ def main():
                 dataset_file="yolo",
                 epochs=a.epochs,
                 batch_size=a.batch,
-                grad_accum_steps=max(1, 8 // a.batch),
+                # Mažam rinkiniui – be kaupimo (daugiau svorių atnaujinimų per epochą)
+                grad_accum_steps=1 if stats["train"] < 400 else max(1, 8 // a.batch),
                 lr=1e-4,
                 output_dir=str(out),
                 device=device,
@@ -248,7 +249,12 @@ def main():
             stop.set()
 
         ckpt = None
-        for nm in ("checkpoint_best_total.pth", "checkpoint_best_ema.pth", "checkpoint_best_regular.pth", "checkpoint.pth"):
+        # Mažas patikros rinkinys greitai „prisisotina“ (mAP = 1 jau po kelių epochų), tada „geriausias“ modelis
+        # būtų beveik neapmokytas – tokiu atveju imame paskutinį (EMA) modelį.
+        ckpt_names = ("checkpoint_best_total.pth", "checkpoint_best_ema.pth", "checkpoint_best_regular.pth", "checkpoint.pth")
+        if stats["valid"] < 30:
+            ckpt_names = ("last_ema.pth", *ckpt_names)
+        for nm in ckpt_names:
             found = sorted(out.rglob(nm))
             if found:
                 ckpt = found[0]

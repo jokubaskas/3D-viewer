@@ -164,7 +164,7 @@ export function createLiveUI(app) {
           <option value="medium">Didelis – tiksliausias, lėčiausias</option>
         </select>
       </label>
-      <label class="row">Epochų (kartų per visą rinkinį) <input id="tr-epochs" type="number" class="num" min="5" max="200" value="40" /></label>
+      <label class="row">Epochų (kartų per visą rinkinį) <input id="tr-epochs" type="number" class="num" min="1" max="300" value="40" /></label>
       <div id="tr-est" class="small muted"></div>
       <menu>
         <button value="cancel" class="btn btn-ghost" formnovalidate>Atšaukti</button>

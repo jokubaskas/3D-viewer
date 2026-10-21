@@ -52,6 +52,7 @@ CUSTOM_DIR = os.path.join(MODELS_DIR, "custom")  # savi modeliai (Docker tomas �
 _custom: dict = {}  # id -> (modelis, meta)
 _train_proc: Optional[subprocess.Popen] = None
 _train_job: Optional[str] = None
+_train_cancelled: set = set()
 
 
 # ---------------------------------------------------------------------------
@@ -514,9 +515,12 @@ def train_status():
     except (OSError, ValueError):
         st = {"phase": "preparing"}
     running = _train_proc is not None and _train_proc.poll() is None and job == _train_job
-    if not running and st.get("phase") in ("preparing", "training"):
-        st["phase"] = "error" if _train_job == job else "stopped"
-        st.setdefault("message", "Mokymas nutrūko (paslauga buvo perkrauta arba pritrūko atminties)")
+    if not running and (st.get("phase") in ("preparing", "training") or job in _train_cancelled):
+        if job in _train_cancelled:
+            st.update(phase="stopped", message="")
+        else:
+            st["phase"] = "error" if _train_job == job else "stopped"
+            st["message"] = st.get("message") or "Mokymas nutrūko (paslauga buvo perkrauta arba pritrūko atminties)"
     tail = ""
     try:
         with open(os.path.join(work, "train.log"), encoding="utf-8", errors="replace") as f:
@@ -532,6 +536,7 @@ def train_cancel():
     global _train_proc
     if _train_proc is None or _train_proc.poll() is not None:
         return {"ok": True}
+    _train_cancelled.add(_train_job)
     try:
         os.killpg(_train_proc.pid, signal.SIGTERM)
     except Exception:  # pragma: no cover
