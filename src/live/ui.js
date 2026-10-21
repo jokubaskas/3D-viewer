@@ -732,7 +732,7 @@ export function createLiveUI(app) {
         <div class="row"><b>${esc(t(PHASE[st.phase] || st.phase))}${st.phase === 'training' ? ` ${st.epoch || 0} / ${st.epochs}` : st.phase === 'downloading' ? ` ${st.download || 0} %` : ''}</b>
           ${st.running ? `<button class="btn btn-sm btn-ghost danger" data-tr="cancel">${esc(t('Nutraukti'))}</button>` : ''}</div>
         ${st.running ? `<div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>` : ''}
-        <div class="small muted">${st.stats ? esc(t('{i} kadrų, {b} pažymėtų objektų', { i: st.stats.images, b: st.stats.boxes })) : ''}${st.eta ? ` · ${esc(t('liko ~{t}', { t: fmtEta(st.eta) }))}` : ''}${map}</div>
+        <div class="small muted">${st.stats ? esc(t('{i} kadrų, {b} pažymėtų objektų', { i: st.stats.images, b: st.stats.boxes })) : ''}${st.running && st.eta ? ` · ${esc(t('liko ~{t}', { t: fmtEta(st.eta) }))}` : ''}${map}</div>
         ${st.message ? `<div class="small bad">${esc(st.message)}</div>` : ''}
       </div>`;
     } else if (st?.offline) html += `<p class="small muted">${esc(t('AI paslauga nepasiekiama – paleiskite start-windows.bat.'))}</p>`;

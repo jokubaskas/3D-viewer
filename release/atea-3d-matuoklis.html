@@ -4671,7 +4671,7 @@ ${c.map(I=>{var C;return`<tr><td><a class="t" data-t="${Math.max(0,I.t-1e3)/1e3}
         <div class="row"><b>${Lt(eA(j[J.phase]||J.phase))}${J.phase==="training"?` ${J.epoch||0} / ${J.epochs}`:J.phase==="downloading"?` ${J.download||0} %`:""}</b>
           ${J.running?`<button class="btn btn-sm btn-ghost danger" data-tr="cancel">${Lt(eA("Nutraukti"))}</button>`:""}</div>
         ${J.running?`<div class="progress"><div class="progress-bar" style="width:${W}%"></div></div>`:""}
-        <div class="small muted">${J.stats?Lt(eA("{i} kadrų, {b} pažymėtų objektų",{i:J.stats.images,b:J.stats.boxes})):""}${J.eta?` · ${Lt(eA("liko ~{t}",{t:z(J.eta)}))}`:""}${G}</div>
+        <div class="small muted">${J.stats?Lt(eA("{i} kadrų, {b} pažymėtų objektų",{i:J.stats.images,b:J.stats.boxes})):""}${J.running&&J.eta?` · ${Lt(eA("liko ~{t}",{t:z(J.eta)}))}`:""}${G}</div>
         ${J.message?`<div class="small bad">${Lt(J.message)}</div>`:""}
       </div>`}else J!=null&&J.offline&&(q+=`<p class="small muted">${Lt(eA("AI paslauga nepasiekiama – paleiskite start-windows.bat."))}</p>`);l("#live-train").innerHTML=q,l("#live-models").innerHTML=R.map(W=>{var G;return`<div class="live-model" data-mid="${Lt(W.id)}">
         <div><b>${Lt(W.name)}</b> <span class="muted small">${Lt(W.created)} · ${Lt(W.size)}</span></div>
