@@ -94,8 +94,9 @@ function ticker(ms, fn) {
 const GROUPS = {};
 const remember = (groups) => Object.assign(GROUPS, groups || {});
 const gLabel = (k) => GROUPS[k]?.label || k;
-const countsText = (counts) =>
+const countsText = (counts, keep = () => true) =>
   Object.entries(counts || {})
+    .filter(([k]) => keep(k))
     .map(([k, n]) => `${gLabel(k)}: ${n}`)
     .join('   ');
 
@@ -134,6 +135,7 @@ export class AiComposer {
     this.events.push(ev0);
     const L0 = detector.last;
     (L0?.frame && performance.now() - L0.at < 4000 ? this.frameShot(L0, 0, Date.now(), detector.counts) : this.snapshot()).then((b) => (ev0.img = b));
+    ev0.counts = this.reportCounts(ev0.counts);
     this._stopTick = ticker(1000 / FPS, () => this.draw());
   }
 
@@ -180,24 +182,40 @@ export class AiComposer {
     for (const [k, n] of Object.entries(counts)) {
       if (n > (this.max[k] ?? -1)) this.max[k] = n;
       const g = (this._g[k] ||= { hits: 0, lastT: -Infinity, ep: null });
-      if (n > 0) {
+      if (n > 0 && this.inReport(k)) {
         if (t1 - g.lastT >= GONE_MS) Object.assign(g, { hits: 0, firstT: t1, firstAt: this.started + t1 });
         g.hits++;
         g.lastT = t1;
         if (!g.ep && (g.hits >= 2 || this.groupDets(L, k).some((x) => x.score >= SURE)) && this.events.length < MAX_EVENTS) {
-          g.ep = { t: g.firstT, at: g.firstAt, kind: 'episode', group: k, n, end: t1, counts, q: -1, shotT: -Infinity };
+          g.ep = { t: g.firstT, at: g.firstAt, kind: 'episode', group: k, n, end: t1, counts: this.reportCounts(counts), q: -1, shotT: -Infinity };
           this.events.push(g.ep);
         }
         if (g.ep) {
           g.ep.end = t1;
-          if (n > g.ep.n) Object.assign(g.ep, { n, counts });
+          if (n > g.ep.n) Object.assign(g.ep, { n, counts: this.reportCounts(counts) });
           this.betterShot(g.ep, L, k, t1, counts);
         }
-      } else if (g.ep && t1 - g.lastT >= GONE_MS) g.ep = null;
+      } else if (g.ep && (t1 - g.lastT >= GONE_MS || !this.inReport(k))) g.ep = null;
     }
   }
 
   /** Kadro kokybė grupei: daugiau objektų, didesnis pasitikėjimas, objektai ne prie krašto (nenukirpti). */
+  /** Ar grupė rodoma ataskaitos įvykiuose (nustatymas „Į ataskaitą“; tikrinama kiekvieną kartą – galima keisti įrašant). */
+  inReport(k) {
+    const s = this.meta.settings || {};
+    return !s.reportOff?.[s.model || 'std']?.[k];
+  }
+
+  reportCounts(counts) {
+    return Object.fromEntries(Object.entries(counts || {}).filter(([k]) => this.inReport(k)));
+  }
+
+  /** Klasės, kurių rėmeliai piešiami įvykių kadruose. */
+  reportClasses() {
+    const groups = this.detector.groups || GROUPS;
+    return new Set(Object.entries(groups).filter(([k]) => this.inReport(k)).flatMap(([, g]) => g.classes));
+  }
+
   groupDets(L, k) {
     const cls = this.detector.groups?.[k]?.classes || GROUPS[k]?.classes || [];
     return L.dets.filter((x) => cls.includes(x.class));
@@ -229,8 +247,9 @@ export class AiComposer {
     const c = document.createElement('canvas');
     c.width = W;
     c.height = H;
-    const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, countsText(counts)].filter(Boolean);
-    drawComposite(c.getContext('2d'), f, L, { W, H, lines, fresh: true });
+    const keep = this.reportClasses();
+    const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, countsText(counts, (k) => this.inReport(k))].filter(Boolean);
+    drawComposite(c.getContext('2d'), f, { ...L, dets: L.dets.filter((d) => keep.has(d.class)) }, { W, H, lines, fresh: true });
     return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
   }
 
@@ -305,6 +324,7 @@ export async function reportZip({ name, video, comp, settings }) {
   // Įvykių kadrai gali dar būti ruošiami
   await new Promise((r) => setTimeout(r, 300));
   const st = stats(comp);
+  const stR = st.filter((x) => comp.inReport(x.key)); // ataskaitos santraukai ir grafikui – tik pasirinktos grupės
   const files = {};
   const videoName = `irasas.${video.ext}`;
   files[videoName] = new Uint8Array(await video.blob.arrayBuffer());
@@ -371,10 +391,10 @@ export async function reportZip({ name, video, comp, settings }) {
 <section><h2>${esc(t('Vaizdo įrašas'))}</h2><video id="v" src="${videoName}" controls preload="metadata"></video>
 <p style="color:var(--mut);font-size:12.5px">${esc(t('Rėmeliai, skaičiai ir laikas įrašyti vaizde. Spustelėjus grafiką ar įvykio laiką – peršokama į tą vietą.'))}</p></section>
 <section><h2>${esc(t('Santrauka'))}</h2><div class="cards">
-${st.map((s) => `<div class="card"><span>${esc(s.label)}</span><b>${esc(t('daugiausia {n}', { n: s.max }))}</b><span>${esc(t('vidutiniškai {a} · matėsi {p} % laiko', { a: nf(s.avg, 1), p: nf(s.presence * 100) }))}</span></div>`).join('\n')}
+${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span><b>${esc(t('daugiausia {n}', { n: s.max }))}</b><span>${esc(t('vidutiniškai {a} · matėsi {p} % laiko', { a: nf(s.avg, 1), p: nf(s.presence * 100) }))}</span></div>`).join('\n')}
 <div class="card"><span>${esc(t('Įvykių'))}</span><b>${evRows.length}</b><span>${esc(t('AI analizių: {n}', { n: comp.track.length }))}</span></div>
 </div></section>
-<section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, st)}</section>
+<section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, stR)}</section>
 <section><h2>${esc(t('Įvykiai'))}</h2>
 ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('Data ir laikas'))}</th><th>${esc(t('Įvykis'))}</th><th>${esc(t('Kadras'))}</th></tr>
 ${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span></td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
@@ -385,6 +405,7 @@ ${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 10
 <tr><td>${esc(t('Pradžia'))}</td><td>${esc(fmtClock(start))}</td></tr>
 <tr><td>${esc(t('Trukmė'))}</td><td>${esc(fmtDur(dur))}</td></tr>
 <tr><td>${esc(t('Ieškota'))}</td><td>${esc(Object.values(GROUPS).map((g) => g.label).join(', '))}</td></tr>
+<tr><td>${esc(t('Ataskaitoje'))}</td><td>${esc(stR.map((x) => x.label).join(', ') || '–')}</td></tr>
 <tr><td>${esc(t('AI modelis'))}</td><td>${esc(settings.modelName || t('Standartinis (COCO)'))}</td></tr>
 <tr><td>${esc(t('Jautrumas'))}</td><td>${Math.round((settings.threshold || 0) * 100)} %</td></tr>
 <tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/</td></tr>

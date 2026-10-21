@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
-import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, classColor, classLabel } from './ai.js';
+import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -113,6 +113,8 @@ export function createLiveUI(app) {
           <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
           <label class="row">Modelis <select id="live-ai-model"></select></label>
           <div id="live-ai-groups" class="live-ai-groups"></div>
+          <div class="small muted" style="margin-top:6px">Į įrašo ataskaitos įvykius:</div>
+          <div id="live-ai-report" class="live-ai-groups"></div>
           <label class="row">Detalumas
             <select id="live-ai-detail"></select>
           </label>
@@ -633,6 +635,13 @@ export function createLiveUI(app) {
         .map(([k, g]) => `<label class="check small"><input type="checkbox" data-aig="${k}" ${aiSet.groups[k] ? 'checked' : ''}/> ${esc(t(g.label))}</label>`)
         .join('');
     }
+    // Ataskaitos filtras: kurios aptinkamos grupės patenka į įvykius, santrauką ir grafiką (pagal modelį)
+    const off = aiSet.reportOff?.[aiSet.model || 'std'] || {};
+    const act = activeGroups(aiSet);
+    $('#live-ai-report').innerHTML =
+      Object.entries(act)
+        .map(([k, g]) => `<label class="check small"><input type="checkbox" data-air="${esc(k)}" ${off[k] ? '' : 'checked'}/> <span class="live-ai-swatch" style="background:${g.color}"></span>${esc(g.label)}</label>`)
+        .join('') || `<span class="small muted">${esc(t('Pasirinkite, ką aptikti'))}</span>`;
     $('#live-ai-alert-l').textContent = aiSet.model ? t('Įspėjimas (garsas ir pranešimas)') : t('Įspėti, kai aptinkamas žmogus');
     $('#live-ai-alert-row').hidden = !aiSet.model;
     $('#live-ai-detail').innerHTML = Object.entries(AI_DETAIL)
@@ -652,8 +661,15 @@ export function createLiveUI(app) {
   page.addEventListener('change', (e) => {
     const g = e.target.closest('[data-aig]');
     const cc = e.target.closest('[data-aic]');
-    if (g) aiSet.groups[g.dataset.aig] = g.checked;
-    else if (cc) aiSet.customOn = { ...aiSet.customOn, [cc.dataset.aic]: cc.checked };
+    const rr = e.target.closest('[data-air]');
+    if (g || cc) {
+      if (g) aiSet.groups[g.dataset.aig] = g.checked;
+      else aiSet.customOn = { ...aiSet.customOn, [cc.dataset.aic]: cc.checked };
+      renderAiSettings();
+    } else if (rr) {
+      const mk = aiSet.model || 'std';
+      aiSet.reportOff = { ...aiSet.reportOff, [mk]: { ...aiSet.reportOff?.[mk], [rr.dataset.air]: !rr.checked } };
+    }
     else if (e.target.id === 'live-ai-model') {
       aiSet.model = e.target.value;
       const m = customModels.find((x) => x.id === aiSet.model);

@@ -237,7 +237,7 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
 - Galima įjungti įspėjimą (garsas ir pranešimas), kai aptinkamas žmogus.
 - AI veikia CPU, todėl transliacijai greičiausias modelis yra `AI_DETECTOR=nano` faile `.env` (tada perkurkite AI: `start-windows.bat`).
 - **Įrašas su AI ir ataskaita klientui:** jei AI įjungtas, įrašymas (⏺) įrašo vaizdą su rėmeliais, skaičiais, data ir laiku. Sustabdžius atsisiunčiamas ZIP:
-  - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (daugiausia, vidutiniškai, kiek laiko matėsi), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
+  - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (daugiausia, vidutiniškai, kiek laiko matėsi), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (AI kortelėje „Į įrašo ataskaitos įvykius“ galima pasirinkti, kurios grupės patenka į įvykius, santrauką ir grafiką – pvz. tik „Be šalmo“; kadruose apvedamos tik jos) (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
   - `irasas.mp4 / .webm` – vaizdas su žymėjimais;
   - `skaiciai.csv`, `ivykiai.csv` (Excel), `duomenys.json`, `kadrai/`.
   
