@@ -998,6 +998,7 @@ export const EN = {
   "AI modelis": "AI model",
   "Aptikta: {g} – {n}": "Detected: {g} – {n}",
   "Ruošiamas rinkinys…": "Preparing the dataset…",
+  "Siunčiamas pradinis modelis": "Downloading the base model",
   "Mokoma": "Training",
   "Nutraukta": "Stopped",
   "tikslumas mAP50 {v} %": "accuracy mAP50 {v} %",

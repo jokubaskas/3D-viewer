@@ -687,7 +687,7 @@ export function createLiveUI(app) {
   // ------------------------------------------------------------------ Savas modelis: mokymas ir sąrašas
   let trainTimer = null;
   let trainSt = null;
-  const PHASE = { preparing: 'Ruošiamas rinkinys…', training: 'Mokoma', done: 'Baigta', error: 'Klaida', stopped: 'Nutraukta' };
+  const PHASE = { preparing: 'Ruošiamas rinkinys…', downloading: 'Siunčiamas pradinis modelis', training: 'Mokoma', done: 'Baigta', error: 'Klaida', stopped: 'Nutraukta' };
   const fmtEta = (s) => (s >= 3600 ? t('{h} val. {m} min.', { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) }) : t('{m} min.', { m: Math.max(1, Math.round(s / 60)) }));
   async function refreshModels() {
     try {
@@ -710,10 +710,10 @@ export function createLiveUI(app) {
     const st = trainSt;
     let html = '';
     if (st && !st.offline) {
-      const pct = st.epochs ? Math.min(100, (100 * (st.epoch || 0)) / st.epochs) : 0;
+      const pct = st.phase === 'downloading' ? st.download || 0 : st.epochs ? Math.min(100, (100 * (st.epoch || 0)) / st.epochs) : 0;
       const map = st.metrics?.map50 != null ? ` · ${t('tikslumas mAP50 {v} %', { v: nf(st.metrics.map50 * 100, 0) })}` : '';
       html += `<div class="live-train ${st.phase}">
-        <div class="row"><b>${esc(t(PHASE[st.phase] || st.phase))}${st.phase === 'training' ? ` ${st.epoch || 0} / ${st.epochs}` : ''}</b>
+        <div class="row"><b>${esc(t(PHASE[st.phase] || st.phase))}${st.phase === 'training' ? ` ${st.epoch || 0} / ${st.epochs}` : st.phase === 'downloading' ? ` ${st.download || 0} %` : ''}</b>
           ${st.running ? `<button class="btn btn-sm btn-ghost danger" data-tr="cancel">${esc(t('Nutraukti'))}</button>` : ''}</div>
         ${st.running ? `<div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>` : ''}
         <div class="small muted">${st.stats ? esc(t('{i} kadrų, {b} pažymėtų objektų', { i: st.stats.images, b: st.stats.boxes })) : ''}${st.eta ? ` · ${esc(t('liko ~{t}', { t: fmtEta(st.eta) }))}` : ''}${map}</div>

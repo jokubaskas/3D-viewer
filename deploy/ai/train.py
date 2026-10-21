@@ -25,6 +25,16 @@ from pathlib import Path
 MODELS_DIR = Path(os.environ.get("ATEA_AI_MODELS", "/models"))
 CUSTOM_DIR = MODELS_DIR / "custom"
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+# Pradiniai COCO svoriai: kelios nuorodos ir MD5 (kaip rfdetr ModelWeights)
+WEIGHTS = {
+    "nano": "fb6504cce7fbdc783f7a46991f07639f",
+    "small": "fb37061c1af7bace359c91b723a8d5c1",
+    "medium": "7223f764a87b863f02eb8d52bf0ce2ee",
+}
+WEIGHT_URLS = (
+    "https://repo.roboflow.com/rfdetr/{s}_coco/checkpoint_best_regular.pth",
+    "https://storage.googleapis.com/rfdetr/{s}_coco/checkpoint_best_regular.pth",
+)
 
 
 class Status:
@@ -41,6 +51,64 @@ class Status:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
         tmp.replace(self.path)
+
+
+def _md5(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch_weights(size: str, dest: Path, st: Status, attempts: int = 8) -> None:
+    """Atsisiunčia pradinius svorius patikimai: pakartojimai, tęsimas nuo nutrūkusios vietos, atsarginė nuoroda."""
+    import requests
+
+    want = WEIGHTS[size]
+    if dest.exists() and _md5(dest) == want:
+        return
+    part = dest.with_suffix(".part")
+    last_err = None
+    for i in range(attempts):
+        url = WEIGHT_URLS[i % len(WEIGHT_URLS)].format(s=size)
+        have = part.stat().st_size if part.exists() else 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with requests.get(url, stream=True, timeout=(20, 120), headers=headers) as r:
+                if r.status_code == 416:  # jau viskas atsiųsta
+                    pass
+                else:
+                    r.raise_for_status()
+                    if have and r.status_code != 206:  # serveris netęsia – iš naujo
+                        have = 0
+                    total = have + int(r.headers.get("Content-Length") or 0)
+                    shown = 0.0
+                    with open(part, "ab" if have else "wb") as f:
+                        for chunk in r.iter_content(1 << 20):
+                            f.write(chunk)
+                            have += len(chunk)
+                            if total and time.time() - shown > 2:
+                                shown = time.time()
+                                st.set(phase="downloading", download=round(100 * have / total), message="")
+            if _md5(part) == want:
+                part.replace(dest)
+                st.set(download=100, message="")
+                return
+            part.unlink(missing_ok=True)  # sugadintas failas – iš naujo
+            last_err = RuntimeError("MD5 nesutampa")
+        except Exception as e:  # noqa: BLE001 – tinklo klaidos kartojamos
+            last_err = e
+        wait = min(60, 5 * (i + 1))
+        print(f"[mokymas] svorių atsisiuntimas nepavyko ({last_err}); kartojama po {wait} s", flush=True)
+        st.set(phase="downloading", message=f"Ryšys nutrūko, kartojama ({i + 1}/{attempts})…")
+        time.sleep(wait)
+    raise RuntimeError(
+        f"Nepavyko atsisiųsti pradinių modelio svorių ({last_err}). Patikrinkite interneto ryšį ir pabandykite dar kartą "
+        f"arba įdėkite failą rf-detr-{size}.pth rankiniu būdu."
+    )
 
 
 def find_dataset(root: Path) -> tuple[Path, Path, list[str]]:
@@ -249,6 +317,8 @@ def main():
         if not weights.exists():
             (CUSTOM_DIR / "_weights").mkdir(parents=True, exist_ok=True)
             weights = CUSTOM_DIR / "_weights" / f"rf-detr-{a.size}.pth"
+            fetch_weights(a.size, weights, st)
+            st.set(phase="training", message="")
         model = getattr(rfdetr, cls)(pretrain_weights=str(weights))
         out = work / "output"
         device = "cuda" if torch.cuda.is_available() else "cpu"
