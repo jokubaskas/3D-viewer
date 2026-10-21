@@ -496,10 +496,11 @@ export class LivePlayer {
   }
 
   /** Įrašymo pradžia; įrašas (Blob) gaunamas per stopRecording(). */
-  async startRecording() {
+  async startRecording({ stream: custom, extra } = {}) {
     const el = this.el;
     let stream;
-    if (this.embedded) {
+    if (custom) stream = custom; // pvz. drobė su AI žymėjimais
+    else if (this.embedded) {
       stream = await this.captureEmbed();
       // Naudotojas paspaudė „Nebendrinti“ – įrašas baigiamas ir išsaugomas
       stream.getVideoTracks()[0]?.addEventListener('ended', () => this.recorder && this.stopRecording().then((r) => r && this.onRecordingCut?.(r, true)));
@@ -535,7 +536,7 @@ export class LivePlayer {
       };
     });
     rec.start(1000);
-    this.recorder = { rec, done, started: Date.now(), ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm' };
+    this.recorder = { rec, done, started: Date.now(), ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm', extra };
     return this.recorder;
   }
 
@@ -544,7 +545,7 @@ export class LivePlayer {
     if (!r) return null;
     this.recorder = null;
     if (r.rec.state !== 'inactive') r.rec.stop();
-    return { blob: await r.done, ext: r.ext };
+    return { blob: await r.done, ext: r.ext, extra: r.extra };
   }
 
   // ---------------------------------------------------------------- sustabdymas
