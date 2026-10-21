@@ -65,6 +65,7 @@ export class LiveDetector {
     this._ro = new ResizeObserver(() => this.draw());
     this._ro.observe(view);
     this._lastSample = 0;
+    this.listeners = new Set(); // kviečiami po kiekvieno AI rezultato (pvz. įrašui)
   }
 
   start() {
@@ -124,6 +125,7 @@ export class LiveDetector {
         this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0 };
         this.error = '';
         this.updateCounts(dets, s);
+        this.listeners.forEach((f) => f(this));
         this.collect(fr, res.detections || [], s);
       } catch (e) {
         if (e.name === 'AbortError' || !this.on) break;

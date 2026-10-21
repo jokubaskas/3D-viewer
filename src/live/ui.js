@@ -4,6 +4,7 @@ import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip } from './ai.js';
+import { AiComposer, drawComposite, reportZip } from './report.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
 const LS_PUSH = 'atea3d.live.push';
@@ -390,7 +391,7 @@ export function createLiveUI(app) {
       try {
         // Įterpto puslapio kadras imamas iš ekrano – užrašai ant vaizdo paslepiami
         if (p.embedded) el.classList.add('capturing');
-        const png = await p.snapshot().finally(() => !p.recorder && el.classList.remove('capturing'));
+        const png = tile.ai?.on && !p.embedded ? await aiSnapshot(tile) : await p.snapshot().finally(() => !p.recorder && el.classList.remove('capturing'));
         download(png, `${safe(s.name)}_${stamp()}.png`);
         el.classList.add('flash');
         setTimeout(() => el.classList.remove('flash'), 250);
@@ -402,7 +403,16 @@ export function createLiveUI(app) {
       else {
         try {
           if (p.embedded) el.classList.add('capturing');
-          await p.startRecording();
+          if (tile.ai?.on && !p.embedded) {
+            // Įrašas su AI žymėjimais: vaizdas + rėmeliai + skaičiai + laikas, po to – ataskaita klientui
+            const comp = new AiComposer(p, tile.ai, { name: s.name, settings: aiSet });
+            try {
+              await p.startRecording({ stream: comp.stream, extra: { comp } });
+            } catch (err) {
+              comp.stop();
+              throw err;
+            }
+          } else await p.startRecording();
           el.querySelector('[data-tact=rec]').classList.add('recording');
           el.querySelector('[data-tact=rec]').innerHTML = icon('stop');
           tickRec();
@@ -421,6 +431,26 @@ export function createLiveUI(app) {
     else v.requestFullscreen?.().catch(() => {});
   });
 
+  /** Kadras su AI rėmeliais ir laiku (PNG). */
+  function aiSnapshot(tile) {
+    const el = tile.player.el;
+    const w = el.videoWidth || el.naturalWidth, h = el.videoHeight || el.naturalHeight;
+    if (!w || !h) throw new Error(t('Dar nėra vaizdo'));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const now = new Date();
+    const counts = Object.entries(tile.ai.counts).map(([k, n]) => `${t(AI_GROUPS[k].label)}: ${n}`).join('   ');
+    drawComposite(c.getContext('2d'), el, tile.ai.last, { W: w, H: h, lines: [now.toLocaleString(locale()), tile.stream.name, counts].filter(Boolean) });
+    return new Promise((res, rej) => {
+      try {
+        c.toBlob((b) => (b ? res(b) : rej(new Error('PNG'))), 'image/png');
+      } catch {
+        rej(new Error(t('Šaltinis neleidžia kopijuoti vaizdo – pasirinkite „Per serverį“')));
+      }
+    });
+  }
+
   async function stopRec(tile) {
     tile.el.classList.remove('capturing');
     const btn = tile.el.querySelector('[data-tact=rec]');
@@ -430,10 +460,21 @@ export function createLiveUI(app) {
     const r = await tile.player.stopRecording();
     if (r) saveRecording(tile.stream, r, false);
   }
-  function saveRecording(stream, { blob, ext }, cut) {
+  async function saveRecording(stream, { blob, ext, extra }, cut) {
+    const comp = extra?.comp;
+    comp?.stop();
     if (!blob.size) return;
-    download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
-    app.toast(cut ? 'Ryšys nutrūko – įrašas išsaugotas' : 'Įrašas išsaugotas', cut ? 'warn' : 'success', 5000);
+    if (comp) {
+      app.toast('Ruošiama ataskaita…', 'info', 3000);
+      try {
+        const zip = await reportZip({ name: stream.name, video: { blob, ext }, comp, settings: { ...aiSet } });
+        download(zip, `${safe(stream.name)}_${stamp()}_AI.zip`);
+      } catch (err) {
+        download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
+        app.toast(t('Ataskaitos sukurti nepavyko: {e}', { e: err.message }), 'error', 8000);
+      }
+    } else download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
+    app.toast(cut ? 'Ryšys nutrūko – įrašas išsaugotas' : comp ? 'Įrašas ir AI ataskaita išsaugoti' : 'Įrašas išsaugotas', cut ? 'warn' : 'success', 5000);
     const tile = tiles.get(stream.id);
     if (tile) {
       const btn = tile.el.querySelector('[data-tact=rec]');
