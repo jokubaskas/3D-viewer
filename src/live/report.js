@@ -1,7 +1,6 @@
 // AI įrašas klientui: vaizdas su įrašytais rėmeliais, skaičiais ir laiku + ataskaita (HTML, CSV, JSON, įvykių kadrai).
 // Įrašoma ne pats grotuvas, o drobė, ant kurios kiekvieną kadrą piešiamas vaizdas ir paskutiniai AI rezultatai.
-import { AI_CLASSES } from '../ai/client.js';
-import { AI_GROUPS } from './ai.js';
+import { classColor, classLabel } from './ai.js';
 import { t, locale } from '../i18n.js';
 
 const FPS = 25;
@@ -39,10 +38,10 @@ export function drawComposite(g, el, last, o) {
     for (const d of last.dets) {
       const [x1, y1, x2, y2] = d.box;
       const x = ox2 + x1 * kk, y = oy2 + y1 * kk, w = (x2 - x1) * kk, h = (y2 - y1) * kk;
-      const color = AI_CLASSES[d.class]?.color || '#fff';
+      const color = classColor(d.class);
       g.strokeStyle = color;
       g.strokeRect(x, y, w, h);
-      const label = `${t(AI_CLASSES[d.class]?.lt || d.class)} ${Math.round(d.score * 100)}%`;
+      const label = `${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
       const th = Math.round(17 * s), tw = g.measureText(label).width + 8 * s;
       const ly = y - th < 0 ? y : y - th;
       g.fillStyle = color;
@@ -81,9 +80,13 @@ function ticker(ms, fn) {
   };
 }
 
+/** Grupių pavadinimai ir spalvos (iš detektoriaus; įraše – sukaupti visi pasitaikę). */
+const GROUPS = {};
+const remember = (groups) => Object.assign(GROUPS, groups || {});
+const gLabel = (k) => GROUPS[k]?.label || k;
 const countsText = (counts) =>
   Object.entries(counts || {})
-    .map(([k, n]) => `${t(AI_GROUPS[k]?.label || k)}: ${n}`)
+    .map(([k, n]) => `${gLabel(k)}: ${n}`)
     .join('   ');
 
 /** Įrašo drobę su AI žymėjimais ir kaupia rezultatų seką bei įvykius. */
@@ -97,6 +100,7 @@ export class AiComposer {
     this.player = player;
     this.detector = detector;
     this.meta = meta;
+    for (const k of Object.keys(GROUPS)) delete GROUPS[k]; // naujas įrašas – iš naujo
     this.started = Date.now();
     this.t0 = performance.now();
     this.track = []; // {t, counts, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
@@ -138,6 +142,7 @@ export class AiComposer {
 
   hud() {
     const now = new Date();
+    remember(this.detector.groups);
     return [`● REC ${fmtDur(Date.now() - this.started)}   ${fmtClock(now)}`, this.meta.name, countsText(this.detector.counts)].filter(Boolean);
   }
 
@@ -150,6 +155,7 @@ export class AiComposer {
   }
 
   onResult(d) {
+    remember(d.groups);
     const t1 = Date.now() - this.started;
     const L = d.last;
     if (!L) return;
@@ -194,14 +200,14 @@ export class AiComposer {
 
 // ------------------------------------------------------------------ ataskaita
 function stats(comp) {
-  const groups = Object.keys(AI_GROUPS).filter((k) => comp.track.some((r) => k in r.counts));
+  const groups = [...new Set(comp.track.flatMap((r) => Object.keys(r.counts)))];
   const dur = (comp.ended || Date.now()) - comp.started;
   return groups.map((k) => {
     const vals = comp.track.map((r) => r.counts[k] || 0);
     const present = vals.filter((v) => v > 0).length;
     return {
       key: k,
-      label: t(AI_GROUPS[k].label),
+      label: gLabel(k),
       max: vals.length ? Math.max(...vals) : 0,
       avg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0,
       presence: vals.length ? present / vals.length : 0,
@@ -218,12 +224,11 @@ function chartSvg(comp, st) {
   const x = (tt) => P + ((W - P - 10) * tt) / T;
   const top = 32, bottom = H - P + 4; // virš – legenda
   const y = (v) => bottom - ((bottom - top) * v) / maxV;
-  const colors = { person: AI_CLASSES.person.color, car: AI_CLASSES.car.color, heavy: AI_CLASSES.truck.color, two: AI_CLASSES.motorcycle.color };
   const lines = st
     .map((s) => {
       const rows = comp.track.length ? [...comp.track, { t: T, counts: comp.track[comp.track.length - 1].counts }] : []; // iki įrašo pabaigos
       const pts = rows.map((r) => `${x(r.t).toFixed(1)},${y(r.counts[s.key] || 0).toFixed(1)}`).join(' ');
-      return `<polyline fill="none" stroke="${colors[s.key] || '#fff'}" stroke-width="2" points="${pts}"/>`;
+      return `<polyline fill="none" stroke="${GROUPS[s.key]?.color || classColor(s.key)}" stroke-width="2" points="${pts}"/>`;
     })
     .join('');
   const ticks = [];
@@ -232,7 +237,7 @@ function chartSvg(comp, st) {
     ticks.push(`<text x="${x(tt)}" y="${H - 10}" text-anchor="middle">${fmtDur(tt).replace(/^00:/, '')}</text>`);
   }
   const yt = [0, Math.round(maxV / 2), maxV].map((v) => `<text x="${P - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text><line x1="${P}" x2="${W - 10}" y1="${y(v)}" y2="${y(v)}" stroke="#ccd" stroke-dasharray="3 3"/>`);
-  const legend = st.map((s, i) => `<g transform="translate(${P + 10 + i * 190},12)"><rect width="14" height="4" y="4" fill="${colors[s.key]}"/><text x="20" y="10">${esc(s.label)}</text></g>`).join('');
+  const legend = st.map((s, i) => `<g transform="translate(${P + 10 + i * 190},12)"><rect width="14" height="4" y="4" fill="${GROUPS[s.key]?.color || classColor(s.key)}"/><text x="20" y="10">${esc(s.label)}</text></g>`).join('');
   return `<svg id="chart" viewBox="0 0 ${W} ${H}" data-dur="${T}" data-p="${P}" data-w="${W}">${yt.join('')}${lines}${ticks.join('')}${legend}</svg>`;
 }
 
@@ -260,7 +265,7 @@ export async function reportZip({ name, video, comp, settings }) {
   }
   const start = new Date(comp.started);
   const dur = (comp.ended || Date.now()) - comp.started;
-  const evText = (e) => (e.kind === 'start' ? t('Įrašo pradžia') : e.kind === 'appeared' ? t('Atsirado: {g} ({n})', { g: t(AI_GROUPS[e.group].label), n: e.n }) : t('Išnyko: {g}', { g: t(AI_GROUPS[e.group].label) }));
+  const evText = (e) => (e.kind === 'start' ? t('Įrašo pradžia') : e.kind === 'appeared' ? t('Atsirado: {g} ({n})', { g: gLabel(e.group), n: e.n }) : t('Išnyko: {g}', { g: gLabel(e.group) }));
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
@@ -269,7 +274,7 @@ export async function reportZip({ name, video, comp, settings }) {
   files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('ivykis')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), evText(e)].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(AI_GROUPS).map(([k, g]) => [k, g.classes])), stats: st, events: evRows.map(({ img: _i, ...e }) => e), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, events: evRows.map(({ img: _i, ...e }) => e), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -320,7 +325,8 @@ ${evRows.map((e) => `<tr><td><a class="t" data-t="${e.t / 1000}">${fmtDur(e.t)}<
 <tr><td>${esc(t('Šaltinis'))}</td><td>${esc(name)}</td></tr>
 <tr><td>${esc(t('Pradžia'))}</td><td>${esc(fmtClock(start))}</td></tr>
 <tr><td>${esc(t('Trukmė'))}</td><td>${esc(fmtDur(dur))}</td></tr>
-<tr><td>${esc(t('Ieškota'))}</td><td>${esc(Object.entries(AI_GROUPS).filter(([k]) => settings.groups?.[k]).map(([, g]) => t(g.label)).join(', '))}</td></tr>
+<tr><td>${esc(t('Ieškota'))}</td><td>${esc(Object.values(GROUPS).map((g) => g.label).join(', '))}</td></tr>
+<tr><td>${esc(t('AI modelis'))}</td><td>${esc(settings.modelName || t('Standartinis (COCO)'))}</td></tr>
 <tr><td>${esc(t('Jautrumas'))}</td><td>${Math.round((settings.threshold || 0) * 100)} %</td></tr>
 <tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/</td></tr>
 </table></section>

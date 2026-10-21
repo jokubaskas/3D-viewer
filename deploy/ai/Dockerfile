@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl libgl1
 RUN pip install --no-cache-dir torch torchvision --index-url ${TORCH_INDEX}
 RUN pip install --no-cache-dir rfdetr fastapi "uvicorn[standard]" python-multipart pillow opencv-python-headless timm rasterio \
   && pip install --no-cache-dir "git+https://github.com/ChaoningZhang/MobileSAM.git"
+# Savo modelio mokymui (train.py): PyTorch Lightning ir kt.; torch versija paliekama ta pati (CPU arba GPU)
+RUN pip freeze | grep -iE '^(torch|torchvision)==' > /tmp/torch.txt \
+  && pip install --no-cache-dir -c /tmp/torch.txt --extra-index-url ${TORCH_INDEX} "rfdetr[train]"
 
 # Modelių svoriai atsisiunčiami vieną kartą, kuriant vaizdą – vėliau internetas nebereikalingas
 RUN mkdir -p /models \
@@ -20,6 +23,6 @@ RUN mkdir -p /models \
 
 ENV ATEA_AI_MODELS=/models ATEA_AI_DETECTOR=${DETECTOR} HF_HUB_OFFLINE=1
 WORKDIR /app
-COPY app.py /app/app.py
+COPY app.py train.py /app/
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

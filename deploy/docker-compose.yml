@@ -36,6 +36,9 @@ services:
     restart: unless-stopped
     environment:
       - ATEA_AI_THREADS=${AI_THREADS:-4}
+    volumes:
+      # Savi (apmokyti) modeliai – išlieka atnaujinus ar perkūrus AI konteinerį
+      - ai-models:/models/custom
     expose:
       - "8000"
 
@@ -76,3 +79,4 @@ services:
 
 volumes:
   nodeodm-data:
+  ai-models:

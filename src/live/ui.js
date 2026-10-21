@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
-import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip } from './ai.js';
+import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -111,14 +111,23 @@ export function createLiveUI(app) {
         <section class="card">
           <h3>AI aptikimas</h3>
           <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
+          <label class="row">Modelis <select id="live-ai-model"></select></label>
           <div id="live-ai-groups" class="live-ai-groups"></div>
           <label class="row">Detalumas
             <select id="live-ai-detail"></select>
           </label>
           <label class="row">Jautrumas <span class="live-ai-th"><input id="live-ai-th" type="range" min="0.2" max="0.8" step="0.05" /><span id="live-ai-th-v" class="small muted"></span></span></label>
-          <label class="row check"><input type="checkbox" id="live-ai-alert" /> Įspėti, kai aptinkamas žmogus</label>
+          <label class="row check"><input type="checkbox" id="live-ai-alert" /> <span id="live-ai-alert-l">Įspėti, kai aptinkamas žmogus</span></label>
+          <label class="row" id="live-ai-alert-row" hidden>Įspėti, kai aptinkama <select id="live-ai-alert-class"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
           <div id="live-ai-ds" class="small muted"></div>
+        </section>
+        <section class="card">
+          <h3>Savas AI modelis</h3>
+          <p class="small muted">Apmokykite AI atpažinti tai, ko reikia jums (pvz. žmones su šalmais ir be jų) – iš Label Studio / CVAT YOLO eksporto. Mokoma šiame kompiuteryje.</p>
+          <div id="live-train"></div>
+          <div class="pane-actions"><button class="btn btn-sm btn-outline" data-tr="new">${icon('magic')}Mokyti naują modelį…</button></div>
+          <div id="live-models"></div>
         </section>
         <section class="card">
           <h3>Drono transliacija į šį kompiuterį</h3>
@@ -140,6 +149,29 @@ export function createLiveUI(app) {
     </div>`;
   document.getElementById('app').append(page);
   const $ = (s) => page.querySelector(s);
+  const dlgTrain = document.createElement('dialog');
+  dlgTrain.className = 'dialog';
+  dlgTrain.innerHTML = `<form method="dialog">
+      <h2>Mokyti savo modelį</h2>
+      <p class="small muted">YOLO formato ZIP iš Label Studio (Export → YOLO), CVAT ar Roboflow: images/, labels/ ir classes.txt. Rinkinys padalijamas 85 / 15 (mokymas / patikra), mokoma nuo standartinio modelio.</p>
+      <label class="row">Rinkinys (ZIP) <input type="file" id="tr-file" accept=".zip" required /></label>
+      <div id="tr-info" class="small muted"></div>
+      <label class="row">Pavadinimas <input id="tr-name" class="num wide" style="text-align:left;width:200px" value="Šalmai" /></label>
+      <label class="row">Modelio dydis
+        <select id="tr-size">
+          <option value="nano">Mažas – greičiausias (transliacijai)</option>
+          <option value="small" selected>Vidutinis – rekomenduojamas</option>
+          <option value="medium">Didelis – tiksliausias, lėčiausias</option>
+        </select>
+      </label>
+      <label class="row">Epochų (kartų per visą rinkinį) <input id="tr-epochs" type="number" class="num" min="1" max="300" value="40" /></label>
+      <div id="tr-est" class="small muted"></div>
+      <menu>
+        <button value="cancel" class="btn btn-ghost" formnovalidate>Atšaukti</button>
+        <button value="ok" class="btn btn-primary">Pradėti mokymą</button>
+      </menu>
+    </form>`;
+  page.append(dlgTrain);
   $('#live-push-name').value = ls.get(LS_PUSH, 'drone');
 
   // ------------------------------------------------------------------ Nauja nuoroda
@@ -440,7 +472,7 @@ export function createLiveUI(app) {
     c.width = w;
     c.height = h;
     const now = new Date();
-    const counts = Object.entries(tile.ai.counts).map(([k, n]) => `${t(AI_GROUPS[k].label)}: ${n}`).join('   ');
+    const counts = Object.entries(tile.ai.counts).map(([k, n]) => `${tile.ai.groups?.[k]?.label || k}: ${n}`).join('   ');
     drawComposite(c.getContext('2d'), el, tile.ai.last, { W: w, H: h, lines: [now.toLocaleString(locale()), tile.stream.name, counts].filter(Boolean) });
     return new Promise((res, rej) => {
       try {
@@ -467,7 +499,7 @@ export function createLiveUI(app) {
     if (comp) {
       app.toast('Ruošiama ataskaita…', 'info', 3000);
       try {
-        const zip = await reportZip({ name: stream.name, video: { blob, ext }, comp, settings: { ...aiSet } });
+        const zip = await reportZip({ name: stream.name, video: { blob, ext }, comp, settings: { ...aiSet, modelName: aiSet.model ? aiSet.modelName : '' } });
         download(zip, `${safe(stream.name)}_${stamp()}_AI.zip`);
       } catch (err) {
         download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
@@ -580,10 +612,29 @@ export function createLiveUI(app) {
   const aiSet = { detail: 'normal', threshold: 0.5, alertPerson: false, collect: false, ...ls.get(LS_AI, {}) };
   aiSet.groups = { person: true, car: true, heavy: true, two: false, ...(aiSet.groups || {}) };
   const samples = []; // kadrai mokymui (tik šioje sesijoje – atmintyje)
+  let customModels = []; // AI paslaugos savi modeliai
   function renderAiSettings() {
-    $('#live-ai-groups').innerHTML = Object.entries(AI_GROUPS)
-      .map(([k, g]) => `<label class="check small"><input type="checkbox" data-aig="${k}" ${aiSet.groups[k] ? 'checked' : ''}/> ${esc(t(g.label))}</label>`)
-      .join('');
+    const cur = customModels.find((m) => m.id === aiSet.model);
+    if (aiSet.model && !cur && customModels.length) aiSet.model = ''; // ištrintas
+    $('#live-ai-model').innerHTML =
+      `<option value="">${esc(t('Standartinis (žmonės, transportas)'))}</option>` +
+      customModels.map((m) => `<option value="${esc(m.id)}" ${m.id === aiSet.model ? 'selected' : ''}>${esc(m.name)} · ${esc(m.created)}</option>`).join('');
+    if (aiSet.model && !cur) $('#live-ai-model').insertAdjacentHTML('beforeend', `<option value="${esc(aiSet.model)}" selected>${esc(aiSet.modelName || aiSet.model)}</option>`);
+    if (aiSet.model) {
+      const classes = cur?.classes || aiSet.customClasses || [];
+      aiSet.customClasses = classes;
+      $('#live-ai-groups').innerHTML = classes
+        .map((c) => `<label class="check small"><input type="checkbox" data-aic="${esc(c)}" ${aiSet.customOn?.[c] !== false ? 'checked' : ''}/> <span class="live-ai-swatch" style="background:${classColor(c)}"></span>${esc(classLabel(c))}</label>`)
+        .join('');
+      if (!classes.includes(aiSet.alertClass)) aiSet.alertClass = classes.find((c) => /no|be_|without/i.test(c)) || classes[0] || '';
+      $('#live-ai-alert-class').innerHTML = classes.map((c) => `<option value="${esc(c)}" ${c === aiSet.alertClass ? 'selected' : ''}>${esc(classLabel(c))}</option>`).join('');
+    } else {
+      $('#live-ai-groups').innerHTML = Object.entries(AI_GROUPS)
+        .map(([k, g]) => `<label class="check small"><input type="checkbox" data-aig="${k}" ${aiSet.groups[k] ? 'checked' : ''}/> ${esc(t(g.label))}</label>`)
+        .join('');
+    }
+    $('#live-ai-alert-l').textContent = aiSet.model ? t('Įspėjimas (garsas ir pranešimas)') : t('Įspėti, kai aptinkamas žmogus');
+    $('#live-ai-alert-row').hidden = !aiSet.model;
     $('#live-ai-detail').innerHTML = Object.entries(AI_DETAIL)
       .map(([k, d]) => `<option value="${k}" ${aiSet.detail === k ? 'selected' : ''}>${esc(t(d.label))}</option>`)
       .join('');
@@ -600,7 +651,16 @@ export function createLiveUI(app) {
   }
   page.addEventListener('change', (e) => {
     const g = e.target.closest('[data-aig]');
+    const cc = e.target.closest('[data-aic]');
     if (g) aiSet.groups[g.dataset.aig] = g.checked;
+    else if (cc) aiSet.customOn = { ...aiSet.customOn, [cc.dataset.aic]: cc.checked };
+    else if (e.target.id === 'live-ai-model') {
+      aiSet.model = e.target.value;
+      const m = customModels.find((x) => x.id === aiSet.model);
+      aiSet.modelName = m?.name || '';
+      aiSet.customClasses = m?.classes || [];
+      renderAiSettings();
+    } else if (e.target.id === 'live-ai-alert-class') aiSet.alertClass = e.target.value;
     else if (e.target.id === 'live-ai-detail') aiSet.detail = e.target.value;
     else if (e.target.id === 'live-ai-alert') {
       aiSet.alertPerson = e.target.checked;
@@ -624,6 +684,161 @@ export function createLiveUI(app) {
     } else if (a === 'zip') download(await datasetZip(samples), `ai_kadrai_${stamp()}.zip`);
     renderDataset();
   });
+  // ------------------------------------------------------------------ Savas modelis: mokymas ir sąrašas
+  let trainTimer = null;
+  let trainSt = null;
+  const PHASE = { preparing: 'Ruošiamas rinkinys…', training: 'Mokoma', done: 'Baigta', error: 'Klaida', stopped: 'Nutraukta' };
+  const fmtEta = (s) => (s >= 3600 ? t('{h} val. {m} min.', { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) }) : t('{m} min.', { m: Math.max(1, Math.round(s / 60)) }));
+  async function refreshModels() {
+    try {
+      const ai = await app.getAi();
+      const [m, st] = await Promise.all([ai.models(), ai.trainStatus().catch(() => null)]);
+      customModels = m.models || [];
+      const wasRunning = trainSt?.running;
+      trainSt = st && st.job ? st : null;
+      if (wasRunning && trainSt && !trainSt.running && trainSt.phase === 'done') app.toast(t('Modelis „{n}“ apmokytas', { n: trainSt.model?.name || '' }), 'success', 8000);
+    } catch (e) {
+      customModels = [];
+      trainSt = { phase: 'error', message: e.message, offline: true };
+    }
+    renderModels();
+    renderAiSettings();
+    clearTimeout(trainTimer);
+    if (trainSt?.running && !page.hidden) trainTimer = setTimeout(refreshModels, 5000);
+  }
+  function renderModels() {
+    const st = trainSt;
+    let html = '';
+    if (st && !st.offline) {
+      const pct = st.epochs ? Math.min(100, (100 * (st.epoch || 0)) / st.epochs) : 0;
+      const map = st.metrics?.map50 != null ? ` · ${t('tikslumas mAP50 {v} %', { v: nf(st.metrics.map50 * 100, 0) })}` : '';
+      html += `<div class="live-train ${st.phase}">
+        <div class="row"><b>${esc(t(PHASE[st.phase] || st.phase))}${st.phase === 'training' ? ` ${st.epoch || 0} / ${st.epochs}` : ''}</b>
+          ${st.running ? `<button class="btn btn-sm btn-ghost danger" data-tr="cancel">${esc(t('Nutraukti'))}</button>` : ''}</div>
+        ${st.running ? `<div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>` : ''}
+        <div class="small muted">${st.stats ? esc(t('{i} kadrų, {b} pažymėtų objektų', { i: st.stats.images, b: st.stats.boxes })) : ''}${st.eta ? ` · ${esc(t('liko ~{t}', { t: fmtEta(st.eta) }))}` : ''}${map}</div>
+        ${st.message ? `<div class="small bad">${esc(st.message)}</div>` : ''}
+      </div>`;
+    } else if (st?.offline) html += `<p class="small muted">${esc(t('AI paslauga nepasiekiama – paleiskite start-windows.bat.'))}</p>`;
+    $('#live-train').innerHTML = html;
+    $('#live-models').innerHTML = customModels
+      .map(
+        (m) => `<div class="live-model" data-mid="${esc(m.id)}">
+        <div><b>${esc(m.name)}</b> <span class="muted small">${esc(m.created)} · ${esc(m.size)}</span></div>
+        <div class="small muted">${esc(m.classes.map(classLabel).join(', '))}${m.metrics?.map50 != null ? ` · mAP50 ${nf(m.metrics.map50 * 100, 0)} %` : ''}${m.stats ? ` · ${esc(t('{i} kadrų', { i: m.stats.images }))}` : ''}</div>
+        <div class="pane-actions"><button class="btn btn-sm btn-outline" data-tr="use">${esc(t(aiSet.model === m.id ? 'Naudojamas' : 'Naudoti'))}</button><button class="btn btn-sm btn-ghost danger" data-tr="del">${icon('trash')}</button></div>
+      </div>`,
+      )
+      .join('');
+  }
+  page.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-tr]');
+    if (!b) return;
+    const ai = await app.getAi();
+    const id = b.closest('[data-mid]')?.dataset.mid;
+    try {
+      if (b.dataset.tr === 'new') {
+        if (trainSt?.running) return app.toast('Jau vyksta kitas mokymas', 'error');
+        dlgTrain.querySelector('#tr-info').textContent = '';
+        dlgTrain.querySelector('#tr-est').textContent = '';
+        dlgTrain.showModal();
+      } else if (b.dataset.tr === 'cancel') {
+        if (!confirm(t('Nutraukti mokymą?'))) return;
+        await ai.trainCancel();
+      } else if (b.dataset.tr === 'use') {
+        const m = customModels.find((x) => x.id === id);
+        Object.assign(aiSet, { model: id, modelName: m?.name || '', customClasses: m?.classes || [] });
+        ls.set(LS_AI, aiSet);
+        renderAiSettings();
+        renderModels();
+        app.toast(t('AI aptikimui naudojamas „{n}“', { n: m?.name || id }), 'success');
+      } else if (b.dataset.tr === 'del') {
+        if (!confirm(t('Ištrinti modelį „{n}“?', { n: customModels.find((x) => x.id === id)?.name || id }))) return;
+        await ai.deleteModel(id);
+        if (aiSet.model === id) aiSet.model = '';
+        ls.set(LS_AI, aiSet);
+      }
+    } catch (err) {
+      app.toast(err.message, 'error', 8000);
+    }
+    refreshModels();
+  });
+  // Rinkinio peržiūra: kadrų skaičius ir apytikslė trukmė (procesoriumi)
+  const SEC_PER_IMG = { nano: 1.2, small: 2, medium: 3.7 }; // matuota 4 branduoliais
+  let trainImages = 0;
+  function estimate() {
+    const size = dlgTrain.querySelector('#tr-size').value, ep = +dlgTrain.querySelector('#tr-epochs').value || 40;
+    if (!trainImages) return;
+    const sec = trainImages * 0.85 * SEC_PER_IMG[size] * ep;
+    dlgTrain.querySelector('#tr-est').textContent = t('Apytiksliai {t} procesoriumi (su NVIDIA GPU – keliasdešimt kartų greičiau). Mokymo metu AI aptikimas veiks lėčiau.', { t: fmtEta(sec) });
+  }
+  dlgTrain.querySelector('#tr-file').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    trainImages = 0;
+    if (!f) return;
+    try {
+      const { unzipSync } = await import('three/examples/jsm/libs/fflate.module.js');
+      let imgs = 0, labels = 0;
+      // Klasės ir žymėjimai: objektų skaičius kiekvienai klasei, „person“ dublikatai (žmogus pažymėtas dar ir kaip šalmas)
+      const z = unzipSync(new Uint8Array(await f.arrayBuffer()), {
+        filter: (x) => {
+          if (/\.(jpe?g|png|bmp|webp)$/i.test(x.name)) imgs++;
+          else if (/labels\/.*\.txt$/i.test(x.name)) labels++;
+          return /(^|\/)classes\.txt$/i.test(x.name) || /labels\/.*\.txt$/i.test(x.name);
+        },
+      });
+      const dec = new TextDecoder();
+      const ct = Object.entries(z).find(([n]) => /(^|\/)classes\.txt$/i.test(n))?.[1];
+      const names = ct ? dec.decode(ct).split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : [];
+      const counts = names.map(() => 0);
+      const personIdx = names.map((n, i) => (/^(person|people|human|žmogus|zmogus|worker)$/i.test(n) ? i : -1)).filter((i) => i >= 0);
+      const attrIdx = names.map((n, i) => (/helmet|hard.?hat|šalm|salm|vest|liemen/i.test(n) ? i : -1)).filter((i) => i >= 0);
+      const iou = (a, b) => {
+        const iw = Math.max(0, Math.min(a[0] + a[2] / 2, b[0] + b[2] / 2) - Math.max(a[0] - a[2] / 2, b[0] - b[2] / 2));
+        const ih = Math.max(0, Math.min(a[1] + a[3] / 2, b[1] + b[3] / 2) - Math.max(a[1] - a[3] / 2, b[1] - b[3] / 2));
+        return (iw * ih) / (a[2] * a[3] + b[2] * b[3] - iw * ih + 1e-12);
+      };
+      let dup = 0;
+      for (const [n, data] of Object.entries(z)) {
+        if (!/labels\/.*\.txt$/i.test(n)) continue;
+        const rows = dec.decode(data).split(/\r?\n/).map((l) => l.trim().split(/\s+/).map(Number)).filter((v) => v.length >= 5 && v[0] < names.length);
+        const attrBoxes = rows.filter((r) => attrIdx.includes(r[0])).map((r) => r.slice(1, 5));
+        for (const r of rows) {
+          if (personIdx.includes(r[0]) && attrBoxes.some((a) => iou(r.slice(1, 5), a) > 0.7)) dup++;
+          else counts[r[0]]++;
+        }
+      }
+      trainImages = imgs;
+      const per = names.map((n, i) => `<span class="${counts[i] < 100 ? 'bad' : ''}">${esc(classLabel(n))}: <b>${counts[i]}</b></span>`).join(' · ');
+      const weak = names.filter((n, i) => counts[i] > 0 && counts[i] < 100).map(classLabel);
+      dlgTrain.querySelector('#tr-info').innerHTML = [
+        esc(t('Kadrų: {i}, žymėjimų failų: {l}.', { i: imgs, l: labels })),
+        names.length ? `${esc(t('Objektai pagal klasę:'))} ${per}` : esc(t('Nerastas classes.txt')),
+        dup ? esc(t('{n} „person“ žymų sutampa su šalmo žyma – jos bus pašalintos, kad tas pats žmogus nebūtų dviejų klasių.', { n: dup })) : '',
+        weak.length ? esc(t('Mažai pavyzdžių ({c}) – šios klasės bus atpažįstamos prasčiau; rekomenduojama bent 150–300.', { c: weak.join(', ') })) : '',
+      ].filter(Boolean).map((x) => `<div>${x}</div>`).join('');
+      estimate();
+    } catch {
+      dlgTrain.querySelector('#tr-info').textContent = t('Nepavyko perskaityti ZIP');
+    }
+  });
+  dlgTrain.querySelector('#tr-size').addEventListener('change', estimate);
+  dlgTrain.querySelector('#tr-epochs').addEventListener('input', estimate);
+  dlgTrain.addEventListener('close', async () => {
+    if (dlgTrain.returnValue !== 'ok') return;
+    const f = dlgTrain.querySelector('#tr-file').files[0];
+    if (!f) return;
+    try {
+      app.toast('Įkeliamas rinkinys…', 'info', 3000);
+      const ai = await app.getAi();
+      await ai.train(f, { name: dlgTrain.querySelector('#tr-name').value.trim() || 'Savas modelis', size: dlgTrain.querySelector('#tr-size').value, epochs: +dlgTrain.querySelector('#tr-epochs').value || 40 });
+      app.toast('Mokymas pradėtas – eigą matysite kortelėje „Savas AI modelis“', 'success', 6000);
+    } catch (err) {
+      app.toast(err.message, 'error', 8000);
+    }
+    refreshModels();
+  });
+
   /** Įspėjimas: pranešimas, garsas ir (jei leista) sistemos pranešimas. */
   function alertUser(text) {
     app.toast(text, 'warn', 6000);
@@ -653,6 +868,7 @@ export function createLiveUI(app) {
     clearInterval(gwTimer);
     gwTimer = setInterval(refreshGateway, 4000);
     setTimeout(() => !tiles.size && $('#live-url').focus(), 50);
+    refreshModels();
   }
   function close() {
     page.hidden = true;
