@@ -5,11 +5,21 @@ import { t, locale } from '../i18n.js';
 
 const FPS = 25;
 const MAX_EVENTS = 80;
+// Įvykis = objektų grupės „pasirodymas“: prasideda, kai grupė aptinkama bent 2 kartus per GONE_MS
+// (arba 1 kartą, kai AI tikras ≥ SURE), baigiasi, kai jos nematyti GONE_MS – pavieniai praleisti kadrai
+// įvykio nenutraukia ir nesukuria pasikartojančių įrašų.
+const GONE_MS = 5000;
+const SURE = 0.7;
+const SHOT_GAP_MS = 2000; // geresnis įvykio kadras ieškomas ne dažniau kaip kas 2 s
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtClock = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 const fmtDur = (ms) => {
   const s = Math.floor(ms / 1000);
   return `${pad2(Math.floor(s / 3600))}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
+};
+const fmtLen = (ms) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return s < 60 ? t('{s} s', { s }) : t('{m} min. {s} s', { m: Math.floor(s / 60), s: s % 60 });
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
@@ -22,7 +32,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
  */
 export function drawComposite(g, el, last, o) {
   const { W, H } = o;
-  const vw = el.videoWidth || el.naturalWidth, vh = el.videoHeight || el.naturalHeight;
+  const vw = el.videoWidth || el.naturalWidth || el.width, vh = el.videoHeight || el.naturalHeight || el.height;
   g.fillStyle = '#000';
   g.fillRect(0, 0, W, H);
   if (!vw || !vh) return;
@@ -30,7 +40,7 @@ export function drawComposite(g, el, last, o) {
   const ox = (W - vw * k) / 2, oy = (H - vh * k) / 2;
   g.drawImage(el, ox, oy, vw * k, vh * k);
   const s = W / 1280; // užrašų mastelis
-  if (last && performance.now() - last.at < 4000) {
+  if (last && (o.fresh || performance.now() - last.at < 4000)) {
     const kk = Math.min(W / last.w, H / last.h);
     const ox2 = (W - last.w * kk) / 2, oy2 = (H - last.h * kk) / 2;
     g.lineWidth = Math.max(2, 2.5 * s);
@@ -104,7 +114,8 @@ export class AiComposer {
     this.started = Date.now();
     this.t0 = performance.now();
     this.track = []; // {t, counts, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
-    this.events = []; // {t, kind, group, n, counts, img?:Blob}
+    this.events = []; // {t, at, kind:'start'|'episode', group, n (daugiausia), end?, counts, img?:Blob}
+    this._g = {}; // grupės būsena: {hits, firstT, firstAt, lastT, ep}
     this.max = {};
     const el = player.el;
     const vw = el.videoWidth || el.naturalWidth || 1280, vh = el.videoHeight || el.naturalHeight || 720;
@@ -117,12 +128,12 @@ export class AiComposer {
     detector.listeners.add(this._onResult);
     // Įrašo pradžioje – paskutinis AI rezultatas (kad grafikas prasidėtų nuo 0 s)
     if (detector.last) this.track.push({ t: 0, counts: { ...detector.counts }, dets: [] });
-    this._prev = { ...detector.counts };
     this.draw();
     // Pirmas įvykis – įrašo pradžia su tuo metu matomais objektais
     const ev0 = { t: 0, at: Date.now(), kind: 'start', group: null, n: 0, counts: { ...detector.counts } };
     this.events.push(ev0);
-    this.snapshot().then((b) => (ev0.img = b));
+    const L0 = detector.last;
+    (L0?.frame && performance.now() - L0.at < 4000 ? this.frameShot(L0, 0, Date.now(), detector.counts) : this.snapshot()).then((b) => (ev0.img = b));
     this._stopTick = ticker(1000 / FPS, () => this.draw());
   }
 
@@ -156,9 +167,10 @@ export class AiComposer {
 
   onResult(d) {
     remember(d.groups);
-    const t1 = Date.now() - this.started;
     const L = d.last;
     if (!L) return;
+    // Laikas – kada kadras paimtas analizei (ne kada atėjo atsakymas), kad sutaptų su vaizdu įraše
+    const t1 = Math.max(0, Math.round(L.at - (L.ms || 0) - this.t0));
     const counts = { ...d.counts };
     this.track.push({
       t: t1,
@@ -166,18 +178,60 @@ export class AiComposer {
       dets: L.dets.map((x) => [x.class, +x.score.toFixed(2), ...x.box.map((v, i) => +(v / (i % 2 ? L.h : L.w)).toFixed(4))]),
     });
     for (const [k, n] of Object.entries(counts)) {
-      const prev = this._prev?.[k] ?? 0;
       if (n > (this.max[k] ?? -1)) this.max[k] = n;
-      // Įvykiai: atsirado / išnyko (ne dažniau nei kas 5 s tai pačiai grupei)
-      const kind = prev === 0 && n > 0 ? 'appeared' : prev > 0 && n === 0 ? 'gone' : null;
-      if (!kind || this.events.length >= MAX_EVENTS) continue;
-      const lastSame = [...this.events].reverse().find((e) => e.group === k);
-      if (lastSame && t1 - lastSame.t < 5000 && lastSame.kind === kind) continue;
-      const ev = { t: t1, at: Date.now(), kind, group: k, n, counts };
-      this.events.push(ev);
-      if (kind === 'appeared') this.snapshot().then((b) => (ev.img = b));
+      const g = (this._g[k] ||= { hits: 0, lastT: -Infinity, ep: null });
+      if (n > 0) {
+        if (t1 - g.lastT >= GONE_MS) Object.assign(g, { hits: 0, firstT: t1, firstAt: this.started + t1 });
+        g.hits++;
+        g.lastT = t1;
+        if (!g.ep && (g.hits >= 2 || this.groupDets(L, k).some((x) => x.score >= SURE)) && this.events.length < MAX_EVENTS) {
+          g.ep = { t: g.firstT, at: g.firstAt, kind: 'episode', group: k, n, end: t1, counts, q: -1, shotT: -Infinity };
+          this.events.push(g.ep);
+        }
+        if (g.ep) {
+          g.ep.end = t1;
+          if (n > g.ep.n) Object.assign(g.ep, { n, counts });
+          this.betterShot(g.ep, L, k, t1, counts);
+        }
+      } else if (g.ep && t1 - g.lastT >= GONE_MS) g.ep = null;
     }
-    this._prev = counts;
+  }
+
+  /** Kadro kokybė grupei: daugiau objektų, didesnis pasitikėjimas, objektai ne prie krašto (nenukirpti). */
+  groupDets(L, k) {
+    const cls = this.detector.groups?.[k]?.classes || GROUPS[k]?.classes || [];
+    return L.dets.filter((x) => cls.includes(x.class));
+  }
+
+  quality(L, k) {
+    const ds = this.groupDets(L, k);
+    if (!ds.length) return -1;
+    const m = 0.01 * Math.max(L.w, L.h);
+    const edge = ds.filter(({ box: [x1, y1, x2, y2] }) => x1 < m || y1 < m || x2 > L.w - m || y2 > L.h - m).length;
+    return ds.length + ds.reduce((a, x) => a + x.score, 0) / ds.length - (0.6 * edge) / ds.length;
+  }
+
+  betterShot(ep, L, k, t1, counts) {
+    if (!L.frame) return;
+    const q = this.quality(L, k);
+    if (q <= ep.q + 0.05 || (ep.img && t1 - ep.shotT < SHOT_GAP_MS)) return;
+    ep.q = q;
+    ep.shotT = t1;
+    const token = (ep.token = (ep.token || 0) + 1);
+    this.frameShot(L, t1, this.started + t1, counts).then((b) => b && token === ep.token && (ep.img = b));
+  }
+
+  /** Įvykio kadras: tas pats kadras, kurį analizavo AI, su jo rėmeliais (rėmeliai tiksliai ant objektų). */
+  frameShot(L, t1, at, counts) {
+    const f = L.frame;
+    const k = Math.min(1, 960 / Math.max(f.width, f.height));
+    const W = Math.round(f.width * k), H = Math.round(f.height * k);
+    const c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, countsText(counts)].filter(Boolean);
+    drawComposite(c.getContext('2d'), f, L, { W, H, lines, fresh: true });
+    return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
   }
 
   /** Dabartinis kadras su žymėjimais (JPEG, ≤ 960 px). */
@@ -195,6 +249,7 @@ export class AiComposer {
     this._stopTick = null;
     this.detector.listeners.delete(this._onResult);
     this.ended = Date.now();
+    for (const g of Object.values(this._g)) g.ep = null;
   }
 }
 
@@ -265,16 +320,19 @@ export async function reportZip({ name, video, comp, settings }) {
   }
   const start = new Date(comp.started);
   const dur = (comp.ended || Date.now()) - comp.started;
-  const evText = (e) => (e.kind === 'start' ? t('Įrašo pradžia') : e.kind === 'appeared' ? t('Atsirado: {g} ({n})', { g: gLabel(e.group), n: e.n }) : t('Išnyko: {g}', { g: gLabel(e.group) }));
+  const evText = (e) =>
+    e.kind === 'start'
+      ? t('Įrašo pradžia')
+      : t('{g}: matėsi {a}–{b} ({d}), daugiausia {n}', { g: gLabel(e.group), a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t), n: e.n });
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
   const csv = [[t('laikas_s'), t('data_laikas'), ...st.map((s) => s.label)].join(';')];
   for (const r of comp.track) csv.push([(r.t / 1000).toFixed(1), fmtClock(new Date(comp.started + r.t)), ...groups.map((g) => r.counts[g] ?? 0)].join(';'));
-  files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('ivykis')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), evText(e)].join(';')).join('\n') + '\n');
+  files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, events: evRows.map(({ img: _i, ...e }) => e), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -299,6 +357,7 @@ export async function reportZip({ name, video, comp, settings }) {
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eef1ef; vertical-align: top; }
   th { color: var(--mut); font-weight: 600; font-size: 12px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   td img { width: 220px; border-radius: 6px; display: block; }
   a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
   .meta td:first-child { color: var(--mut); width: 220px; }
@@ -318,7 +377,7 @@ ${st.map((s) => `<div class="card"><span>${esc(s.label)}</span><b>${esc(t('daugi
 <section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, st)}</section>
 <section><h2>${esc(t('Įvykiai'))}</h2>
 ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('Data ir laikas'))}</th><th>${esc(t('Įvykis'))}</th><th>${esc(t('Kadras'))}</th></tr>
-${evRows.map((e) => `<tr><td><a class="t" data-t="${e.t / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span></td><td>${e.img ? `<img src="${e.img}" alt="">` : ''}</td></tr>`).join('\n')}
+${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span></td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">

@@ -66,7 +66,7 @@ async function grab(el, maxSide) {
       rej(new Error(t('Šaltinis neleidžia kopijuoti vaizdo – pasirinkite „Per serverį“')));
     }
   });
-  return { blob, w, h, k, w0, h0 };
+  return { blob, w, h, k, w0, h0, canvas: c };
 }
 
 export class LiveDetector {
@@ -80,7 +80,7 @@ export class LiveDetector {
     this.view = view;
     this.opts = opts;
     this.on = false;
-    this.last = null; // {dets, w, h, at, ms}
+    this.last = null; // {dets, w, h, at, ms, frame}
     this.error = '';
     this.counts = {};
     this.prevCounts = {};
@@ -148,7 +148,7 @@ export class LiveDetector {
         if (!this.on) break;
         if (res.cancelled) continue;
         const dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
-        this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0 };
+        this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0, frame: fr.canvas }; // frame – būtent analizuotas kadras
         this.error = '';
         this.groups = groups;
         this.updateCounts(dets, s);
