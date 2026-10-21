@@ -1974,6 +1974,7 @@ $('#odm-badge').addEventListener('click', openOdm);
 // ---------------------------------------------------------------------------
 const liveUI = createLiveUI({
   toast,
+  getAi: () => aiClient(),
   onActive: (n) => $('#btn-live').classList.toggle('live-on', n > 0),
 });
 $('#btn-live').addEventListener('click', () => {

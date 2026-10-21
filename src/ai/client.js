@@ -47,7 +47,7 @@ export class AiClient {
   }
 
   /** @returns {Promise<{width:number,height:number,detections:{class:string,score:number,box:number[]}[]}>} */
-  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0, signal } = {}) {
+  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0, refine, signal } = {}) {
     const fd = new FormData();
     fd.append('image', blob, 'ortho.jpg');
     fd.append('classes', classes.join(','));
@@ -55,6 +55,7 @@ export class AiClient {
     fd.append('tile', String(tile));
     fd.append('overlap', String(overlap));
     if (gsd > 0) fd.append('gsd', String(gsd));
+    if (refine === false) fd.append('refine', 'false'); // be tikslaus kontūro – greičiau (transliacijai)
     return this._req('detect', { method: 'POST', body: fd, signal });
   }
 
