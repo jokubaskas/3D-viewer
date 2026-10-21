@@ -20,13 +20,22 @@ export const AI_GROUPS = {
 
 const PALETTE = ['#ff5fd2', '#3cc443', '#ff8a3d', '#4fc3f7', '#e57cff', '#c9f27b', '#ffd23f', '#ff5e57', '#3fe0d0'];
 /** Klasės spalva (savo modelio klasėms – pagal pavadinimą). */
+/** Dažnos savų modelių klasės (Label Studio pavadinimai) – lietuviški pavadinimai ir aiškios spalvos. */
+const EXTRA = [
+  [/^(no[_ -]?(helmet|hard[_ -]?hat)|be[_ -]?šalmo|be[_ -]?salmo|without[_ -]?helmet)$/i, { lt: 'Be šalmo', color: '#ff3b30' }],
+  [/^(helmet|hard[_ -]?hat|su[_ -]?šalmu|su[_ -]?salmu|with[_ -]?helmet|šalmas|salmas)$/i, { lt: 'Su šalmu', color: '#3cc443' }],
+  [/^(no[_ -]?vest|be[_ -]?liemenės)$/i, { lt: 'Be liemenės', color: '#ff8a3d' }],
+  [/^(vest|liemenė)$/i, { lt: 'Su liemene', color: '#ffd23f' }],
+];
+const extra = (name) => EXTRA.find(([re]) => re.test(String(name).trim()))?.[1];
 export function classColor(name) {
   if (AI_CLASSES[name]) return AI_CLASSES[name].color;
+  if (extra(name)) return extra(name).color;
   let h = 0;
   for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return PALETTE[h % PALETTE.length];
 }
-export const classLabel = (name) => (AI_CLASSES[name] ? t(AI_CLASSES[name].lt) : String(name));
+export const classLabel = (name) => (AI_CLASSES[name] ? t(AI_CLASSES[name].lt) : extra(name) ? t(extra(name).lt) : String(name));
 /** Grupės pagal nustatymus: standartinis modelis – AI_GROUPS, savas – kiekviena jo klasė atskirai. */
 export function activeGroups(s) {
   if (s.model) return Object.fromEntries((s.customClasses || []).filter((c) => s.customOn?.[c] !== false).map((c) => [c, { label: classLabel(c), classes: [c], color: classColor(c) }]));

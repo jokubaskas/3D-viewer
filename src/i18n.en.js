@@ -1030,4 +1030,13 @@ export const EN = {
   "Epochų (kartų per visą rinkinį)": "Epochs (passes over the whole set)",
   "Pradėti mokymą": "Start training",
   "Įspėti, kai aptinkama": "Alert when detected",
+  "Kadrų: {i}, žymėjimų failų: {l}.": "Frames: {i}, label files: {l}.",
+  "Objektai pagal klasę:": "Objects per class:",
+  "Nerastas classes.txt": "classes.txt not found",
+  "{n} „person“ žymų sutampa su šalmo žyma – jos bus pašalintos, kad tas pats žmogus nebūtų dviejų klasių.": "{n} “person” labels overlap a helmet label – they will be removed so the same person does not have two classes.",
+  "Mažai pavyzdžių ({c}) – šios klasės bus atpažįstamos prasčiau; rekomenduojama bent 150–300.": "Few examples ({c}) – these classes will be recognised less reliably; at least 150–300 are recommended.",
+  "Be šalmo": "No helmet",
+  "Su šalmu": "With helmet",
+  "Be liemenės": "No vest",
+  "Su liemene": "With vest",
 };

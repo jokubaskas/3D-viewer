@@ -778,18 +778,45 @@ export function createLiveUI(app) {
     if (!f) return;
     try {
       const { unzipSync } = await import('three/examples/jsm/libs/fflate.module.js');
-      let imgs = 0, labels = 0, classes = '';
-      const cz = unzipSync(new Uint8Array(await f.arrayBuffer()), {
+      let imgs = 0, labels = 0;
+      // Klasės ir žymėjimai: objektų skaičius kiekvienai klasei, „person“ dublikatai (žmogus pažymėtas dar ir kaip šalmas)
+      const z = unzipSync(new Uint8Array(await f.arrayBuffer()), {
         filter: (x) => {
           if (/\.(jpe?g|png|bmp|webp)$/i.test(x.name)) imgs++;
           else if (/labels\/.*\.txt$/i.test(x.name)) labels++;
-          return /(^|\/)classes\.txt$/i.test(x.name);
+          return /(^|\/)classes\.txt$/i.test(x.name) || /labels\/.*\.txt$/i.test(x.name);
         },
       });
-      const ct = Object.values(cz)[0];
-      if (ct) classes = new TextDecoder().decode(ct).split(/\r?\n/).filter(Boolean).join(', ');
+      const dec = new TextDecoder();
+      const ct = Object.entries(z).find(([n]) => /(^|\/)classes\.txt$/i.test(n))?.[1];
+      const names = ct ? dec.decode(ct).split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : [];
+      const counts = names.map(() => 0);
+      const personIdx = names.map((n, i) => (/^(person|people|human|žmogus|zmogus|worker)$/i.test(n) ? i : -1)).filter((i) => i >= 0);
+      const attrIdx = names.map((n, i) => (/helmet|hard.?hat|šalm|salm|vest|liemen/i.test(n) ? i : -1)).filter((i) => i >= 0);
+      const iou = (a, b) => {
+        const iw = Math.max(0, Math.min(a[0] + a[2] / 2, b[0] + b[2] / 2) - Math.max(a[0] - a[2] / 2, b[0] - b[2] / 2));
+        const ih = Math.max(0, Math.min(a[1] + a[3] / 2, b[1] + b[3] / 2) - Math.max(a[1] - a[3] / 2, b[1] - b[3] / 2));
+        return (iw * ih) / (a[2] * a[3] + b[2] * b[3] - iw * ih + 1e-12);
+      };
+      let dup = 0;
+      for (const [n, data] of Object.entries(z)) {
+        if (!/labels\/.*\.txt$/i.test(n)) continue;
+        const rows = dec.decode(data).split(/\r?\n/).map((l) => l.trim().split(/\s+/).map(Number)).filter((v) => v.length >= 5 && v[0] < names.length);
+        const attrBoxes = rows.filter((r) => attrIdx.includes(r[0])).map((r) => r.slice(1, 5));
+        for (const r of rows) {
+          if (personIdx.includes(r[0]) && attrBoxes.some((a) => iou(r.slice(1, 5), a) > 0.7)) dup++;
+          else counts[r[0]]++;
+        }
+      }
       trainImages = imgs;
-      dlgTrain.querySelector('#tr-info').textContent = t('Kadrų: {i}, žymėjimų failų: {l}. Klasės: {c}', { i: imgs, l: labels, c: classes || '—' });
+      const per = names.map((n, i) => `<span class="${counts[i] < 100 ? 'bad' : ''}">${esc(classLabel(n))}: <b>${counts[i]}</b></span>`).join(' · ');
+      const weak = names.filter((n, i) => counts[i] > 0 && counts[i] < 100).map(classLabel);
+      dlgTrain.querySelector('#tr-info').innerHTML = [
+        esc(t('Kadrų: {i}, žymėjimų failų: {l}.', { i: imgs, l: labels })),
+        names.length ? `${esc(t('Objektai pagal klasę:'))} ${per}` : esc(t('Nerastas classes.txt')),
+        dup ? esc(t('{n} „person“ žymų sutampa su šalmo žyma – jos bus pašalintos, kad tas pats žmogus nebūtų dviejų klasių.', { n: dup })) : '',
+        weak.length ? esc(t('Mažai pavyzdžių ({c}) – šios klasės bus atpažįstamos prasčiau; rekomenduojama bent 150–300.', { c: weak.join(', ') })) : '',
+      ].filter(Boolean).map((x) => `<div>${x}</div>`).join('');
       estimate();
     } catch {
       dlgTrain.querySelector('#tr-info').textContent = t('Nepavyko perskaityti ZIP');

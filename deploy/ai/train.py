@@ -72,6 +72,40 @@ def find_dataset(root: Path) -> tuple[Path, Path, list[str]]:
     return base / "images", labels_dir, names
 
 
+PERSON_RE = re.compile(r"^(person|people|human|zmogus|žmogus|žmonės|zmones|worker|darbuotojas)$", re.I)
+ATTR_RE = re.compile(r"helmet|hard.?hat|šalm|salm|vest|liemen", re.I)
+
+
+def _iou(a, b) -> float:
+    """IoU dviem YOLO dėžutėms (cx, cy, w, h; 0…1)."""
+    ax1, ay1, ax2, ay2 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx1, by1, bx2, by2 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    iw, ih = max(0.0, min(ax2, bx2) - max(ax1, bx1)), max(0.0, min(ay2, by2) - max(ay1, by1))
+    inter = iw * ih
+    return inter / (a[2] * a[3] + b[2] * b[3] - inter + 1e-12)
+
+
+def dedupe_people(lines: list[str], names: list[str]) -> tuple[list[str], int]:
+    """Žmogus pažymėtas du kartus – „person“ ir „helmet“ / „no_helmet“ per visą žmogų: paliekame tik pastarąjį.
+
+    Tas pats objektas su dviem klasėmis trukdo mokytis (klasės konkuruoja) ir aptikime vienas rėmelis
+    panaikintų kitą, todėl „person“ dėžutė, beveik sutampanti su šalmo / be šalmo dėžute, pašalinama.
+    """
+    person = {i for i, n in enumerate(names) if PERSON_RE.match(n.strip())}
+    attr = {i for i, n in enumerate(names) if ATTR_RE.search(n)}
+    if not person or not attr:
+        return lines, 0
+    parsed = [(int(l.split()[0]), [float(v) for v in l.split()[1:5]]) for l in lines]
+    attr_boxes = [b for c, b in parsed if c in attr]
+    out, removed = [], 0
+    for line, (c, b) in zip(lines, parsed):
+        if c in person and any(_iou(b, a) > 0.7 for a in attr_boxes):
+            removed += 1
+            continue
+        out.append(line)
+    return out, removed
+
+
 def prepare(src: Path, work: Path, val_share: float = 0.15, seed: int = 7):
     """Išskleidžia rinkinį ir sudeda į RF-DETR (Roboflow / YOLO) struktūrą: train/ ir valid/."""
     raw = work / "raw"
@@ -86,7 +120,7 @@ def prepare(src: Path, work: Path, val_share: float = 0.15, seed: int = 7):
         raise SystemExit(f"Rinkinys nerastas: {src}")
     images_dir, labels_dir, names = find_dataset(raw)
 
-    pairs, empty, boxes, per_class = [], 0, 0, [0] * len(names)
+    pairs, empty, boxes, per_class, dup = [], 0, 0, [0] * len(names), 0
     for img in sorted(images_dir.iterdir()):
         if img.suffix.lower() not in IMG_EXT:
             continue
@@ -100,7 +134,10 @@ def prepare(src: Path, work: Path, val_share: float = 0.15, seed: int = 7):
                 c = int(float(v[0]))
                 if 0 <= c < len(names):
                     lines.append(" ".join([str(c), *v[1:5]]))
-                    per_class[c] += 1
+        lines, removed = dedupe_people(lines, names)
+        dup += removed
+        for l in lines:
+            per_class[int(l.split()[0])] += 1
         boxes += len(lines)
         empty += not lines
         pairs.append((img, lines))
@@ -122,7 +159,7 @@ def prepare(src: Path, work: Path, val_share: float = 0.15, seed: int = 7):
             (ds / split / "labels" / (stem + ".txt")).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     yaml_text = "path: .\ntrain: train/images\nval: valid/images\nnames:\n" + "".join(f"  {i}: {json.dumps(n, ensure_ascii=False)}\n" for i, n in enumerate(names))
     (ds / "data.yaml").write_text(yaml_text, encoding="utf-8")
-    stats = {"images": len(pairs), "train": len(pairs) - n_val, "valid": n_val, "boxes": boxes, "empty": empty, "per_class": dict(zip(names, per_class))}
+    stats = {"images": len(pairs), "train": len(pairs) - n_val, "valid": n_val, "boxes": boxes, "empty": empty, "per_class": dict(zip(names, per_class)), "person_duplicates_removed": dup}
     return ds, names, stats
 
 
