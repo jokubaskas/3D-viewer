@@ -515,7 +515,7 @@ def train_status():
     except (OSError, ValueError):
         st = {"phase": "preparing"}
     running = _train_proc is not None and _train_proc.poll() is None and job == _train_job
-    if not running and (st.get("phase") in ("preparing", "training") or job in _train_cancelled):
+    if not running and (st.get("phase") in ("preparing", "downloading", "training") or job in _train_cancelled):
         if job in _train_cancelled:
             st.update(phase="stopped", message="")
         else:
