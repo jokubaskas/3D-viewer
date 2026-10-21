@@ -3,9 +3,11 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
+import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip } from './ai.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
 const LS_PUSH = 'atea3d.live.push';
+const LS_AI = 'atea3d.live.ai';
 const ls = {
   get(k, d) {
     try {
@@ -106,6 +108,18 @@ export function createLiveUI(app) {
           <div id="live-list"></div>
         </section>
         <section class="card">
+          <h3>AI aptikimas</h3>
+          <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
+          <div id="live-ai-groups" class="live-ai-groups"></div>
+          <label class="row">Detalumas
+            <select id="live-ai-detail"></select>
+          </label>
+          <label class="row">Jautrumas <span class="live-ai-th"><input id="live-ai-th" type="range" min="0.2" max="0.8" step="0.05" /><span id="live-ai-th-v" class="small muted"></span></span></label>
+          <label class="row check"><input type="checkbox" id="live-ai-alert" /> Įspėti, kai aptinkamas žmogus</label>
+          <label class="row check"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
+          <div id="live-ai-ds" class="small muted"></div>
+        </section>
+        <section class="card">
           <h3>Drono transliacija į šį kompiuterį</h3>
           <div class="row"><span>Serveris</span><span id="live-gw" class="chip">…</span></div>
           <p class="small muted">Valdymo pulte (pvz. DJI Pilot, Anzu Smart Control) pasirinkite <b>Transliacija → RTMP</b> ir įveskite adresą. Pultas ir šis kompiuteris turi būti tame pačiame tinkle.</p>
@@ -165,6 +179,11 @@ export function createLiveUI(app) {
       streams.unshift(s);
     } else s.via = $('#live-via').value;
     if ($('#live-auth').value.trim()) s.auth = $('#live-auth').value.trim();
+    const open = tiles.get(s.id);
+    if (open) {
+      open.player.retries = 0;
+      open.player.start();
+    }
     save();
     $('#live-url').value = '';
     $('#live-name').value = '';
@@ -236,13 +255,14 @@ export function createLiveUI(app) {
     el.dataset.id = stream.id;
     el.innerHTML = `
       <div class="live-view"><div class="live-host"></div>
-        <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span></div>
+        <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span><span class="live-ai-sum" hidden></span></div>
         <div class="live-msg" hidden></div>
       </div>
       <div class="live-bar">
         <b class="live-title">${esc(stream.name)}</b>
         <span class="live-rec" hidden></span>
         <span class="live-tools">
+          <button class="btn btn-ghost btn-sm icon-only" data-tact="ai" title="AI: žmonės ir transportas">${icon('magic')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
@@ -266,6 +286,7 @@ export function createLiveUI(app) {
     const tile = tiles.get(sid);
     if (!tile) return;
     if (tile.player.recorder) stopRec(tile);
+    tile.ai?.dispose();
     tile.player.stop(false);
     tile.el.remove();
     tiles.delete(sid);
@@ -309,6 +330,14 @@ export function createLiveUI(app) {
           ? `<b>${esc(t('Nepavyko parodyti'))}</b><span>${esc(p.error)}</span><span class="muted">${esc(t('Bandoma vėl po {s} s…', { s: p.retryIn }))}</span>${hint(tile)}`
           : `<span class="live-spin"></span><span>${esc(t('Jungiamasi…'))}</span>`;
     }
+    const sum = el.querySelector('.live-ai-sum');
+    sum.hidden = !tile.ai?.on;
+    if (tile.ai?.on) {
+      sum.textContent = tile.ai.summary();
+      sum.classList.toggle('bad', !!tile.ai.error);
+    }
+    el.querySelector('[data-tact=ai]').classList.toggle('on', !!tile.ai?.on);
+    el.querySelector('[data-tact=ai]').disabled = !tile.ai?.on && (p.embedded || !live);
     const cap = p.canCapture;
     el.querySelector('[data-tact=snap]').disabled = !cap;
     el.querySelector('[data-tact=rec]').disabled = !cap && !p.recorder;
@@ -334,7 +363,19 @@ export function createLiveUI(app) {
     if (!act || !tile) return;
     const { player: p, stream: s, el } = tile;
     if (act === 'close') hide(s.id);
-    else if (act === 'reload') {
+    else if (act === 'ai') {
+      if (!tile.ai)
+        tile.ai = new LiveDetector(p, el.querySelector('.live-view'), {
+          getAi: app.getAi,
+          settings: () => aiSet,
+          samples,
+          onUpdate: () => renderTile(s.id),
+          onAlert: (text) => alertUser(`${s.name}: ${text}`),
+          onSample: renderDataset,
+        });
+      tile.ai.on ? tile.ai.stop() : tile.ai.start();
+      renderTile(s.id);
+    } else if (act === 'reload') {
       p.retries = 0;
       p.start();
     } else if (act === 'full') {
@@ -494,6 +535,74 @@ export function createLiveUI(app) {
     show(s);
   });
 
+  // ------------------------------------------------------------------ AI aptikimas
+  const aiSet = { detail: 'normal', threshold: 0.5, alertPerson: false, collect: false, ...ls.get(LS_AI, {}) };
+  aiSet.groups = { person: true, car: true, heavy: true, two: false, ...(aiSet.groups || {}) };
+  const samples = []; // kadrai mokymui (tik šioje sesijoje – atmintyje)
+  function renderAiSettings() {
+    $('#live-ai-groups').innerHTML = Object.entries(AI_GROUPS)
+      .map(([k, g]) => `<label class="check small"><input type="checkbox" data-aig="${k}" ${aiSet.groups[k] ? 'checked' : ''}/> ${esc(t(g.label))}</label>`)
+      .join('');
+    $('#live-ai-detail').innerHTML = Object.entries(AI_DETAIL)
+      .map(([k, d]) => `<option value="${k}" ${aiSet.detail === k ? 'selected' : ''}>${esc(t(d.label))}</option>`)
+      .join('');
+    $('#live-ai-th').value = aiSet.threshold;
+    $('#live-ai-th-v').textContent = `${Math.round(aiSet.threshold * 100)} %`;
+    $('#live-ai-alert').checked = aiSet.alertPerson;
+    $('#live-ai-collect').checked = aiSet.collect;
+  }
+  function renderDataset() {
+    const n = samples.length;
+    $('#live-ai-ds').innerHTML = aiSet.collect || n
+      ? `${esc(t('Sukaupta kadrų: {n}', { n }))}${n ? ` <button class="btn btn-sm btn-outline" data-ds="zip">${icon('save')}${esc(t('Atsisiųsti (ZIP)'))}</button> <button class="btn btn-sm btn-ghost" data-ds="clear">${esc(t('Išvalyti'))}</button>` : ''}`
+      : '';
+  }
+  page.addEventListener('change', (e) => {
+    const g = e.target.closest('[data-aig]');
+    if (g) aiSet.groups[g.dataset.aig] = g.checked;
+    else if (e.target.id === 'live-ai-detail') aiSet.detail = e.target.value;
+    else if (e.target.id === 'live-ai-alert') {
+      aiSet.alertPerson = e.target.checked;
+      if (aiSet.alertPerson && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+    } else if (e.target.id === 'live-ai-collect') {
+      aiSet.collect = e.target.checked;
+      renderDataset();
+    } else return;
+    ls.set(LS_AI, aiSet);
+  });
+  $('#live-ai-th').addEventListener('input', (e) => {
+    aiSet.threshold = +e.target.value;
+    $('#live-ai-th-v').textContent = `${Math.round(aiSet.threshold * 100)} %`;
+    ls.set(LS_AI, aiSet);
+  });
+  $('#live-ai-ds').addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-ds]')?.dataset.ds;
+    if (a === 'clear') {
+      if (!confirm(t('Išvalyti sukauptus kadrus?'))) return;
+      samples.length = 0;
+    } else if (a === 'zip') download(await datasetZip(samples), `ai_kadrai_${stamp()}.zip`);
+    renderDataset();
+  });
+  /** Įspėjimas: pranešimas, garsas ir (jei leista) sistemos pranešimas. */
+  function alertUser(text) {
+    app.toast(text, 'warn', 6000);
+    try {
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.15, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+      o.connect(g).connect(ac.destination);
+      o.start();
+      o.stop(ac.currentTime + 0.5);
+    } catch { /* be garso */ }
+    try {
+      if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('Atea 3D Matuoklis', { body: text });
+    } catch { /* nebūtina */ }
+  }
+  renderAiSettings();
+  renderDataset();
+
   // ------------------------------------------------------------------ Atidarymas / uždarymas
   function open() {
     page.hidden = false;
@@ -524,6 +633,8 @@ export function createLiveUI(app) {
       return !page.hidden;
     },
     rerender() {
+      renderAiSettings();
+      renderDataset();
       renderList();
       renderPushUrls();
       renderPushed();

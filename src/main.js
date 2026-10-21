@@ -13,6 +13,7 @@ import { ProfileChart } from './profile.js';
 import { Gizmo } from './gizmo.js';
 import { createOdmUI } from './odm/ui.js';
 import { createLiveUI } from './live/ui.js';
+import { createPlanUI } from './plan/ui.js';
 import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
@@ -1963,7 +1964,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -1973,12 +1974,25 @@ $('#odm-badge').addEventListener('click', openOdm);
 // ---------------------------------------------------------------------------
 const liveUI = createLiveUI({
   toast,
+  getAi: () => aiClient(),
   onActive: (n) => $('#btn-live').classList.toggle('live-on', n > 0),
 });
 $('#btn-live').addEventListener('click', () => {
   if (liveUI.isOpen) return liveUI.close();
   if (odmUI.isOpen) odmUI.close();
+  planUI.close();
   liveUI.open();
+});
+
+// ---------------------------------------------------------------------------
+// Skrydžio planas
+// ---------------------------------------------------------------------------
+const planUI = createPlanUI({ toast });
+$('#btn-plan').addEventListener('click', () => {
+  if (planUI.isOpen) return planUI.close();
+  if (odmUI.isOpen) odmUI.close();
+  liveUI.close();
+  planUI.open();
 });
 
 // Skydelis mažuose ekranuose
@@ -1996,7 +2010,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2051,6 +2065,7 @@ onLangChange(() => {
   applyClip();
   odmUI.rerender();
   liveUI.rerender();
+  planUI.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
     $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });

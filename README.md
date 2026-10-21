@@ -161,6 +161,33 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 Programa bus `http://serveris:8080`, NodeODM – per `/odm/` (programoje numatytas adresas). Rezultatai serveryje laikomi 30 dienų (`NODEODM_KEEP_MINUTES`).
 Vieno failo versijai (`release/…html`) nurodykite pilną adresą, pvz. `http://serveris:8080/odm/`.
 
+## Skrydžio planas
+
+Viršutinėje juostoje paspauskite **„Planas“**.
+
+**Teritorija.** Ją galima:
+- pažymėti žemėlapyje (taškus galima tempti, kraštinės viduryje pridėti naują tašką, dešiniuoju pelės mygtuku pašalinti);
+- įkelti iš KML ar GeoJSON;
+- surasti pagal adresą ar koordinates.
+
+**Kamera.** Pasirinkite iš sąrašo (Anzu Raptor T / Mavic 3T, Mavic 3E, Matrice 4E, Phantom 4 RTK, M30T) arba nuskaitykite iš vienos savo drono nuotraukos (EXIF).
+
+**Tikslumas.** Įveskite norimą GSD (cm/px) – aukštis apskaičiuojamas (arba atvirkščiai). Pvz. Mavic 3E 100 m aukštyje: 2,73 cm/px. Virš 120 m programa įspėja.
+
+**Maršrutas.** „Gyvatėlė“ apskaičiuojama pagal išilginį ir skersinį persidengimą.
+- Kryptis parenkama taip, kad linijų būtų mažiausiai, arba nurodoma ranka.
+- Kryžminis (dvigubas) skrydis – geresniam 3D modeliui.
+- Greitis ribojamas pagal kameros kadro intervalą.
+
+**Skaičiai:** plotas, linijos, nuotraukos, maršruto ilgis, greitis, trukmė (su skrydžiu iki teritorijos, jei pažymėta pakilimo vieta) ir akumuliatorių skaičius.
+
+**Eksportas:**
+- **KML** (sritis + maršrutas) – sritį importuokite į pulto programą kaip kartografavimo misiją ir nustatykite parodytus parametrus;
+- **DJI WPML (KMZ)** – maršruto taškai su fotografavimu kas N m (DJI Pilot 2 formatas; su Anzu Smart Control dar nebandyta);
+- **GeoJSON**.
+
+Planai išsaugomi naršyklėje.
+
 ## Tiesioginė transliacija
 
 Viršutinėje juostoje spauskite **„Transliacija“** ir įklijuokite nuorodą. Vienu metu galima žiūrėti kelias transliacijas (1, 2×2, 3×3 tinklelis). Prie kiekvienos yra mygtukai:
@@ -201,6 +228,16 @@ RTMP ir RTSP prievadus galima pakeisti `.env` faile (`LIVE_RTMP_PORT`, `LIVE_RTS
 
 Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari. H.265 (HEVC) rodomas tik naršyklėse, kurios jį palaiko (Chrome / Edge su aparatiniu dekodavimu, Safari).
 
+**AI aptikimas transliacijoje.** Mygtukas ✨ prie transliacijos įjungia žmonių ir transporto aptikimą.
+- Kadrai siunčiami į vietinę AI paslaugą (RF-DETR, be interneto); ant vaizdo piešiami rėmeliai, rodomi skaičiai.
+- Detalumas:
+  - **Greitas** – visas kadras vienu kartu, ~1–3 s;
+  - **Įprastas** – kadras skaidomas į 6 dalis;
+  - **Detalus** – pilna raiška plytelėmis, mažiems objektams iš didelio aukščio.
+- Galima įjungti įspėjimą (garsas ir pranešimas), kai aptinkamas žmogus.
+- AI veikia CPU, todėl transliacijai greičiausias modelis yra `AI_DETECTOR=nano` faile `.env` (tada perkurkite AI: `start-windows.bat`).
+- **Kaupti kadrus modelio mokymui:** kas kelias sekundes išsaugomas kadras su automatiniais rėmeliais. „Atsisiųsti (ZIP)“ pateikia YOLO formato rinkinį (images/, labels/, data.yaml), jau su klasėmis `helmet` ir `no_helmet`. Rinkinį galima papildyti žymėjimo programoje (CVAT, Label Studio, Roboflow) ir naudoti modelio pritaikymui, pvz. šalmų atpažinimui.
+
 ## Kūrimas
 
 ```bash
@@ -229,5 +266,6 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
 - `src/export.js` – 3D modelio išsaugojimas (OBJ su tekstūromis, GLB, LAS)
 - `src/compare.js` – palyginimo modelis, pokyčių tinklelis, tūriai ir pokyčių žemėlapis
-- `src/live/` – tiesioginės transliacijos: nuorodos atpažinimas ir MediaMTX klientas (`sources.js`), grotuvas su WebRTC / HLS / MJPEG, kadrais ir įrašymu (`player.js`), sąsaja (`ui.js`)
+- `src/plan/` – skrydžio planavimas: kameros, GSD, maršrutas, KML / WPML / GeoJSON (`plan.js`), žemėlapis (`map.js`), sąsaja (`ui.js`)
+- `src/live/` – tiesioginės transliacijos (AI aptikimas – `ai.js`): nuorodos atpažinimas ir MediaMTX klientas (`sources.js`), grotuvas su WebRTC / HLS / MJPEG, kadrais ir įrašymu (`player.js`), sąsaja (`ui.js`)
 - `src/report/` – PDF ataskaita (jsPDF, įkeliama tik kuriant ataskaitą) ir šriftas

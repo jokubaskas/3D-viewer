@@ -160,12 +160,13 @@ export class LiveGateway {
   }
 
   /** Užregistruoja šaltinį (RTSP / RTMP / SRT / HLS) – MediaMTX jį paims, kai kas nors žiūrės. */
-  async addSource(url) {
-    const name = pathNameFor(url);
-    const body = JSON.stringify({ source: url, sourceOnDemand: true, sourceOnDemandStartTimeout: '8s', sourceOnDemandCloseAfter: '20s', rtspTransport: 'tcp' });
+  /** @param {{whepBearerToken?:string}} extra – pvz. raktas WHEP šaltiniui */
+  async addSource(url, extra = {}) {
+    const name = pathNameFor(url + (extra.whepBearerToken || ''));
+    const body = JSON.stringify({ source: url, sourceOnDemand: true, sourceOnDemandStartTimeout: '8s', sourceOnDemandCloseAfter: '20s', rtspTransport: 'tcp', ...extra });
     // Jau užregistruotas tas pats šaltinis – nekeičiame (pakeitus nutrūktų kitų žiūrinčiųjų vaizdas)
     const cur = await this.api(`config/paths/get/${name}`).catch(() => null);
-    if (cur?.source === url) return name;
+    if (cur?.source === url && (cur.whepBearerToken || '') === (extra.whepBearerToken || '')) return name;
     await this.api(`config/paths/replace/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
     return name;
   }

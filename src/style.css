@@ -542,3 +542,37 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .live-empty svg { width: 42px; height: 42px; color: var(--atea-green-text); }
 .live-view:fullscreen .live-media { object-fit: contain; }
 @media (max-width: 1000px) { .live-grid, .live-grid[data-n] { grid-template-columns: 1fr; grid-auto-rows: minmax(240px, auto); } }
+
+/* ==========================================================================
+   Skrydžio planas
+   ========================================================================== */
+.plan-main { display: flex; flex-direction: column; gap: 10px; }
+.plan-map-wrap { position: relative; flex: 1; min-height: 360px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line-2); }
+.plan-map-wrap canvas { position: absolute; inset: 0; display: block; touch-action: none; }
+.plan-map-tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; align-items: center; background: rgba(20,23,25,.75); padding: 4px 6px; border-radius: 7px; }
+.plan-map-tools select { height: 28px; }
+.plan-map-wrap .pv-hint { position: absolute; left: 8px; top: 8px; background: rgba(20,23,25,.75); padding: 4px 9px; border-radius: 6px; color: var(--ink-2); pointer-events: none; max-width: 70%; }
+.plan-stats { margin: 0; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.plan-advice { line-height: 1.5; }
+.plan-export { margin: 0; }
+.plan-page .btn svg { width: 16px; height: 16px; }
+.pl-wide { width: 100%; margin-bottom: 8px; }
+.pl-grid2, .pl-grid3 { display: grid; gap: 8px; margin: 8px 0; }
+.pl-grid2 { grid-template-columns: 1fr 1fr; }
+.pl-grid3 { grid-template-columns: 1fr 1fr 1fr; }
+.pl-grid2 label, .pl-grid3 label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--ink-2); }
+.pl-grid2 input, .pl-grid3 input { width: 100%; text-align: left; }
+.pl-search { display: flex; gap: 6px; }
+.pl-search .live-input { margin: 0 0 8px; }
+
+/* AI transliacijoje */
+.live-page .card p svg { width: 14px; height: 14px; vertical-align: -2px; }
+.live-ai-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.live-tile.capturing .live-ai-canvas { display: none; }
+.live-ai-sum { font-size: 11.5px; font-weight: 600; color: #111; background: rgba(255,210,63,.92); padding: 3px 8px; border-radius: 4px; }
+.live-ai-sum.bad { background: rgba(255,107,94,.9); color: #fff; }
+.live-tools [data-tact=ai].on { color: #ffd23f; background: rgba(255,210,63,.12); }
+.live-ai-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 6px 0; }
+.live-ai-th { display: flex; align-items: center; gap: 8px; }
+.live-ai-th input { width: 110px; accent-color: var(--atea-green); }
+#live-ai-ds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
