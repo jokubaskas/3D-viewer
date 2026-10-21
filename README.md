@@ -244,6 +244,17 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
   Kadras (📷) su įjungtu AI taip pat išsaugomas su rėmeliais ir laiku.
 - **Kaupti kadrus modelio mokymui:** kas kelias sekundes išsaugomas kadras su automatiniais rėmeliais. „Atsisiųsti (ZIP)“ pateikia YOLO formato rinkinį (images/, labels/, data.yaml), jau su klasėmis `helmet` ir `no_helmet`. Rinkinį galima papildyti žymėjimo programoje (CVAT, Label Studio, Roboflow) ir naudoti modelio pritaikymui, pvz. šalmų atpažinimui.
 
+**Savas AI modelis (pvz. šalmai).** Kortelė „Savas AI modelis“ transliacijos puslapyje:
+1. Pažymėkite kadrus Label Studio (`docker run -d --name label-studio --restart unless-stopped -p 8085:8080 -v label-studio-data:/label-studio/data heartexlabs/label-studio:latest`, adresas http://localhost:8085) ir eksportuokite **YOLO** formatu (ZIP).
+2. **Mokyti naują modelį…** → pasirinkite ZIP, pavadinimą, dydį ir epochų skaičių.
+   - Programa parodo kadrų skaičių, klases ir apytikslę trukmę.
+   - Mokoma AI konteineryje (`deploy/ai/train.py`, RF-DETR fine-tuning nuo COCO svorių). Rinkinys dalijamas 85 / 15 (mokymas / patikra).
+   - Kortelėje rodoma eiga: epocha, likęs laikas, tikslumas (mAP50). Mokymą galima nutraukti.
+3. Baigus – **Naudoti**. AI aptikime atsiranda modelio klasės (pvz. `helmet`, `no_helmet`), įspėjimą galima nustatyti pasirinktai klasei (pvz. „be šalmo“).
+4. Papildžius rinkinį, eksportuokite visą Label Studio projektą iš naujo ir apmokykite naują modelį. Senus modelius galima ištrinti.
+
+Modeliai saugomi Docker tome `ai-models`, todėl išlieka atnaujinus programą. Procesoriumi mokymas trunka valandas, todėl mokykite, pavyzdžiui, per naktį: „Mažas“ modelis yra ~3 kartus greitesnis už „Didelį“. Su NVIDIA GPU (`docker-compose.gpu.yml`) mokymas yra keliasdešimt kartų greitesnis.
+
 ## Kūrimas
 
 ```bash

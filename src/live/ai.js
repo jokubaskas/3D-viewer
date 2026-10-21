@@ -18,6 +18,22 @@ export const AI_GROUPS = {
   two: { label: 'Motociklai ir dviračiai', classes: ['motorcycle', 'bicycle'] },
 };
 
+const PALETTE = ['#ff5fd2', '#3cc443', '#ff8a3d', '#4fc3f7', '#e57cff', '#c9f27b', '#ffd23f', '#ff5e57', '#3fe0d0'];
+/** Klasės spalva (savo modelio klasėms – pagal pavadinimą). */
+export function classColor(name) {
+  if (AI_CLASSES[name]) return AI_CLASSES[name].color;
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+export const classLabel = (name) => (AI_CLASSES[name] ? t(AI_CLASSES[name].lt) : String(name));
+/** Grupės pagal nustatymus: standartinis modelis – AI_GROUPS, savas – kiekviena jo klasė atskirai. */
+export function activeGroups(s) {
+  if (s.model) return Object.fromEntries((s.customClasses || []).filter((c) => s.customOn?.[c] !== false).map((c) => [c, { label: classLabel(c), classes: [c], color: classColor(c) }]));
+  const col = { person: 'person', car: 'car', heavy: 'truck', two: 'motorcycle' };
+  return Object.fromEntries(Object.entries(AI_GROUPS).filter(([k]) => s.groups[k]).map(([k, g]) => [k, { label: t(g.label), classes: g.classes, color: classColor(col[k]) }]));
+}
+
 /** Klasės mokymo duomenų rinkinyje (YOLO): COCO dalis + šalmų klasės, kurias reikės pažymėti rankomis. */
 export const DATASET_CLASSES = ['person', 'car', 'truck', 'bus', 'motorcycle', 'bicycle', 'helmet', 'no_helmet'];
 const MAX_SAMPLES = 400;
@@ -104,7 +120,8 @@ export class LiveDetector {
       }
       const s = this.opts.settings();
       const det = AI_DETAIL[s.detail] || AI_DETAIL.normal;
-      const classes = Object.entries(AI_GROUPS).filter(([k]) => s.groups[k]).flatMap(([, g]) => g.classes);
+      const groups = activeGroups(s);
+      const classes = Object.values(groups).flatMap((g) => g.classes);
       if (!classes.length) {
         await sleep(700);
         continue;
@@ -118,12 +135,13 @@ export class LiveDetector {
         }
         const ai = await this.opts.getAi();
         this.ctl = new AbortController();
-        const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, signal: this.ctl.signal });
+        const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, model: s.model || '', signal: this.ctl.signal });
         if (!this.on) break;
         if (res.cancelled) continue;
         const dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
         this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0 };
         this.error = '';
+        this.groups = groups;
         this.updateCounts(dets, s);
         this.listeners.forEach((f) => f(this));
         this.collect(fr, res.detections || [], s);
@@ -143,11 +161,12 @@ export class LiveDetector {
 
   updateCounts(dets, s) {
     const c = {};
-    for (const [k, g] of Object.entries(AI_GROUPS)) if (s.groups[k]) c[k] = dets.filter((d) => g.classes.includes(d.class)).length;
+    for (const [k, g] of Object.entries(this.groups || {})) c[k] = dets.filter((d) => g.classes.includes(d.class)).length;
     this.prevCounts = this.counts;
     this.counts = c;
-    // Įspėjimas: atsirado žmonių (anksčiau nebuvo)
-    if (s.alertPerson && c.person > 0 && !(this.prevCounts.person > 0)) this.opts.onAlert(t('Aptikta žmonių: {n}', { n: c.person }));
+    // Įspėjimas: atsirado pasirinktos klasės objektų (anksčiau nebuvo); standartiniam modeliui – žmonės
+    const ak = s.model ? s.alertClass : 'person';
+    if (s.alertPerson && ak && c[ak] > 0 && !(this.prevCounts[ak] > 0)) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: c[ak] }));
   }
 
   /** Kadrų kaupimas mokymui: kas ~3 s, kai yra aptikimų (arba kas 15 s – ir „tušti“ kadrai reikalingi). */
@@ -184,11 +203,11 @@ export class LiveDetector {
     for (const d of L.dets) {
       const [x1, y1, x2, y2] = d.box;
       const x = ox + x1 * k, y = oy + y1 * k, w = (x2 - x1) * k, h = (y2 - y1) * k;
-      const color = AI_CLASSES[d.class]?.color || '#fff';
+      const color = classColor(d.class);
       g.strokeStyle = color;
       g.strokeRect(x, y, w, h);
       if (w > 14 || L.dets.length < 40) {
-        const label = `${t(AI_CLASSES[d.class]?.lt || d.class)} ${Math.round(d.score * 100)}%`;
+        const label = `${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
         const tw = g.measureText(label).width + 6;
         g.fillStyle = color;
         g.fillRect(x, y - 15 < 0 ? y : y - 15, tw, 15);
@@ -203,7 +222,7 @@ export class LiveDetector {
   summary() {
     if (this.error) return this.error;
     if (!this.last) return t('AI: laukiama pirmo rezultato…');
-    const parts = Object.entries(this.counts).map(([k, n]) => `${t(AI_GROUPS[k].label)} ${n}`);
+    const parts = Object.entries(this.counts).map(([k, n]) => `${this.groups?.[k]?.label || k} ${n}`);
     parts.push(t('AI kas {s} s', { s: new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 }).format(Math.max(this.last.ms, 330) / 1000) }));
     return parts.join(' · ');
   }

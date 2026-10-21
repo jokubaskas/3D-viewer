@@ -47,7 +47,7 @@ export class AiClient {
   }
 
   /** @returns {Promise<{width:number,height:number,detections:{class:string,score:number,box:number[]}[]}>} */
-  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0, refine, signal } = {}) {
+  detect(blob, { classes, threshold = 0.35, tile = 640, overlap = 128, gsd = 0, refine, model = '', signal } = {}) {
     const fd = new FormData();
     fd.append('image', blob, 'ortho.jpg');
     fd.append('classes', classes.join(','));
@@ -56,6 +56,7 @@ export class AiClient {
     fd.append('overlap', String(overlap));
     if (gsd > 0) fd.append('gsd', String(gsd));
     if (refine === false) fd.append('refine', 'false'); // be tikslaus kontūro – greičiau (transliacijai)
+    if (model) fd.append('model', model); // savas (apmokytas) modelis
     return this._req('detect', { method: 'POST', body: fd, signal });
   }
 
@@ -83,6 +84,41 @@ export class AiClient {
       throw new Error(msg);
     }
     return res.blob();
+  }
+
+  // ---------------------------------------------------------------- savi modeliai
+  models() {
+    return this._req('models');
+  }
+
+  setActiveModel(id) {
+    const fd = new FormData();
+    fd.append('id', id || '');
+    return this._req('models/active', { method: 'POST', body: fd });
+  }
+
+  deleteModel(id) {
+    const fd = new FormData();
+    fd.append('id', id);
+    return this._req('models/delete', { method: 'POST', body: fd });
+  }
+
+  /** Mokymo pradžia: YOLO rinkinys (ZIP) → savas modelis. */
+  train(file, { name, size, epochs }) {
+    const fd = new FormData();
+    fd.append('dataset', file, file.name || 'rinkinys.zip');
+    fd.append('name', name);
+    fd.append('size', size);
+    fd.append('epochs', String(epochs));
+    return this._req('train', { method: 'POST', body: fd });
+  }
+
+  trainStatus() {
+    return this._req('train/status');
+  }
+
+  trainCancel() {
+    return this._req('train/cancel', { method: 'POST' });
   }
 
   /** @returns {Promise<{polygon:number[][], touches_border:boolean, score:number, area_px:number}>} */

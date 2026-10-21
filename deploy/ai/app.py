@@ -12,8 +12,12 @@ kurias programa paverčia LKS-94 / modelio koordinatėmis.
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
+import signal
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -44,6 +48,10 @@ _lock = threading.Lock()
 _det_lock = threading.Lock()  # detektorius – po vieną plytelę (kelios užklausos vienu metu)
 _detector = None
 _sam = None
+CUSTOM_DIR = os.path.join(MODELS_DIR, "custom")  # savi modeliai (Docker tomas – išlieka atnaujinus)
+_custom: dict = {}  # id -> (modelis, meta)
+_train_proc: Optional[subprocess.Popen] = None
+_train_job: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +75,50 @@ def get_detector():
             _detector = model
             print(f"[ai] RF-DETR {DETECTOR_SIZE} įkeltas per {time.time() - t0:.1f} s ({DEVICE})", flush=True)
         return _detector
+
+
+def custom_models() -> list[dict]:
+    out = []
+    if os.path.isdir(CUSTOM_DIR):
+        for d in sorted(os.listdir(CUSTOM_DIR)):
+            meta = os.path.join(CUSTOM_DIR, d, "meta.json")
+            if os.path.isfile(meta) and os.path.isfile(os.path.join(CUSTOM_DIR, d, "model.pth")):
+                with open(meta, encoding="utf-8") as f:
+                    out.append(json.load(f))
+    return out
+
+
+def active_model() -> str:
+    try:
+        with open(os.path.join(CUSTOM_DIR, "active.txt"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def get_custom(model_id: str):
+    """Savas (apmokytas) modelis ir jo aprašas; įkeliamas vieną kartą."""
+    with _lock:
+        if model_id not in _custom:
+            d = os.path.join(CUSTOM_DIR, os.path.basename(model_id))
+            meta_path = os.path.join(d, "meta.json")
+            if not os.path.isfile(meta_path):
+                raise HTTPException(404, f"Modelis {model_id} nerastas")
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+            import rfdetr
+
+            cls = {"nano": "RFDETRNano", "small": "RFDETRSmall", "medium": "RFDETRMedium"}[meta.get("size", "medium")]
+            t0 = time.time()
+            model = getattr(rfdetr, cls)(device=DEVICE, pretrain_weights=os.path.join(d, "model.pth"))
+            try:
+                model.optimize_for_inference()
+            except Exception:  # pragma: no cover
+                pass
+            _custom.clear()  # atmintyje laikome vieną savą modelį
+            _custom[model_id] = (model, meta)
+            print(f"[ai] savas modelis „{meta.get('name')}“ ({meta.get('size')}) įkeltas per {time.time() - t0:.1f} s", flush=True)
+        return _custom[model_id]
 
 
 def get_sam():
@@ -111,6 +163,9 @@ def health():
         "segmenter_loaded": _sam is not None,
         "raster": _has_rasterio(),
         "weights": sorted(os.listdir(MODELS_DIR)) if os.path.isdir(MODELS_DIR) else [],
+        "custom_models": len(custom_models()),
+        "active_model": active_model(),
+        "training": _train_proc is not None and _train_proc.poll() is None,
     }
 
 
@@ -291,6 +346,7 @@ async def detect(
     overlap: int = Form(128),
     gsd: float = Form(0.0),
     refine: bool = Form(True),
+    model: str = Form(""),
 ):
     """Aptinka objektus dideliame vaizde, skaidydamas jį į persidengiančias plyteles.
 
@@ -302,19 +358,32 @@ async def detect(
     (uždaro ryšį), darbas nutraukiamas ties kita plytele ir serveris iškart laisvas kitiems veiksmams.
     """
     try:
-        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine)
+        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model)
     except Cancelled:
         print("[ai] /detect atšaukta", flush=True)
         return {"cancelled": True, "detections": []}
 
 
-async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine):
+async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model_id=""):
     img = read_image(await image.read())
-    want = {c.strip() for c in classes.split(",") if c.strip()} or VEHICLES
-    # Iš viršaus COCO modelis dažnai painioja automobilį, sunkvežimį ir autobusą – ieškome visų,
-    # o galutinę klasę nustatome pagal matmenis.
-    search = want | (VEHICLES - {"motorcycle"} if want & VEHICLES and gsd > 0 else set())
-    model = await run_in_threadpool(get_detector)
+    # Savas modelis: „custom“ – aktyvus, kitaip – nurodytas id; klasės – iš jo aprašo (indeksas = YOLO numeris)
+    if model_id == "custom":
+        model_id = active_model()
+        if not model_id:
+            raise HTTPException(404, "Aktyvus savas modelis nepasirinktas")
+    names = COCO
+    if model_id:
+        model, meta = await run_in_threadpool(get_custom, model_id)
+        names = dict(enumerate(meta["classes"]))
+        want = {c.strip() for c in classes.split(",") if c.strip()} or set(meta["classes"])
+        search = set(want)
+        gsd = 0  # matmenų patikra – tik COCO transportui
+    else:
+        want = {c.strip() for c in classes.split(",") if c.strip()} or VEHICLES
+        # Iš viršaus COCO modelis dažnai painioja automobilį, sunkvežimį ir autobusą – ieškome visų,
+        # o galutinę klasę nustatome pagal matmenis.
+        search = want | (VEHICLES - {"motorcycle"} if want & VEHICLES and gsd > 0 else set())
+        model = await run_in_threadpool(get_detector)
     h, w = img.shape[:2]
     tile = max(256, min(tile, 2048))
     step = max(64, tile - overlap)
@@ -332,7 +401,7 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
             await _check(request)
             det = await run_in_threadpool(_predict, model, crop, threshold)
             for (x1, y1, x2, y2), s, c in zip(det.xyxy, det.confidence, det.class_id):
-                name = COCO.get(int(c))
+                name = names.get(int(c))
                 if name not in search:
                     continue
                 boxes.append([x1 + x0, y1 + y0, x2 + x0, y2 + y0])
@@ -385,6 +454,116 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
         "seconds": round(time.time() - t0, 2),
         "detections": out,
     }
+
+
+# ---------------------------------------------------------------------------
+# Savo modelio mokymas (train.py – atskiras procesas) ir modelių sąrašas
+# ---------------------------------------------------------------------------
+def _job_dir(job: str) -> str:
+    return os.path.join(CUSTOM_DIR, "_jobs", job)
+
+
+@app.post("/train")
+async def train_start(
+    dataset: UploadFile = File(...),
+    name: str = Form("Savas modelis"),
+    size: str = Form("small"),
+    epochs: int = Form(40),
+):
+    """Pradeda mokymą iš YOLO rinkinio (ZIP). Vienu metu – viena užduotis."""
+    global _train_proc, _train_job
+    if _train_proc is not None and _train_proc.poll() is None:
+        raise HTTPException(409, "Jau vyksta kitas mokymas")
+    if size not in ("nano", "small", "medium"):
+        raise HTTPException(400, "Netinkamas modelio dydis")
+    job = time.strftime("%Y%m%d-%H%M%S")
+    work = _job_dir(job)
+    os.makedirs(work, exist_ok=True)
+    zpath = os.path.join(work, "dataset.zip")
+    with open(zpath, "wb") as f:
+        await run_in_threadpool(shutil.copyfileobj, dataset.file, f, 8 << 20)
+    log = open(os.path.join(work, "train.log"), "w", encoding="utf-8")
+    cmd = [sys.executable, os.path.join(os.path.dirname(__file__), "train.py"), zpath, work, "--size", size, "--epochs", str(max(1, min(epochs, 300))), "--name", name[:80], "--id", job]
+    _train_proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=os.path.dirname(__file__), start_new_session=True)
+    _train_job = job
+    with open(os.path.join(CUSTOM_DIR, "_jobs", "last.txt"), "w", encoding="utf-8") as f:
+        f.write(job)
+    print(f"[ai] mokymas {job}: {name}, {size}, {epochs} epochų", flush=True)
+    return {"job": job}
+
+
+def _last_job() -> Optional[str]:
+    if _train_job:
+        return _train_job
+    try:
+        with open(os.path.join(CUSTOM_DIR, "_jobs", "last.txt"), encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+@app.get("/train/status")
+def train_status():
+    job = _last_job()
+    if not job:
+        return {"job": None}
+    work = _job_dir(job)
+    try:
+        with open(os.path.join(work, "status.json"), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {"phase": "preparing"}
+    running = _train_proc is not None and _train_proc.poll() is None and job == _train_job
+    if not running and st.get("phase") in ("preparing", "training"):
+        st["phase"] = "error" if _train_job == job else "stopped"
+        st.setdefault("message", "Mokymas nutrūko (paslauga buvo perkrauta arba pritrūko atminties)")
+    tail = ""
+    try:
+        with open(os.path.join(work, "train.log"), encoding="utf-8", errors="replace") as f:
+            lines = [l.rstrip() for l in f.readlines()[-200:] if "Warning" not in l and "warnings.warn" not in l and l.strip()]
+            tail = "\n".join(lines[-12:])
+    except OSError:
+        pass
+    return {"job": job, "running": running, "log": tail, **st}
+
+
+@app.post("/train/cancel")
+def train_cancel():
+    global _train_proc
+    if _train_proc is None or _train_proc.poll() is not None:
+        return {"ok": True}
+    try:
+        os.killpg(_train_proc.pid, signal.SIGTERM)
+    except Exception:  # pragma: no cover
+        _train_proc.terminate()
+    return {"ok": True}
+
+
+@app.get("/models")
+def models_list():
+    return {"active": active_model(), "models": custom_models(), "standard": f"RF-DETR {DETECTOR_SIZE} (COCO)"}
+
+
+@app.post("/models/active")
+def models_activate(id: str = Form("")):
+    if id and not os.path.isfile(os.path.join(CUSTOM_DIR, os.path.basename(id), "model.pth")):
+        raise HTTPException(404, "Modelis nerastas")
+    os.makedirs(CUSTOM_DIR, exist_ok=True)
+    with open(os.path.join(CUSTOM_DIR, "active.txt"), "w", encoding="utf-8") as f:
+        f.write(os.path.basename(id))
+    return {"active": id}
+
+
+@app.post("/models/delete")
+def models_delete(id: str = Form(...)):
+    d = os.path.join(CUSTOM_DIR, os.path.basename(id))
+    if not os.path.isdir(d) or os.path.basename(id).startswith("_"):
+        raise HTTPException(404, "Modelis nerastas")
+    shutil.rmtree(d, ignore_errors=True)
+    _custom.pop(id, None)
+    if active_model() == id:
+        models_activate("")
+    return {"ok": True}
 
 
 @app.post("/segment")
