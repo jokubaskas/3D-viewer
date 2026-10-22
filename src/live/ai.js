@@ -23,10 +23,10 @@ const PALETTE = ['#ff5fd2', '#3cc443', '#ff8a3d', '#4fc3f7', '#e57cff', '#c9f27b
 /** Klasės spalva (savo modelio klasėms – pagal pavadinimą). */
 /** Dažnos savų modelių klasės (Label Studio pavadinimai) – lietuviški pavadinimai ir aiškios spalvos. */
 const EXTRA = [
-  [/^(no[_ -]?(helmet|hard[_ -]?hat)|be[_ -]?šalmo|be[_ -]?salmo|without[_ -]?helmet)$/i, { lt: 'Be šalmo', color: '#ff3b30' }],
-  [/^(helmet|hard[_ -]?hat|su[_ -]?šalmu|su[_ -]?salmu|with[_ -]?helmet|šalmas|salmas)$/i, { lt: 'Su šalmu', color: '#3cc443' }],
-  [/^(no[_ -]?vest|be[_ -]?liemenės)$/i, { lt: 'Be liemenės', color: '#ff8a3d' }],
-  [/^(vest|liemenė)$/i, { lt: 'Su liemene', color: '#ffd23f' }],
+  [/^(no[_ -]?(helmet|hard[_ -]?hat)|be[_ -]?šalmo|be[_ -]?salmo|without[_ -]?helmet)$/i, { lt: 'Be šalmo', color: '#ff3b30', family: 'helmet' }],
+  [/^(helmet|hard[_ -]?hat|su[_ -]?šalmu|su[_ -]?salmu|with[_ -]?helmet|šalmas|salmas)$/i, { lt: 'Su šalmu', color: '#3cc443', family: 'helmet' }],
+  [/^(no[_ -]?vest|be[_ -]?liemenės)$/i, { lt: 'Be liemenės', color: '#ff8a3d', family: 'vest' }],
+  [/^(vest|liemenė)$/i, { lt: 'Su liemene', color: '#ffd23f', family: 'vest' }],
 ];
 const extra = (name) => EXTRA.find(([re]) => re.test(String(name).trim()))?.[1];
 export function classColor(name) {
@@ -37,6 +37,13 @@ export function classColor(name) {
   return PALETTE[h % PALETTE.length];
 }
 export const classLabel = (name) => (AI_CLASSES[name] ? t(AI_CLASSES[name].lt) : extra(name) ? t(extra(name).lt) : String(name));
+/** Būsenos klasė (šalmas / liemenė) – jos „šeima“, kitaip null. */
+export const stateFamily = (name) => extra(name)?.family || null;
+/** Ar modelio klasėse yra būsenų (šalmų / liemenių) – tada galima stabilizuoti. */
+export const hasStates = (classes) => (classes || []).some((c) => stateFamily(c));
+/** Fiksavimo riba (AI tikrumas). */
+export const LOCK_SCORES = [0.6, 0.7, 0.8, 0.9];
+
 /** Rėmelio užrašas: „#3 Be šalmo 82%“ (numeris – kai objektai sekami). */
 export const detLabel = (d) => `${d.id ? `#${d.id} ` : ''}${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
 /** Sekimo atmintis (kiek laiko prisimenamas dingęs objektas). */
@@ -99,6 +106,7 @@ export class LiveDetector {
     this.listeners = new Set(); // kviečiami po kiekvieno AI rezultato (pvz. įrašui)
     this.tracker = new Tracker();
     this.unique = {}; // grupė → skirtingų objektų skaičius (kai sekama)
+    this._seen = {};
   }
 
   start() {
@@ -107,6 +115,7 @@ export class LiveDetector {
     this.error = '';
     this.tracker.reset();
     this.unique = {};
+    this._seen = {};
     this.loop();
   }
 
@@ -157,14 +166,20 @@ export class LiveDetector {
         const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, model: s.model || '', signal: this.ctl.signal });
         if (!this.on) break;
         if (res.cancelled) continue;
-        const dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
+        let dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
         this.tracking = s.track !== false;
         if (this.tracking) {
           const byClass = {};
           for (const [k, g] of Object.entries(groups)) for (const c of g.classes) byClass[c] = k;
+          // Būsenų stabilizavimas: „Žmogus“, „Su šalmu“ ir „Be šalmo“ sekami kaip vienas žmogus
+          const stab = s.stabilize !== false && hasStates(classes);
+          const helmet = classes.some((c) => stateFamily(c) === 'helmet');
+          const keyOf = (c) => (!byClass[c] ? null : stab && stateFamily(c) ? `~${stateFamily(c)}` : stab && helmet && /^(person|žmogus|zmogus|worker)$/i.test(c) ? '~helmet' : byClass[c]);
           this.tracker.memoryMs = (+s.trackMemory || 15) * 60000;
-          this.tracker.update(dets, (c) => byClass[c] || null, fr.canvas, fr.k, t0);
-          this.unique = { ...this.tracker.unique };
+          dets = this.tracker.update(dets, keyOf, fr.canvas, fr.k, t0, stab ? { lock: +s.lockScore || 0.7, isAttr: (c) => !!stateFamily(c), unknown: classes.find((c) => /^person$/i.test(c)) || 'person' } : null);
+          // Skirtingi objektai kiekvienoje grupėje (pagal rodomą būseną; būsena skaičiuojama tik užfiksuota)
+          for (const d of dets) if (d.id && byClass[d.class] && !(d.locked === false && stateFamily(d.class))) (this._seen[byClass[d.class]] ||= new Set()).add(d.id);
+          this.unique = Object.fromEntries(Object.entries(this._seen).map(([k, v]) => [k, v.size]));
         }
         this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0, frame: fr.canvas }; // frame – būtent analizuotas kadras
         this.error = '';
@@ -196,7 +211,8 @@ export class LiveDetector {
     if (!s.alertPerson || !ak || !this.groups[ak]) return;
     if (this.tracking) {
       // Sekant – įspėjama tik apie naują objektą (grįžęs jau matytas objektas įspėjimo nekelia)
-      const fresh = dets.filter((d) => d.isNew && this.groups[ak].classes.includes(d.class));
+      // Stabilizuojant – įspėjama, kai būsena užfiksuojama (pvz. „Be šalmo“), ne kai pirmą kartą pamatytas „Žmogus“
+      const fresh = dets.filter((d) => d.id && this.groups[ak].classes.includes(d.class) && (d.lockedNow || (d.isNew && d.locked !== false)));
       if (fresh.length) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: fresh.map((d) => `#${d.id}`).join(', ') }));
     } else if (c[ak] > 0 && !(this.prevCounts[ak] > 0)) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: c[ak] }));
   }

@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
-import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, classColor, classLabel } from './ai.js';
+import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -121,6 +121,8 @@ export function createLiveUI(app) {
           <label class="row">Jautrumas <span class="live-ai-th"><input id="live-ai-th" type="range" min="0.2" max="0.8" step="0.05" /><span id="live-ai-th-v" class="small muted"></span></span></label>
           <label class="row check"><input type="checkbox" id="live-ai-track" /> Sekti objektus (#numeriai; grįžęs objektas – ne naujas)</label>
           <label class="row" id="live-ai-mem-row">Prisiminti dingusį objektą <select id="live-ai-mem"></select></label>
+          <label class="row check" id="live-ai-stab-row"><input type="checkbox" id="live-ai-stab" /> Fiksuoti šalmo būseną (kol neaišku – „Žmogus“)</label>
+          <label class="row" id="live-ai-lock-row">Fiksuoti, kai AI tikras ≥ <select id="live-ai-lock"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-alert" /> <span id="live-ai-alert-l">Įspėti, kai aptinkamas žmogus</span></label>
           <label class="row" id="live-ai-alert-row" hidden>Įspėti, kai aptinkama <select id="live-ai-alert-class"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
@@ -654,6 +656,11 @@ export function createLiveUI(app) {
     $('#live-ai-alert').checked = aiSet.alertPerson;
     $('#live-ai-track').checked = aiSet.track !== false;
     $('#live-ai-mem-row').hidden = aiSet.track === false;
+    const states = !!aiSet.model && hasStates(aiSet.customClasses);
+    $('#live-ai-stab-row').hidden = !states || aiSet.track === false;
+    $('#live-ai-lock-row').hidden = $('#live-ai-stab-row').hidden || aiSet.stabilize === false;
+    $('#live-ai-stab').checked = aiSet.stabilize !== false;
+    $('#live-ai-lock').innerHTML = LOCK_SCORES.map((v) => `<option value="${v}" ${(+aiSet.lockScore || 0.7) === v ? 'selected' : ''}>${Math.round(v * 100)} %</option>`).join('');
     $('#live-ai-mem').innerHTML = Object.entries(TRACK_MEMORY)
       .map(([k, l]) => `<option value="${k}" ${String(aiSet.trackMemory || 15) === k ? 'selected' : ''}>${esc(t(l))}</option>`)
       .join('');
@@ -687,8 +694,12 @@ export function createLiveUI(app) {
     else if (e.target.id === 'live-ai-detail') aiSet.detail = e.target.value;
     else if (e.target.id === 'live-ai-track') {
       aiSet.track = e.target.checked;
-      $('#live-ai-mem-row').hidden = !aiSet.track;
+      renderAiSettings();
     } else if (e.target.id === 'live-ai-mem') aiSet.trackMemory = +e.target.value;
+    else if (e.target.id === 'live-ai-stab') {
+      aiSet.stabilize = e.target.checked;
+      renderAiSettings();
+    } else if (e.target.id === 'live-ai-lock') aiSet.lockScore = +e.target.value;
     else if (e.target.id === 'live-ai-alert') {
       aiSet.alertPerson = e.target.checked;
       if (aiSet.alertPerson && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});

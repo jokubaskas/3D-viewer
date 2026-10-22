@@ -2,6 +2,10 @@
 // Trumpam (tarp AI analizių) objektas susiejamas pagal vietą ir judėjimo kryptį, o kai jis dingsta iš kadro ir
 // vėl pasirodo – pagal išvaizdą (spalvų „parašas“ viršutinėje ir apatinėje dalyje), todėl skaičiuojamas ne kaip naujas.
 // Iš judančio drono panašiai apsirengę žmonės (vienodos liemenės) gali būti supainioti – tai apytikslis atpažinimas.
+//
+// Būsenos stabilizavimas (pvz. šalmas): „Su šalmu“, „Be šalmo“ ir „Žmogus“ – tas pats sekamas žmogus. Kol būsena
+// neaiški, rodoma „Žmogus“; užfiksuojama, kai AI kelis kartus užtikrintas; pakeičiama tik kai kita būsena kelis
+// kartus iš eilės matoma užtikrintai (pvz. žmogus nusiėmė šalmą).
 
 const BINS_H = 12, BINS_S = 3, BINS_V = 3;
 const HIST = BINS_H * BINS_S * BINS_V;
@@ -9,6 +13,8 @@ const CONFIRM = 2; // numeris suteikiamas po 2 aptikimų (pavieniai klaidingi ap
 const TENTATIVE_MS = 4000; // nepatvirtintas objektas pamirštamas po 4 s
 const ACTIVE_MS = 4000; // tiek laiko objektas laikomas „matomu“ – susiejamas pagal vietą
 const REID_SIM = 0.78; // išvaizdos panašumas grįžusiam objektui atpažinti
+const LOCK_HITS = 2; // tiek užtikrintų stebėjimų – būsena užfiksuojama (arba 1, kai tikrumas ≥ riba + 15 %)
+const SWITCH_HITS = 3; // tiek kitos būsenos įrodymų (užtikrintas stebėjimas = 1) – užfiksuota būsena pakeičiama
 
 const sample = document.createElement('canvas');
 sample.width = 16;
@@ -46,6 +52,13 @@ function similarity(a, b) {
   return (s1 + s2) / 2;
 }
 
+/** Kiek mažesnis rėmelis yra didesniame (0…1). */
+function overlap(a, b) {
+  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  return (ix * iy) / (Math.min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])) || 1);
+}
+
 function iou(a, b) {
   const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
   const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
@@ -59,24 +72,25 @@ export class Tracker {
     this.memoryMs = o.memoryMs ?? 10 * 60 * 1000;
     this.tracks = [];
     this.nextId = 1;
-    this.unique = {}; // grupė → kiek skirtingų objektų matyta
   }
 
   reset() {
     this.tracks = [];
     this.nextId = 1;
-    this.unique = {};
   }
 
   /**
    * Priskiria aptikimams numerius (d.id, d.isNew – naujas objektas, d.returned – grįžęs po pertraukos).
    * @param {{class:string, score:number, box:number[]}[]} dets – vaizdo koordinatėmis
-   * @param {(cls:string)=>string|null} groupOf – klasė → grupė (sekama atskirai kiekvienai grupei)
+   * @param {(cls:string)=>string|null} groupOf – klasė → sekimo grupė (tos pačios „šeimos“ klasės – viena grupė)
    * @param {HTMLCanvasElement} frame – analizuotas kadras; k – mastelis vaizdo → kadro koordinatės
    * @param {number} t – laikas, ms
+   * @param {{lock:number, isAttr:(cls:string)=>boolean, unknown:string}|null} [stab] – būsenos stabilizavimas; d.class pakeičiamas
+   *   užfiksuota būsena (d.rawClass, d.rawScore – ką AI matė šiame kadre); grąžinami likę aptikimai
    */
-  update(dets, groupOf, frame, k, t) {
+  update(dets, groupOf, frame, k, t, stab = null) {
     this.tracks = this.tracks.filter((tr) => (tr.id ? t - tr.lastT < this.memoryMs : t - tr.lastT < TENTATIVE_MS));
+    if (stab) dets = mergeFamily(dets, groupOf, stab.isAttr);
     const items = dets.map((d) => ({ d, g: groupOf(d.class), hist: frame ? appearance(frame, d.box, k) : null })).filter((x) => x.g);
     // 1. Matomi objektai: vieta (su numatytu poslinkiu) + išvaizda
     const pairs = [];
@@ -126,9 +140,50 @@ export class Tracker {
       this.tracks.push(tr);
       this.assign(it, tr, t);
     });
+    if (stab) for (const it of items) this.stabilize(it.tr, it.d, stab);
+    return dets;
+  }
+
+  /** Būsenos fiksavimas: užtikrinti stebėjimai iš eilės užfiksuoja, kelių užtikrintų priešingų reikia pakeisti. */
+  stabilize(tr, d, { lock, isAttr, unknown }) {
+    d.rawClass = d.class;
+    d.rawScore = d.score;
+    if (isAttr(d.class)) {
+      const c = d.class;
+      tr.best ||= {};
+      const strong = d.score >= lock;
+      if (!tr.locked) {
+        if (strong) {
+          tr.strong = tr.strongCls === c ? tr.strong + 1 : 1;
+          tr.strongCls = c;
+          if (tr.strong >= LOCK_HITS || d.score >= lock + 0.15) {
+            Object.assign(tr, { locked: c, contra: 0 });
+            d.lockedNow = true;
+          }
+        }
+      } else if (c === tr.locked) tr.contra = Math.max(0, tr.contra - (strong ? 1 : 0.3));
+      else {
+        // Priešingos būsenos įrodymai: užtikrintas stebėjimas – 1, silpnas – 0,3; užfiksuotos būsenos stebėjimai juos mažina
+        tr.contra = (tr.contraCls === c ? tr.contra : 0) + (strong ? 1 : 0.3);
+        tr.contraCls = c;
+        if (tr.contra >= SWITCH_HITS) {
+          Object.assign(tr, { locked: c, contra: 0, best: {} });
+          d.lockedNow = true;
+        }
+      }
+      tr.best[c] = Math.max(tr.best[c] || 0, d.score);
+    }
+    // Rodoma būsena: užfiksuota; kol neaišku – neutrali klasė (pvz. „Žmogus“), kad nebūtų klaidingo parodymo
+    const shown = tr.locked || (isAttr(d.class) ? unknown : d.class);
+    if (shown !== d.class) {
+      d.score = tr.locked ? tr.best?.[shown] || d.score : d.score;
+      d.class = shown;
+    } else if (tr.locked) d.score = Math.max(d.score, tr.best[shown] || 0);
+    d.locked = !!tr.locked;
   }
 
   assign(it, tr, t, returned = false) {
+    it.tr = tr;
     const b = it.d.box;
     const dt = t - tr.lastT;
     if (dt > 0 && dt < 3000 && tr.hits) {
@@ -147,10 +202,27 @@ export class Tracker {
     tr.lastT = t;
     if (!tr.id && tr.hits >= CONFIRM) {
       tr.id = this.nextId++;
-      this.unique[tr.g] = (this.unique[tr.g] || 0) + 1;
       it.d.isNew = true;
     }
     it.d.id = tr.id || 0;
     if (returned && tr.id) it.d.returned = true;
   }
+}
+
+/**
+ * Tos pačios „šeimos“ persidengiantys rėmeliai (vienas žmogus – „person“ ir „no_helmet“) sujungiami į vieną:
+ * lieka būsenos (šalmo) rėmelis; du skirtingų būsenų rėmeliai ant to paties žmogaus – lieka užtikrintesnis.
+ */
+function mergeFamily(dets, groupOf, isAttr) {
+  const keep = dets.map(() => true);
+  for (let i = 0; i < dets.length; i++)
+    for (let j = i + 1; j < dets.length; j++) {
+      if (!keep[i] || !keep[j]) continue;
+      const a = dets[i], b = dets[j];
+      if (groupOf(a.class) !== groupOf(b.class) || overlap(a.box, b.box) < 0.7) continue;
+      const aa = isAttr(a.class), ba = isAttr(b.class);
+      const drop = aa !== ba ? (aa ? j : i) : a.score >= b.score ? j : i;
+      keep[drop] = false;
+    }
+  return dets.filter((_, i) => keep[i]);
 }

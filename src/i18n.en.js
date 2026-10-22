@@ -955,6 +955,8 @@ export const EN = {
   "Jautrumas": "Confidence",
   "Įspėti, kai aptinkamas žmogus": "Alert when a person is detected",
   "Sekti objektus (#numeriai; grįžęs objektas – ne naujas)": "Track objects (#numbers; a returning object is not counted as new)",
+  "Fiksuoti šalmo būseną (kol neaišku – „Žmogus“)": "Lock helmet status (shows “Person” until clear)",
+  "Fiksuoti, kai AI tikras ≥": "Lock when AI confidence ≥",
   "Prisiminti dingusį objektą": "Remember a vanished object for",
   "1 min.": "1 min",
   "5 min.": "5 min",

@@ -241,6 +241,11 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
   - kiek laiko prisimenamas dingęs objektas, galima pasirinkti (1 min. – visas įrašas);
   - rodoma, kiek objektų matosi dabar ir kiek skirtingų matyta iš viso; įspėjama tik apie naujus objektus;
   - atpažinimas apytikslis: vienodai apsirengę žmonės (vienodos liemenės ir šalmai) gali būti supainioti.
+- **Šalmo būsenos fiksavimas** (savo modeliui su šalmų klasėmis, kai objektai sekami):
+  - „Žmogus“, „Su šalmu“ ir „Be šalmo“ sekami kaip vienas žmogus, persidengiantys jo rėmeliai sujungiami;
+  - kol neaišku, rodoma „Žmogus“; būsena užfiksuojama, kai AI 2 kartus tikras ≥ pasirinktos ribos (60–90 %) arba 1 kartą ≥ riba + 15 %;
+  - pavieniai „persigalvojimai“ būsenos nekeičia; ji pakeičiama, kai kita būsena kelis kartus matoma užtikrintai (pvz. žmogus nusiėmė šalmą);
+  - įspėjimas ir ataskaita – tik užfiksuotos būsenos.
 - AI veikia CPU, todėl transliacijai greičiausias modelis yra `AI_DETECTOR=nano` faile `.env` (tada perkurkite AI: `start-windows.bat`).
 - **Įrašas su AI ir ataskaita klientui:** jei AI įjungtas, įrašymas (⏺) įrašo vaizdą su rėmeliais, skaičiais, data ir laiku. Sustabdžius atsisiunčiamas ZIP:
   - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (kai sekama – kiek skirtingų objektų, daugiausia vienu metu, vidutiniškai, kiek laiko matėsi); sekant objektus įvykių sąraše – vienas įrašas kiekvienam objektui (#numeris, visi laikotarpiai, kai matėsi, ir geriausias jo kadras), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (AI kortelėje „Į įrašo ataskaitos įvykius“ galima pasirinkti, kurios grupės patenka į įvykius, santrauką ir grafiką – pvz. tik „Be šalmo“; kadruose apvedamos tik jos) (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
