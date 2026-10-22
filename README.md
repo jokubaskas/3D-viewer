@@ -235,9 +235,15 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
   - **Įprastas** – kadras skaidomas į 6 dalis;
   - **Detalus** – pilna raiška plytelėmis, mažiems objektams iš didelio aukščio.
 - Galima įjungti įspėjimą (garsas ir pranešimas), kai aptinkamas žmogus.
+- **Objektų sekimas** („Sekti objektus“, įjungta pagal nutylėjimą):
+  - kiekvienas objektas gauna numerį (#1, #2…);
+  - kai objektas dingsta iš kadro ir vėl pasirodo, jis atpažįstamas pagal išvaizdą (viršutinės ir apatinės dalies spalvas), todėl skaičiuojamas ne kaip naujas;
+  - kiek laiko prisimenamas dingęs objektas, galima pasirinkti (1 min. – visas įrašas);
+  - rodoma, kiek objektų matosi dabar ir kiek skirtingų matyta iš viso; įspėjama tik apie naujus objektus;
+  - atpažinimas apytikslis: vienodai apsirengę žmonės (vienodos liemenės ir šalmai) gali būti supainioti.
 - AI veikia CPU, todėl transliacijai greičiausias modelis yra `AI_DETECTOR=nano` faile `.env` (tada perkurkite AI: `start-windows.bat`).
 - **Įrašas su AI ir ataskaita klientui:** jei AI įjungtas, įrašymas (⏺) įrašo vaizdą su rėmeliais, skaičiais, data ir laiku. Sustabdžius atsisiunčiamas ZIP:
-  - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (daugiausia, vidutiniškai, kiek laiko matėsi), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (AI kortelėje „Į įrašo ataskaitos įvykius“ galima pasirinkti, kurios grupės patenka į įvykius, santrauką ir grafiką – pvz. tik „Be šalmo“; kadruose apvedamos tik jos) (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
+  - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (kai sekama – kiek skirtingų objektų, daugiausia vienu metu, vidutiniškai, kiek laiko matėsi); sekant objektus įvykių sąraše – vienas įrašas kiekvienam objektui (#numeris, visi laikotarpiai, kai matėsi, ir geriausias jo kadras), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (AI kortelėje „Į įrašo ataskaitos įvykius“ galima pasirinkti, kurios grupės patenka į įvykius, santrauką ir grafiką – pvz. tik „Be šalmo“; kadruose apvedamos tik jos) (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
   - `irasas.mp4 / .webm` – vaizdas su žymėjimais;
   - `skaiciai.csv`, `ivykiai.csv` (Excel), `duomenys.json`, `kadrai/`.
   

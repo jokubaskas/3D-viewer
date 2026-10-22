@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
-import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, classColor, classLabel } from './ai.js';
+import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -119,6 +119,8 @@ export function createLiveUI(app) {
             <select id="live-ai-detail"></select>
           </label>
           <label class="row">Jautrumas <span class="live-ai-th"><input id="live-ai-th" type="range" min="0.2" max="0.8" step="0.05" /><span id="live-ai-th-v" class="small muted"></span></span></label>
+          <label class="row check"><input type="checkbox" id="live-ai-track" /> Sekti objektus (#numeriai; grįžęs objektas – ne naujas)</label>
+          <label class="row" id="live-ai-mem-row">Prisiminti dingusį objektą <select id="live-ai-mem"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-alert" /> <span id="live-ai-alert-l">Įspėti, kai aptinkamas žmogus</span></label>
           <label class="row" id="live-ai-alert-row" hidden>Įspėti, kai aptinkama <select id="live-ai-alert-class"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
@@ -650,6 +652,11 @@ export function createLiveUI(app) {
     $('#live-ai-th').value = aiSet.threshold;
     $('#live-ai-th-v').textContent = `${Math.round(aiSet.threshold * 100)} %`;
     $('#live-ai-alert').checked = aiSet.alertPerson;
+    $('#live-ai-track').checked = aiSet.track !== false;
+    $('#live-ai-mem-row').hidden = aiSet.track === false;
+    $('#live-ai-mem').innerHTML = Object.entries(TRACK_MEMORY)
+      .map(([k, l]) => `<option value="${k}" ${String(aiSet.trackMemory || 15) === k ? 'selected' : ''}>${esc(t(l))}</option>`)
+      .join('');
     $('#live-ai-collect').checked = aiSet.collect;
   }
   function renderDataset() {
@@ -678,6 +685,10 @@ export function createLiveUI(app) {
       renderAiSettings();
     } else if (e.target.id === 'live-ai-alert-class') aiSet.alertClass = e.target.value;
     else if (e.target.id === 'live-ai-detail') aiSet.detail = e.target.value;
+    else if (e.target.id === 'live-ai-track') {
+      aiSet.track = e.target.checked;
+      $('#live-ai-mem-row').hidden = !aiSet.track;
+    } else if (e.target.id === 'live-ai-mem') aiSet.trackMemory = +e.target.value;
     else if (e.target.id === 'live-ai-alert') {
       aiSet.alertPerson = e.target.checked;
       if (aiSet.alertPerson && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});

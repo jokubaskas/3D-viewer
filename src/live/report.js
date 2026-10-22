@@ -1,10 +1,11 @@
 // AI įrašas klientui: vaizdas su įrašytais rėmeliais, skaičiais ir laiku + ataskaita (HTML, CSV, JSON, įvykių kadrai).
 // Įrašoma ne pats grotuvas, o drobė, ant kurios kiekvieną kadrą piešiamas vaizdas ir paskutiniai AI rezultatai.
-import { classColor, classLabel } from './ai.js';
+import { classColor, detLabel } from './ai.js';
 import { t, locale } from '../i18n.js';
+import { drawLogo, logoSvg } from '../logo.js';
 
 const FPS = 25;
-const MAX_EVENTS = 80;
+const MAX_EVENTS = 150;
 // Įvykis = objektų grupės „pasirodymas“: prasideda, kai grupė aptinkama bent 2 kartus per GONE_MS
 // (arba 1 kartą, kai AI tikras ≥ SURE), baigiasi, kai jos nematyti GONE_MS – pavieniai praleisti kadrai
 // įvykio nenutraukia ir nesukuria pasikartojančių įrašų.
@@ -49,9 +50,12 @@ export function drawComposite(g, el, last, o) {
       const [x1, y1, x2, y2] = d.box;
       const x = ox2 + x1 * kk, y = oy2 + y1 * kk, w = (x2 - x1) * kk, h = (y2 - y1) * kk;
       const color = classColor(d.class);
+      // o.focus – įvykio objektas (ryškus), kiti – blankesni
+      g.globalAlpha = o.focus && d.id !== o.focus ? 0.45 : 1;
+      g.lineWidth = Math.max(2, (o.focus && d.id === o.focus ? 3.5 : 2.5) * s);
       g.strokeStyle = color;
       g.strokeRect(x, y, w, h);
-      const label = `${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
+      const label = detLabel(d);
       const th = Math.round(17 * s), tw = g.measureText(label).width + 8 * s;
       const ly = y - th < 0 ? y : y - th;
       g.fillStyle = color;
@@ -59,6 +63,7 @@ export function drawComposite(g, el, last, o) {
       g.fillStyle = '#111';
       g.fillText(label, x + 4 * s, ly + th - 4 * s);
     }
+    g.globalAlpha = 1;
   }
   // Informacinė juosta viršuje: laikas, pavadinimas, skaičiai
   const lines = o.lines || [];
@@ -71,10 +76,8 @@ export function drawComposite(g, el, last, o) {
     g.fillStyle = '#fff';
     lines.forEach((l, i) => g.fillText(l, pad * 2, pad + (i + 1) * (fh + 6 * s) - 2 * s));
   }
-  g.font = `600 ${Math.round(11 * s)}px Inter, Segoe UI, sans-serif`;
-  const mark = 'Atea 3D Matuoklis';
-  g.fillStyle = 'rgba(255,255,255,0.6)';
-  g.fillText(mark, W - g.measureText(mark).width - 10 * s, H - 10 * s);
+  const lh = Math.round(14 * s);
+  drawLogo(g, W - lh * 3.9 - 10 * s, H - lh - 10 * s, lh, 'rgba(255,255,255,0.7)');
 }
 
 /** Laikmatis Worker'yje: naršyklė jo nestabdo, kai skirtukas fone (įrašas lieka sklandus). */
@@ -94,10 +97,10 @@ function ticker(ms, fn) {
 const GROUPS = {};
 const remember = (groups) => Object.assign(GROUPS, groups || {});
 const gLabel = (k) => GROUPS[k]?.label || k;
-const countsText = (counts, keep = () => true) =>
+const countsText = (counts, keep = () => true, unique = null) =>
   Object.entries(counts || {})
     .filter(([k]) => keep(k))
-    .map(([k, n]) => `${gLabel(k)}: ${n}`)
+    .map(([k, n]) => `${gLabel(k)}: ${n}${unique?.[k] ? ` (${t('iš viso {n}', { n: unique[k] })})` : ''}`)
     .join('   ');
 
 /** Įrašo drobę su AI žymėjimais ir kaupia rezultatų seką bei įvykius. */
@@ -156,7 +159,7 @@ export class AiComposer {
   hud() {
     const now = new Date();
     remember(this.detector.groups);
-    return [`● REC ${fmtDur(Date.now() - this.started)}   ${fmtClock(now)}`, this.meta.name, countsText(this.detector.counts)].filter(Boolean);
+    return [`● REC ${fmtDur(Date.now() - this.started)}   ${fmtClock(now)}`, this.meta.name, countsText(this.detector.counts, undefined, this.detector.tracking ? this.unique : null)].filter(Boolean);
   }
 
   draw() {
@@ -177,10 +180,22 @@ export class AiComposer {
     this.track.push({
       t: t1,
       counts,
-      dets: L.dets.map((x) => [x.class, +x.score.toFixed(2), ...x.box.map((v, i) => +(v / (i % 2 ? L.h : L.w)).toFixed(4))]),
+      dets: L.dets.map((x) => [x.class, +x.score.toFixed(2), ...x.box.map((v, i) => +(v / (i % 2 ? L.h : L.w)).toFixed(4)), ...(x.id ? [x.id] : [])]),
     });
+    if (d.tracking) {
+      // Skirtingi objektai šiame įraše (numeriai – nuo AI įjungimo, todėl skaičiuojama atskirai)
+      const groups = d.groups || {};
+      this._seen ||= {};
+      for (const x of L.dets) {
+        const k = x.id && Object.keys(groups).find((g) => groups[g].classes.includes(x.class));
+        if (k) (this._seen[k] ||= new Set()).add(x.id);
+      }
+      this.unique = Object.fromEntries(Object.entries(this._seen).map(([k, v]) => [k, v.size]));
+      this.onObjects(L, t1, counts);
+    }
     for (const [k, n] of Object.entries(counts)) {
       if (n > (this.max[k] ?? -1)) this.max[k] = n;
+      if (d.tracking) continue; // sekant – įvykiai pagal objektus (onObjects)
       const g = (this._g[k] ||= { hits: 0, lastT: -Infinity, ep: null });
       if (n > 0 && this.inReport(k)) {
         if (t1 - g.lastT >= GONE_MS) Object.assign(g, { hits: 0, firstT: t1, firstAt: this.started + t1 });
@@ -199,7 +214,42 @@ export class AiComposer {
     }
   }
 
-  /** Kadro kokybė grupei: daugiau objektų, didesnis pasitikėjimas, objektai ne prie krašto (nenukirpti). */
+  /**
+   * Sekant objektus: vienas įvykis kiekvienam objektui (#numeris) – kada matėsi (keli laikotarpiai, jei dingo ir grįžo)
+   * ir geriausias jo kadras.
+   */
+  onObjects(L, t1, counts) {
+    const groups = this.detector.groups || GROUPS;
+    const groupOf = (c) => Object.keys(groups).find((k) => groups[k].classes.includes(c));
+    this._obj ||= {};
+    for (const x of L.dets) {
+      if (!x.id) continue;
+      const k = groupOf(x.class);
+      if (!k || !this.inReport(k)) continue;
+      let o = this._obj[x.id];
+      if (!o) {
+        if (this.events.length >= MAX_EVENTS) continue;
+        o = this._obj[x.id] = { t: t1, at: this.started + t1, kind: 'object', id: x.id, group: k, end: t1, spans: [[t1, t1]], counts: this.reportCounts(counts), q: -1, shotT: -Infinity };
+        this.events.push(o);
+      }
+      const last = o.spans[o.spans.length - 1];
+      if (t1 - last[1] >= GONE_MS) o.spans.push([t1, t1]);
+      else last[1] = t1;
+      o.end = t1;
+      // Geriausias objekto kadras: didesnis, užtikrintesnis, nenukirptas krašte
+      const [x1, y1, x2, y2] = x.box, m = 0.01 * Math.max(L.w, L.h);
+      const edge = x1 < m || y1 < m || x2 > L.w - m || y2 > L.h - m;
+      const q = x.score + Math.min(0.4, Math.sqrt(((x2 - x1) * (y2 - y1)) / (L.w * L.h)) * 2) - (edge ? 0.5 : 0);
+      if (L.frame && q > o.q + 0.03 && (!o.img || t1 - o.shotT >= SHOT_GAP_MS)) {
+        o.q = q;
+        o.shotT = t1;
+        o.counts = this.reportCounts(counts);
+        const token = (o.token = (o.token || 0) + 1);
+        this.frameShot(L, t1, this.started + t1, counts, x.id).then((b) => b && token === o.token && (o.img = b));
+      }
+    }
+  }
+
   /** Ar grupė rodoma ataskaitos įvykiuose (nustatymas „Į ataskaitą“; tikrinama kiekvieną kartą – galima keisti įrašant). */
   inReport(k) {
     const s = this.meta.settings || {};
@@ -221,6 +271,7 @@ export class AiComposer {
     return L.dets.filter((x) => cls.includes(x.class));
   }
 
+  /** Kadro kokybė grupei: daugiau objektų, didesnis pasitikėjimas, objektai ne prie krašto (nenukirpti). */
   quality(L, k) {
     const ds = this.groupDets(L, k);
     if (!ds.length) return -1;
@@ -240,7 +291,7 @@ export class AiComposer {
   }
 
   /** Įvykio kadras: tas pats kadras, kurį analizavo AI, su jo rėmeliais (rėmeliai tiksliai ant objektų). */
-  frameShot(L, t1, at, counts) {
+  frameShot(L, t1, at, counts, focus = 0) {
     const f = L.frame;
     const k = Math.min(1, 960 / Math.max(f.width, f.height));
     const W = Math.round(f.width * k), H = Math.round(f.height * k);
@@ -249,7 +300,7 @@ export class AiComposer {
     c.height = H;
     const keep = this.reportClasses();
     const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, countsText(counts, (k) => this.inReport(k))].filter(Boolean);
-    drawComposite(c.getContext('2d'), f, { ...L, dets: L.dets.filter((d) => keep.has(d.class)) }, { W, H, lines, fresh: true });
+    drawComposite(c.getContext('2d'), f, { ...L, dets: L.dets.filter((d) => keep.has(d.class)) }, { W, H, lines, fresh: true, focus });
     return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
   }
 
@@ -340,10 +391,13 @@ export async function reportZip({ name, video, comp, settings }) {
   }
   const start = new Date(comp.started);
   const dur = (comp.ended || Date.now()) - comp.started;
+  const spanText = (e) => e.spans.map(([a, b]) => `${fmtDur(a)}–${fmtDur(b)}`).join(', ');
   const evText = (e) =>
     e.kind === 'start'
       ? t('Įrašo pradžia')
-      : t('{g}: matėsi {a}–{b} ({d}), daugiausia {n}', { g: gLabel(e.group), a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t), n: e.n });
+      : e.kind === 'object'
+        ? `${gLabel(e.group)} #${e.id}: ${e.spans.length > 1 ? t('matėsi {k} kartus ({s}), iš viso {d}', { k: e.spans.length, s: spanText(e), d: fmtLen(e.spans.reduce((a, [x, y]) => a + (y - x), 0)) }) : t('matėsi {a}–{b} ({d})', { a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t) })}`
+        : t('{g}: matėsi {a}–{b} ({d}), daugiausia {n}', { g: gLabel(e.group), a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t), n: e.n });
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
@@ -352,7 +406,7 @@ export async function reportZip({ name, video, comp, settings }) {
   files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -365,6 +419,7 @@ export async function reportZip({ name, video, comp, settings }) {
   :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
   body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--ink); margin: 0; background: #f4f6f5; }
   header { background: #1f2326; color: #fff; padding: 18px 28px; border-bottom: 4px solid var(--g); }
+  header .logo { height: 22px; width: auto; display: block; margin-bottom: 10px; }
   header h1 { margin: 0 0 4px; font-size: 22px; } header p { margin: 0; color: #c3cac6; font-size: 13px; }
   main { max-width: 1000px; margin: 0 auto; padding: 20px 20px 40px; }
   section { background: #fff; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
@@ -386,12 +441,12 @@ export async function reportZip({ name, video, comp, settings }) {
 </style>
 </head>
 <body>
-<header><h1>${esc(name)}</h1><p>${esc(t('AI stebėjimo ataskaita'))} · ${esc(fmtClock(start))} · ${esc(t('trukmė {d}', { d: fmtDur(dur) }))}</p></header>
+<header>${logoSvg('logo', '#fff')}<h1>${esc(name)}</h1><p>${esc(t('AI stebėjimo ataskaita'))} · ${esc(fmtClock(start))} · ${esc(t('trukmė {d}', { d: fmtDur(dur) }))}</p></header>
 <main>
 <section><h2>${esc(t('Vaizdo įrašas'))}</h2><video id="v" src="${videoName}" controls preload="metadata"></video>
 <p style="color:var(--mut);font-size:12.5px">${esc(t('Rėmeliai, skaičiai ir laikas įrašyti vaizde. Spustelėjus grafiką ar įvykio laiką – peršokama į tą vietą.'))}</p></section>
 <section><h2>${esc(t('Santrauka'))}</h2><div class="cards">
-${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span><b>${esc(t('daugiausia {n}', { n: s.max }))}</b><span>${esc(t('vidutiniškai {a} · matėsi {p} % laiko', { a: nf(s.avg, 1), p: nf(s.presence * 100) }))}</span></div>`).join('\n')}
+${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span>${comp.unique?.[s.key] ? `<b>${esc(t('{n} skirtingų', { n: comp.unique[s.key] }))}</b><span>${esc(t('daugiausia vienu metu {n}', { n: s.max }))} · ` : `<b>${esc(t('daugiausia {n}', { n: s.max }))}</b><span>`}${esc(t('vidutiniškai {a} · matėsi {p} % laiko', { a: nf(s.avg, 1), p: nf(s.presence * 100) }))}</span></div>`).join('\n')}
 <div class="card"><span>${esc(t('Įvykių'))}</span><b>${evRows.length}</b><span>${esc(t('AI analizių: {n}', { n: comp.track.length }))}</span></div>
 </div></section>
 <section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, stR)}</section>

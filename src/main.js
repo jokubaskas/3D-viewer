@@ -5,7 +5,7 @@ import { loadModelFiles } from './loaders.js';
 import { createDemoModel } from './demo.js';
 import { units } from './units.js';
 import { hydrateIcons, icon } from './icons.js';
-import { logoSvg, drawLogo } from './logo.js';
+import { logoSvg, drawLogo, LOGO_VIEWBOX } from './logo.js';
 import { t as tr, getLang, setLang, onLangChange, startI18n, locale } from './i18n.js';
 import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId, checkpointResidual } from './measurements.js';
 import { fitPlaneNormal } from './compute.js';
@@ -1890,7 +1890,7 @@ async function screenshot() {
   const pad = 14 * pr, bh = 40 * pr;
   g.font = `600 ${12 * pr}px Inter, Segoe UI, Arial, sans-serif`;
   const caption = `${modelInfo?.name || ''}  •  ${new Date().toLocaleString(locale())}`;
-  const logoW = (156 / 40) * 16 * pr;
+  const logoW = (LOGO_VIEWBOX[0] / LOGO_VIEWBOX[1]) * 16 * pr;
   const boxW = 14 * pr + logoW + 14 * pr + g.measureText(caption).width + 14 * pr;
   g.fillStyle = 'rgba(31,35,38,0.92)';
   roundRect(g, pad, h - pad - bh, boxW, bh, 4 * pr);
