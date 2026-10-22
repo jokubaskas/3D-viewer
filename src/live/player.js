@@ -100,7 +100,9 @@ export class LivePlayer {
 
   /** Būdų sąrašas pagal nuorodą ir pasirinkimą „tiesiogiai / per serverį“. */
   async plan(signal) {
-    if (this.stream.path) return [['gw-webrtc'], ['gw-hls']]; // jau serveryje (siunčia dronas / kamera)
+    // Jau serveryje (siunčia dronas / kamera arba priskirta klientui). Iš interneto WebRTC vaizdo srautas per
+    // tunelį neina – pirma HLS
+    if (this.stream.path) return this.stream.preferHls ? [['gw-hls'], ['gw-webrtc']] : [['gw-webrtc'], ['gw-hls']];
     const c = classify(this.stream.url);
     const via = this.stream.via || 'auto';
     if (c.kind === 'invalid') throw new Error(t('Netinkama nuoroda'));
@@ -150,6 +152,15 @@ export class LivePlayer {
     if (via === 'server') return server.length ? server : direct;
     if (via === 'direct') return direct;
     return [...direct, ...server];
+  }
+
+  /** Šaltinis serveriui klientų peržiūrai (portalas): kelias serveryje arba MediaMTX šaltinis; null – tinklalapis. */
+  publishSource() {
+    if (this.stream.path) return { path: this.stream.path };
+    if (this.gwSource) return { source: { url: this.gwSource.url, extra: this.gwSource.extra } };
+    const c = classify(this.stream.url);
+    if (!this.srcUrl && (c.kind === 'embed' || this.embedded || c.kind === 'invalid')) return null;
+    return { source: { url: this.srcUrl || this.stream.url } };
   }
 
   // ---------------------------------------------------------------- paleidimas

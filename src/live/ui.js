@@ -6,6 +6,7 @@ import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
+import { api } from '../portal/api.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
 const LS_PUSH = 'atea3d.live.push';
@@ -73,13 +74,14 @@ export function createLiveUI(app) {
     <header class="odm-head">
       <div>
         <h2>Tiesioginė transliacija</h2>
-        <p class="muted small">Įklijuokite transliacijos nuorodą – drono, IP kameros ar svetainės. Galima žiūrėti kelias vienu metu, daryti kadrus ir įrašyti.</p>
+        <p class="muted small admin-only">Įklijuokite transliacijos nuorodą – drono, IP kameros ar svetainės. Galima žiūrėti kelias vienu metu, daryti kadrus ir įrašyti.</p>
+        <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami, daryti kadrus ir įrašyti.</p>
       </div>
       <button class="btn btn-ghost icon-only" data-act="close" title="Uždaryti">${icon('close')}</button>
     </header>
     <div class="odm-body">
       <aside class="odm-side">
-        <section class="card">
+        <section class="card admin-only">
           <h3>Nauja transliacija</h3>
           <form id="live-add" autocomplete="off">
             <input id="live-url" class="live-input" placeholder="rtsp://…, rtmp://…, https://….m3u8, YouTube…" spellcheck="false" />
@@ -106,9 +108,13 @@ export function createLiveUI(app) {
             Slaptažodį galima įrašyti nuorodoje: rtsp://vartotojas:slaptazodis@192.168.1.64:554/…
           </details>
         </section>
-        <section class="card">
+        <section class="card admin-only">
           <h3>Išsaugotos</h3>
           <div id="live-list"></div>
+        </section>
+        <section class="card client-only">
+          <h3>Mano gyvos transliacijos</h3>
+          <div id="live-mine"></div>
         </section>
         <section class="card">
           <h3>AI aptikimas</h3>
@@ -127,17 +133,17 @@ export function createLiveUI(app) {
           <label class="row" id="live-ai-lock-row">Fiksuoti, kai AI tikras ≥ <select id="live-ai-lock"></select></label>
           <label class="row check"><input type="checkbox" id="live-ai-alert" /> <span id="live-ai-alert-l">Įspėti, kai aptinkamas žmogus</span></label>
           <label class="row" id="live-ai-alert-row" hidden>Įspėti, kai aptinkama <select id="live-ai-alert-class"></select></label>
-          <label class="row check"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
-          <div id="live-ai-ds" class="small muted"></div>
+          <label class="row check admin-only"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
+          <div id="live-ai-ds" class="small muted admin-only"></div>
         </section>
-        <section class="card">
+        <section class="card admin-only">
           <h3>Savas AI modelis</h3>
           <p class="small muted">Apmokykite AI atpažinti tai, ko reikia jums (pvz. žmones su šalmais ir be jų) – iš Label Studio / CVAT YOLO eksporto. Mokoma šiame kompiuteryje.</p>
           <div id="live-train"></div>
           <div class="pane-actions"><button class="btn btn-sm btn-outline" data-tr="new">${icon('magic')}Mokyti naują modelį…</button></div>
           <div id="live-models"></div>
         </section>
-        <section class="card">
+        <section class="card admin-only">
           <h3>Drono transliacija į šį kompiuterį</h3>
           <div class="row"><span>Serveris</span><span id="live-gw" class="chip">…</span></div>
           <p class="small muted">Valdymo pulte (pvz. DJI Pilot, Anzu Smart Control) pasirinkite <b>Transliacija → RTMP</b> ir įveskite adresą. Pultas ir šis kompiuteris turi būti tame pačiame tinkle.</p>
@@ -316,6 +322,7 @@ export function createLiveUI(app) {
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
+          <button class="btn btn-ghost btn-sm icon-only admin-only portal-only" data-tact="publish" title="Priskirti klientams">${icon('user')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="reload" title="Prisijungti iš naujo">${icon('refresh')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="full" title="Visas ekranas">${icon('fullscreen')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="close" title="Uždaryti">${icon('close')}</button>
@@ -424,7 +431,12 @@ export function createLiveUI(app) {
     if (!act || !tile) return;
     const { player: p, stream: s, el } = tile;
     if (act === 'close') hide(s.id);
-    else if (act === 'ai') {
+    else if (act === 'publish') {
+      // Admin: transliacija klientams – serveryje lieka šaltinis ir raktai, klientas gauna tik kelią
+      const src = p.publishSource();
+      if (!src) return app.toast(t('Šios transliacijos klientams priskirti negalima: tai įterptas tinklalapis, o ne vaizdo srautas.'), 'error', 7000);
+      portal?.publishStream(s.name, src);
+    } else if (act === 'ai') {
       if (!tile.ai)
         tile.ai = new LiveDetector(p, el.querySelector('.live-view'), {
           getAi: app.getAi,
@@ -922,6 +934,7 @@ export function createLiveUI(app) {
   // ------------------------------------------------------------------ Atidarymas / uždarymas
   function open() {
     page.hidden = false;
+    renderMine();
     renderList();
     renderPushUrls();
     refreshGateway();
@@ -943,7 +956,46 @@ export function createLiveUI(app) {
     if ([...tiles.values()].some((x) => x.player.recorder)) e.preventDefault();
   });
 
+  // ------------------------------------------------------------------ Portalas (admin / klientas)
+  let portal = null;
+  let role = null;
+  let mine = [];
+  /** Kliento priskirtos transliacijos. */
+  async function renderMine() {
+    if (role !== 'client') return;
+    try {
+      mine = await api('items?kind=stream');
+    } catch (e) {
+      $('#live-mine').innerHTML = `<p class="small bad">${esc(e.message)}</p>`;
+      return;
+    }
+    $('#live-mine').innerHTML = mine.length
+      ? mine.map((i) => `<div class="live-item" data-mine="${i.id}"><span class="live-dot ${tiles.get(`item-${i.id}`)?.player.state || ''}"></span><b>${esc(i.title)}</b><button class="btn btn-sm btn-outline" data-mine-act="watch">${icon('play')}${esc(t('Žiūrėti'))}</button></div>`).join('')
+      : `<p class="small muted">${esc(t('Dar nėra priskirtų transliacijų.'))}</p>`;
+  }
+  page.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mine-act]');
+    if (!b) return;
+    const it = mine.find((x) => x.id === +b.closest('[data-mine]').dataset.mine);
+    if (it) openItem(it).catch((ex) => app.toast(ex.message, 'error', 7000));
+  });
+  /** Priskirta transliacija: serveris paruošia šaltinį, rodoma per serverį (iš interneto – HLS, vietoje – WebRTC). */
+  async function openItem(item) {
+    const { path } = await api(`items/${item.id}/play`, { method: 'POST' });
+    const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+    show({ id: `item-${item.id}`, name: item.title, path, preferHls: !local, temp: true, item: item.id });
+    open();
+  }
+
   return {
+    /** @param {{role:'admin'|'client', portal:object|null}} o */
+    setPortal(o) {
+      role = o.role;
+      portal = o.portal;
+      page.classList.toggle('live-client', role === 'client');
+      renderMine();
+    },
+    openItem,
     open,
     close,
     get isOpen() {

@@ -37,7 +37,10 @@ docker compose rm -s -f web >nul 2>nul
 echo.
 echo Paleidziama (pirma karta atsisiuncia ~6 GB: OpenDroneMap + AI modeliai, gali uztrukti 15-30 min.)...
 echo Jei serveris jau veike, jis bus atnaujintas.
-docker compose up -d --build
+rem Prieiga is interneto (Cloudflare Tunnel) - tik jei .env faile nustatytas CF_TUNNEL_TOKEN
+set "PROFILE="
+for /f "tokens=1,* delims==" %%a in ('findstr /b "CF_TUNNEL_TOKEN=" .env 2^>nul') do if not "%%b"=="" set "PROFILE=--profile internet"
+docker compose %PROFILE% up -d --build
 if errorlevel 1 (
   echo [KLAIDA] Nepavyko paleisti. Perziurekite klaidas auksciau.
   pause
@@ -87,6 +90,17 @@ if errorlevel 1 (
 ) else (
   echo AI paslauga veikia.
 )
+
+rem Pirmas paleidimas: dar nera administratoriaus - sukuriamas kvietimas
+powershell -NoProfile -Command "try{$r=Invoke-RestMethod -TimeoutSec 5 'http://localhost:%PORT%/api/health'; if($r.admins -gt 0){exit 0}else{exit 1}}catch{exit 2}"
+if errorlevel 2 (
+  echo [ISPEJIMAS] Portalas ^(paskyros^) neatsako. Perziurekite: docker compose logs --tail 40 portal
+) else if errorlevel 1 (
+  echo.
+  echo Dar nera administratoriaus paskyros - sukurkite ja dabar.
+  call "%~dp0create-admin.bat" nopause
+)
+if defined PROFILE echo Prieiga is interneto ^(Cloudflare Tunnel^) ijungta.
 
 echo.
 echo ============================================================

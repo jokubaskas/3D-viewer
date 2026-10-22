@@ -63,6 +63,33 @@ services:
       - "8189:8189/udp"
       - "8189:8189/tcp"
 
+  # Portalas: paskyros (admin / klientai), prieigos teisės, klientams priskirti duomenys
+  portal:
+    build:
+      context: ./portal
+    restart: unless-stopped
+    environment:
+      # Adresas, kuriuo klientai atidaro programą (kvietimo nuorodoms), pvz. https://3d.jusu-domenas.lt
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
+      - MEDIAMTX_API=http://mediamtx:9997
+    volumes:
+      # Duomenų bazė ir klientų failai (3D modeliai, ataskaitos, įrašai) – išlieka atnaujinus programą
+      - portal-data:/data
+    expose:
+      - "8000"
+
+  # Prieiga iš interneto per Cloudflare Tunnel (be atvirų prievadų maršrutizatoriuje, su HTTPS).
+  # Įjungiama, kai .env faile nustatytas CF_TUNNEL_TOKEN (start-windows.bat paleidžia su --profile internet).
+  cloudflared:
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-2024.12.2}
+    restart: unless-stopped
+    profiles: ["internet"]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+
   web:
     build:
       context: ..
@@ -71,6 +98,7 @@ services:
     depends_on:
       - nodeodm
       - ai
+      - portal
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}
@@ -80,3 +108,4 @@ services:
 volumes:
   nodeodm-data:
   ai-models:
+  portal-data:

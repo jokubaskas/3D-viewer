@@ -16,23 +16,26 @@
         <span class="brand-sep"></span>
         <span class="brand-title">3D Matuoklis</span>
       </div>
-      <div class="topbar-file">
-        <button class="btn btn-primary" id="btn-open" title="Atidaryti modelį (Ctrl+O)">
+ <div class="topbar-file">
+        <button class="btn btn-ghost portal-only" id="btn-portal" title="Mano 3D modeliai, transliacijos, ataskaitos ir įrašai">
+          <span data-icon="user"></span><span>Mano sritis</span>
+        </button>
+        <button class="btn btn-primary admin-only" id="btn-open" title="Atidaryti modelį (Ctrl+O)">
           <span data-icon="open"></span><span>Atidaryti</span>
         </button>
-        <button class="btn btn-ghost" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
+        <button class="btn btn-ghost admin-only" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
           <span data-icon="folder"></span><span class="hide-sm">Aplankas</span>
         </button>
-        <button class="btn btn-ghost" id="btn-odm" title="Sukurti 3D modelį iš drono nuotraukų (OpenDroneMap)">
+        <button class="btn btn-ghost admin-only" id="btn-odm" title="Sukurti 3D modelį iš drono nuotraukų (OpenDroneMap)">
           <span data-icon="camera"></span><span class="hide-sm">Iš nuotraukų</span>
         </button>
-        <button class="btn btn-ghost" id="btn-plan" title="Skrydžio planas: aukštis pagal GSD, maršrutas, nuotraukos, trukmė">
+        <button class="btn btn-ghost admin-only" id="btn-plan" title="Skrydžio planas: aukštis pagal GSD, maršrutas, nuotraukos, trukmė">
           <span data-icon="map"></span><span class="hide-sm">Planas</span>
         </button>
         <button class="btn btn-ghost" id="btn-live" title="Tiesioginė transliacija iš drono ar kameros">
           <span data-icon="live"></span><span class="hide-sm">Transliacija</span>
         </button>
-        <button class="badge" id="odm-badge" hidden></button>
+        <button class="badge admin-only" id="odm-badge" hidden></button>
         <span class="file-name" id="file-name">Modelis neįkeltas</span>
       </div>
       <div class="topbar-right">
@@ -54,6 +57,7 @@
         </label>
         <button class="btn btn-ghost icon-only" id="btn-screenshot" title="Ekrano kopija su matavimais (P)"><span data-icon="camera"></span></button>
         <button class="btn btn-ghost icon-only panel-toggle" id="btn-panel" title="Matavimų skydelis"><span data-icon="table"></span></button>
+ <button class="btn btn-ghost portal-only" id="btn-user" title="Paskyra"><span data-icon="user"></span><span class="hide-sm" id="user-name"></span></button>
         <button class="btn btn-ghost icon-only" id="btn-help" title="Pagalba ir spartieji klavišai (?)"><span data-icon="help"></span></button>
       </div>
       <input type="file" id="file-input" multiple hidden
@@ -74,9 +78,10 @@
             <h1>Matuokite fotogrametrijos modelius</h1>
             <p>Atstumai, aukščiai, plotai, tūriai ir profiliai tiesiai 3D modelyje. Nutempkite failus čia arba pasirinkite juos. Palaikoma: <b>OBJ</b> (+MTL, tekstūros), <b>GLB/GLTF</b>, <b>PLY</b>, <b>LAS/LAZ</b>, <b>STL</b>, <b>FBX</b>, <b>DAE</b>, <b>3MF</b>, <b>PCD</b>, <b>XYZ/PTS</b> taškų debesys ir <b>ZIP</b> archyvai.</p>
             <div class="empty-actions">
-              <button class="btn btn-primary btn-lg" id="btn-open-2"><span data-icon="open"></span>Pasirinkti failus</button>
-              <button class="btn btn-outline btn-lg" id="btn-odm-2"><span data-icon="camera"></span>Kurti iš drono nuotraukų</button>
-              <button class="btn btn-outline btn-lg" id="btn-demo"><span data-icon="mountain"></span>Demonstracinis modelis</button>
+              <button class="btn btn-primary btn-lg admin-only" id="btn-open-2"><span data-icon="open"></span>Pasirinkti failus</button>
+              <button class="btn btn-outline btn-lg admin-only" id="btn-odm-2"><span data-icon="camera"></span>Kurti iš drono nuotraukų</button>
+              <button class="btn btn-primary btn-lg client-only" id="btn-portal-2"><span data-icon="cube"></span>Mano 3D modeliai</button>
+              <button class="btn btn-outline btn-lg admin-only" id="btn-demo"><span data-icon="mountain"></span>Demonstracinis modelis</button>
             </div>
             <p class="muted small">OBJ modeliams pažymėkite kartu ir .mtl bei tekstūrų failus, arba atidarykite visą aplanką / ZIP.</p>
           </div>
