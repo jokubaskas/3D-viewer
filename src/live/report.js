@@ -1,6 +1,6 @@
 // AI įrašas klientui: vaizdas su įrašytais rėmeliais, skaičiais ir laiku + ataskaita (HTML, CSV, JSON, įvykių kadrai).
 // Įrašoma ne pats grotuvas, o drobė, ant kurios kiekvieną kadrą piešiamas vaizdas ir paskutiniai AI rezultatai.
-import { classColor, detLabel } from './ai.js';
+import { classColor, detLabel, stateFamily } from './ai.js';
 import { t, locale } from '../i18n.js';
 import { drawLogo, logoSvg } from '../logo.js';
 
@@ -92,6 +92,9 @@ function ticker(ms, fn) {
     URL.revokeObjectURL(url);
   };
 }
+
+/** Stabilizuojant – dar neužfiksuota būsena (šalmas) į skaičius ir įvykius nepatenka. */
+const unsure = (x) => x.locked === false && !!stateFamily(x.class);
 
 /** Grupių pavadinimai ir spalvos (iš detektoriaus; įraše – sukaupti visi pasitaikę). */
 const GROUPS = {};
@@ -187,7 +190,7 @@ export class AiComposer {
       const groups = d.groups || {};
       this._seen ||= {};
       for (const x of L.dets) {
-        const k = x.id && Object.keys(groups).find((g) => groups[g].classes.includes(x.class));
+        const k = x.id && !unsure(x) && Object.keys(groups).find((g) => groups[g].classes.includes(x.class));
         if (k) (this._seen[k] ||= new Set()).add(x.id);
       }
       this.unique = Object.fromEntries(Object.entries(this._seen).map(([k, v]) => [k, v.size]));
@@ -223,10 +226,11 @@ export class AiComposer {
     const groupOf = (c) => Object.keys(groups).find((k) => groups[k].classes.includes(c));
     this._obj ||= {};
     for (const x of L.dets) {
-      if (!x.id) continue;
+      if (!x.id || unsure(x)) continue;
       const k = groupOf(x.class);
       if (!k || !this.inReport(k)) continue;
       let o = this._obj[x.id];
+      if (o && o.group !== k) Object.assign(o, { group: k, q: -1 }); // būsena pasikeitė (pvz. nusiėmė šalmą) – naujas kadras
       if (!o) {
         if (this.events.length >= MAX_EVENTS) continue;
         o = this._obj[x.id] = { t: t1, at: this.started + t1, kind: 'object', id: x.id, group: k, end: t1, spans: [[t1, t1]], counts: this.reportCounts(counts), q: -1, shotT: -Infinity };
