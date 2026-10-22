@@ -2,6 +2,7 @@
 // rėmeliai ant vaizdo, skaičiai, įspėjimai ir (pasirinktinai) kadrų kaupimas būsimam modelio mokymui.
 import { AI_CLASSES } from '../ai/client.js';
 import { t, locale } from '../i18n.js';
+import { Tracker } from './tracker.js';
 
 /** Detalumas: kadro dydis siunčiant ir plytelės (maži objektai iš aukštai matomi tik skaidant kadrą). */
 export const AI_DETAIL = {
@@ -36,6 +37,11 @@ export function classColor(name) {
   return PALETTE[h % PALETTE.length];
 }
 export const classLabel = (name) => (AI_CLASSES[name] ? t(AI_CLASSES[name].lt) : extra(name) ? t(extra(name).lt) : String(name));
+/** Rėmelio užrašas: „#3 Be šalmo 82%“ (numeris – kai objektai sekami). */
+export const detLabel = (d) => `${d.id ? `#${d.id} ` : ''}${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
+/** Sekimo atmintis (kiek laiko prisimenamas dingęs objektas). */
+export const TRACK_MEMORY = { 1: '1 min.', 5: '5 min.', 15: '15 min.', 60: '1 val.', 480: 'visą įrašą' };
+
 /** Grupės pagal nustatymus: standartinis modelis – AI_GROUPS, savas – kiekviena jo klasė atskirai. */
 export function activeGroups(s) {
   if (s.model) return Object.fromEntries((s.customClasses || []).filter((c) => s.customOn?.[c] !== false).map((c) => [c, { label: classLabel(c), classes: [c], color: classColor(c) }]));
@@ -91,12 +97,16 @@ export class LiveDetector {
     this._ro.observe(view);
     this._lastSample = 0;
     this.listeners = new Set(); // kviečiami po kiekvieno AI rezultato (pvz. įrašui)
+    this.tracker = new Tracker();
+    this.unique = {}; // grupė → skirtingų objektų skaičius (kai sekama)
   }
 
   start() {
     if (this.on) return;
     this.on = true;
     this.error = '';
+    this.tracker.reset();
+    this.unique = {};
     this.loop();
   }
 
@@ -148,6 +158,14 @@ export class LiveDetector {
         if (!this.on) break;
         if (res.cancelled) continue;
         const dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
+        this.tracking = s.track !== false;
+        if (this.tracking) {
+          const byClass = {};
+          for (const [k, g] of Object.entries(groups)) for (const c of g.classes) byClass[c] = k;
+          this.tracker.memoryMs = (+s.trackMemory || 15) * 60000;
+          this.tracker.update(dets, (c) => byClass[c] || null, fr.canvas, fr.k, t0);
+          this.unique = { ...this.tracker.unique };
+        }
         this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0, frame: fr.canvas }; // frame – būtent analizuotas kadras
         this.error = '';
         this.groups = groups;
@@ -175,7 +193,12 @@ export class LiveDetector {
     this.counts = c;
     // Įspėjimas: atsirado pasirinktos klasės objektų (anksčiau nebuvo); standartiniam modeliui – žmonės
     const ak = s.model ? s.alertClass : 'person';
-    if (s.alertPerson && ak && c[ak] > 0 && !(this.prevCounts[ak] > 0)) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: c[ak] }));
+    if (!s.alertPerson || !ak || !this.groups[ak]) return;
+    if (this.tracking) {
+      // Sekant – įspėjama tik apie naują objektą (grįžęs jau matytas objektas įspėjimo nekelia)
+      const fresh = dets.filter((d) => d.isNew && this.groups[ak].classes.includes(d.class));
+      if (fresh.length) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: fresh.map((d) => `#${d.id}`).join(', ') }));
+    } else if (c[ak] > 0 && !(this.prevCounts[ak] > 0)) this.opts.onAlert(t('Aptikta: {g} – {n}', { g: this.groups[ak].label, n: c[ak] }));
   }
 
   /** Kadrų kaupimas mokymui: kas ~3 s, kai yra aptikimų (arba kas 15 s – ir „tušti“ kadrai reikalingi). */
@@ -216,7 +239,7 @@ export class LiveDetector {
       g.strokeStyle = color;
       g.strokeRect(x, y, w, h);
       if (w > 14 || L.dets.length < 40) {
-        const label = `${classLabel(d.class)} ${Math.round(d.score * 100)}%`;
+        const label = detLabel(d);
         const tw = g.measureText(label).width + 6;
         g.fillStyle = color;
         g.fillRect(x, y - 15 < 0 ? y : y - 15, tw, 15);
@@ -231,7 +254,7 @@ export class LiveDetector {
   summary() {
     if (this.error) return this.error;
     if (!this.last) return t('AI: laukiama pirmo rezultato…');
-    const parts = Object.entries(this.counts).map(([k, n]) => `${this.groups?.[k]?.label || k} ${n}`);
+    const parts = Object.entries(this.counts).map(([k, n]) => `${this.groups?.[k]?.label || k} ${n}${this.tracking && this.unique[k] ? ` (${t('iš viso {n}', { n: this.unique[k] })})` : ''}`);
     parts.push(t('AI kas {s} s', { s: new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 }).format(Math.max(this.last.ms, 330) / 1000) }));
     return parts.join(' · ');
   }

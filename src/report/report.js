@@ -1,7 +1,7 @@
 // PDF ataskaita: modelio informacija, vaizdai, matavimai, pokyčiai, kontroliniai taškai, AI objektai.
 // jsPDF ir šriftas įkeliami tik kuriant ataskaitą (atskira programos dalis).
 import * as THREE from 'three';
-import { drawLogo } from '../logo.js';
+import { drawLogo, LOGO_COLOR, LOGO_VIEWBOX } from '../logo.js';
 
 const A4 = { w: 210, h: 297 };
 const M = 14; // paraštės, mm
@@ -186,10 +186,10 @@ function drawNorth(g, W, s) {
   g.textAlign = 'start';
 }
 
-function logoPng(color = '#1f2326') {
+function logoPng(color = LOGO_COLOR) {
   const h = 80;
   const cv = document.createElement('canvas');
-  cv.width = Math.ceil((156 / 40) * h) + 8;
+  cv.width = Math.ceil((LOGO_VIEWBOX[0] / LOGO_VIEWBOX[1]) * h) + 8;
   cv.height = h + 8;
   drawLogo(cv.getContext('2d'), 4, 4, h, color);
   return { url: cv.toDataURL('image/png'), ratio: cv.width / cv.height };
