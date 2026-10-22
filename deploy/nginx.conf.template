@@ -80,6 +80,21 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   }
+  # Dronų telemetrija (diab) per serverį: /ext/diab/<kas>.diab.app/<kelias> → wss://<kas>.diab.app/<kelias>.
+  # Naršyklė jungiasi prie mūsų serverio, o šis – prie diab su diab „Origin“ (jei diab neleidžia kitų svetainių).
+  # Leidžiami tik *.diab.app adresai – tai ne atviras tarpininkas.
+  location ~ ^/ext/diab/(?<diab_host>[a-z0-9-]+\.diab\.app)/(?<diab_path>.*)$ {
+    proxy_pass https://$diab_host/$diab_path$is_args$args;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $diab_host;
+    proxy_set_header Origin https://$diab_host;
+    proxy_ssl_server_name on;
+    proxy_ssl_name $diab_host;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+  }
   # HLS: /live/hls/<kelias>/index.m3u8
   location /live/hls/ {
     proxy_hide_header Access-Control-Allow-Origin;

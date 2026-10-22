@@ -5,6 +5,7 @@ import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
+import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
 const LS_PUSH = 'atea3d.live.push';
@@ -63,6 +64,7 @@ export function createLiveUI(app) {
   let pushed = []; // serveryje gaunamos transliacijos
   let gwTimer = null;
   let recTimer = null;
+  let tm = null; // dronų telemetrija (diab)
 
   const page = document.createElement('section');
   page.className = 'odm-page live-page';
@@ -155,6 +157,15 @@ export function createLiveUI(app) {
     </div>`;
   document.getElementById('app').append(page);
   const $ = (s) => page.querySelector(s);
+  tm = createTelemetryUI({
+    after: page.querySelector('#live-list').closest('section'),
+    grid: $('#live-grid'),
+    gateway,
+    onLayout: () => layout(),
+    onChange: () => tiles.forEach((_, k) => renderTm(k)),
+    toast: app.toast,
+    download,
+  });
   const dlgTrain = document.createElement('dialog');
   dlgTrain.className = 'dialog';
   dlgTrain.innerHTML = `<form method="dialog">
@@ -294,7 +305,7 @@ export function createLiveUI(app) {
     el.dataset.id = stream.id;
     el.innerHTML = `
       <div class="live-view"><div class="live-host"></div>
-        <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span><span class="live-ai-sum" hidden></span></div>
+        <div class="live-overlay"><span class="live-badge"></span><span class="live-stat"></span><span class="live-ai-sum" hidden></span><span class="live-tm" hidden></span></div>
         <div class="live-msg" hidden></div>
       </div>
       <div class="live-bar">
@@ -318,6 +329,7 @@ export function createLiveUI(app) {
     player.start();
     renderList();
     renderPushed();
+    renderTm(stream.id);
     app.onActive?.(tiles.size);
   }
 
@@ -336,8 +348,18 @@ export function createLiveUI(app) {
     app.onActive?.(tiles.size);
   }
 
+  /** Susieto drono (diab doko) duomenys transliacijos langelyje. */
+  function renderTm(sid) {
+    const tile = tiles.get(sid);
+    const el = tile?.el.querySelector('.live-tm');
+    if (!el) return;
+    const line = telemetryLine(tm?.boxFor(tile.stream.name));
+    el.hidden = !line;
+    el.textContent = line;
+  }
+
   function layout() {
-    const n = tiles.size;
+    const n = tiles.size + (tm?.mapShown ? 1 : 0);
     $('#live-grid').dataset.n = String(Math.min(n, 9));
     $('#live-empty').hidden = n > 0;
   }
@@ -443,7 +465,7 @@ export function createLiveUI(app) {
           if (p.embedded) el.classList.add('capturing');
           if (tile.ai?.on && !p.embedded) {
             // Įrašas su AI žymėjimais: vaizdas + rėmeliai + skaičiai + laikas, po to – ataskaita klientui
-            const comp = new AiComposer(p, tile.ai, { name: s.name, settings: aiSet });
+            const comp = new AiComposer(p, tile.ai, { name: s.name, settings: aiSet, telemetry: () => tm?.boxFor(s.name) });
             try {
               await p.startRecording({ stream: comp.stream, extra: { comp } });
             } catch (err) {

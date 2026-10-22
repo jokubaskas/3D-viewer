@@ -228,6 +228,18 @@ RTMP ir RTSP prievadus galima pakeisti `.env` faile (`LIVE_RTMP_PORT`, `LIVE_RTS
 
 Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari. H.265 (HEVC) rodomas tik naršyklėse, kurios jį palaiko (Chrome / Edge su aparatiniu dekodavimu, Safari).
 
+**Dronai (diab): būsena ir žemėlapis.** Kortelė „Dronai (diab)“ transliacijos puslapyje jungiasi prie diab (`wss://atea.diab.app/api/ws/v2/dashboard`) taip pat, kaip diab tinklalapis.
+- **Raktas:** diab tinklalapyje F12 → Network → WS → `dashboard` → Headers → `Sec-WebSocket-Protocol` (visa reikšmė). Saugomas tik naršyklėje; jei tai JWT, rodoma, iki kada galioja.
+- **Ryšys:** „Automatiškai“ – pirma tiesiogiai, nepavykus – per mūsų serverį (`/ext/diab/…`, nginx; leidžiami tik `*.diab.app` adresai).
+- **Rodoma:** visi dokai ir dronai – būsena, baterija, RC, vėjas, lietus, temperatūra; įspėjimai (stiprus vėjas ≥ 10 m/s, lietus, baterija < 25 %).
+- **Žemėlapis:** dokai, skrendantis dronas (kryptis, aukštis, baterija), nuskristas maršrutas, drono sekimas; maršrutas atsisiunčiamas GPX.
+- **Susiejimas su transliacija:** jei transliacijos pavadinime yra doko kodas ar pavadinimas (pvz. „ATEA1“), langelyje rodomi to drono duomenys. AI įraše:
+  - drono vieta rodoma vaizde ir įvykių kadruose;
+  - `skaiciai.csv` ir `ivykiai.csv` papildomi koordinatėmis;
+  - ataskaitoje – nuoroda į vietą žemėlapyje;
+  - ZIP'e – `marsrutas.gpx`.
+- **Gauti duomenys:** skiltis rodo paskutinį diab pranešimą (be piloto duomenų) – skrydžio metu galima pamatyti visus laukus. Aukštis, kryptis ir greitis rodomi, jei diab juos siunčia.
+
 **AI aptikimas transliacijoje.** Mygtukas ✨ prie transliacijos įjungia žmonių ir transporto aptikimą.
 - Kadrai siunčiami į vietinę AI paslaugą (RF-DETR, be interneto); ant vaizdo piešiami rėmeliai, rodomi skaičiai.
 - Detalumas:

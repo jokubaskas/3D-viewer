@@ -585,3 +585,13 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .live-model { border-top: 1px solid var(--line-2); padding: 8px 0 0; margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .live-model .pane-actions { margin: 4px 0 0; }
 .live-ai-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: 0; }
+
+/* Dronų telemetrija (diab) */
+.tm-box { border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 10px; margin-top: 8px; display: flex; flex-direction: column; gap: 2px; }
+.tm-box .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tm-box .pane-actions { margin-top: 4px; }
+.tm-raw { max-height: 260px; overflow: auto; font-size: 11px; background: var(--surface-2); padding: 8px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.live-tm { font-size: 11px; color: #ffcf6e; background: rgba(20,23,25,.7); padding: 3px 7px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.live-map-tile .live-view { background: #1a1e21; }
+.live-map-tile canvas { position: absolute; inset: 0; touch-action: none; }
+.live-tools .on { color: var(--atea-green-text); }
