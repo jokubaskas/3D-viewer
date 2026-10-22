@@ -3,6 +3,8 @@
 import { classColor, detLabel, stateFamily } from './ai.js';
 import { t, locale } from '../i18n.js';
 import { drawLogo, logoSvg } from '../logo.js';
+import { telemetryLine } from './telemetry-ui.js';
+import { distM, trackGpx } from './telemetry.js';
 
 const FPS = 25;
 const MAX_EVENTS = 150;
@@ -120,7 +122,8 @@ export class AiComposer {
     for (const k of Object.keys(GROUPS)) delete GROUPS[k]; // naujas įrašas – iš naujo
     this.started = Date.now();
     this.t0 = performance.now();
-    this.track = []; // {t, counts, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
+    this.route = []; // drono maršrutas įrašo metu (diab)
+    this.track = []; // {t, counts, pos?, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
     this.events = []; // {t, at, kind:'start'|'episode', group, n (daugiausia), end?, counts, img?:Blob}
     this._g = {}; // grupės būsena: {hits, firstT, firstAt, lastT, ep}
     this.max = {};
@@ -162,7 +165,19 @@ export class AiComposer {
   hud() {
     const now = new Date();
     remember(this.detector.groups);
-    return [`● REC ${fmtDur(Date.now() - this.started)}   ${fmtClock(now)}`, this.meta.name, countsText(this.detector.counts, undefined, this.detector.tracking ? this.unique : null)].filter(Boolean);
+    return [`● REC ${fmtDur(Date.now() - this.started)}   ${fmtClock(now)}`, this.meta.name, telemetryLine(this.meta.telemetry?.()), countsText(this.detector.counts, undefined, this.detector.tracking ? this.unique : null)].filter(Boolean);
+  }
+
+  /** Drono padėtis dabar (diab): [platuma, ilguma, aukštis|null]; kaupiamas įrašo maršrutas. */
+  dronePos(t1) {
+    const b = this.meta.telemetry?.();
+    const p = b?.drone?.pos;
+    if (!p) return null;
+    const pos = [+p[0].toFixed(7), +p[1].toFixed(7), b.drone.alt ?? null];
+    this.drone = b.name;
+    const last = this.route[this.route.length - 1];
+    if (!last || distM([last.lat, last.lon], p) >= 0.5) this.route.push({ t: this.started + t1, lat: pos[0], lon: pos[1], alt: pos[2] });
+    return pos;
   }
 
   draw() {
@@ -180,9 +195,11 @@ export class AiComposer {
     // Laikas – kada kadras paimtas analizei (ne kada atėjo atsakymas), kad sutaptų su vaizdu įraše
     const t1 = Math.max(0, Math.round(L.at - (L.ms || 0) - this.t0));
     const counts = { ...d.counts };
+    const pos = this.dronePos(t1);
     this.track.push({
       t: t1,
       counts,
+      ...(pos ? { pos } : {}),
       dets: L.dets.map((x) => [x.class, +x.score.toFixed(2), ...x.box.map((v, i) => +(v / (i % 2 ? L.h : L.w)).toFixed(4)), ...(x.id ? [x.id] : [])]),
     });
     if (d.tracking) {
@@ -205,7 +222,7 @@ export class AiComposer {
         g.hits++;
         g.lastT = t1;
         if (!g.ep && (g.hits >= 2 || this.groupDets(L, k).some((x) => x.score >= SURE)) && this.events.length < MAX_EVENTS) {
-          g.ep = { t: g.firstT, at: g.firstAt, kind: 'episode', group: k, n, end: t1, counts: this.reportCounts(counts), q: -1, shotT: -Infinity };
+          g.ep = { t: g.firstT, at: g.firstAt, kind: 'episode', group: k, n, end: t1, counts: this.reportCounts(counts), q: -1, shotT: -Infinity, pos };
           this.events.push(g.ep);
         }
         if (g.ep) {
@@ -233,7 +250,7 @@ export class AiComposer {
       if (o && o.group !== k) Object.assign(o, { group: k, q: -1 }); // būsena pasikeitė (pvz. nusiėmė šalmą) – naujas kadras
       if (!o) {
         if (this.events.length >= MAX_EVENTS) continue;
-        o = this._obj[x.id] = { t: t1, at: this.started + t1, kind: 'object', id: x.id, group: k, end: t1, spans: [[t1, t1]], counts: this.reportCounts(counts), q: -1, shotT: -Infinity };
+        o = this._obj[x.id] = { t: t1, at: this.started + t1, kind: 'object', id: x.id, group: k, end: t1, spans: [[t1, t1]], counts: this.reportCounts(counts), q: -1, shotT: -Infinity, pos: this.track[this.track.length - 1]?.pos };
         this.events.push(o);
       }
       const last = o.spans[o.spans.length - 1];
@@ -248,6 +265,7 @@ export class AiComposer {
         o.q = q;
         o.shotT = t1;
         o.counts = this.reportCounts(counts);
+        o.pos = this.track[this.track.length - 1]?.pos || o.pos; // drono vieta geriausio kadro metu
         const token = (o.token = (o.token || 0) + 1);
         this.frameShot(L, t1, this.started + t1, counts, x.id).then((b) => b && token === o.token && (o.img = b));
       }
@@ -303,7 +321,9 @@ export class AiComposer {
     c.width = W;
     c.height = H;
     const keep = this.reportClasses();
-    const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, countsText(counts, (k) => this.inReport(k))].filter(Boolean);
+    const pos = this.track[this.track.length - 1]?.pos;
+    const where = pos ? `${this.drone || ''} ${pos[0].toFixed(6)}, ${pos[1].toFixed(6)}${pos[2] != null ? ` · ${Math.round(pos[2])} m` : ''}`.trim() : '';
+    const lines = [`${fmtDur(t1)}   ${fmtClock(new Date(at))}`, this.meta.name, where, countsText(counts, (k) => this.inReport(k))].filter(Boolean);
     drawComposite(c.getContext('2d'), f, { ...L, dets: L.dets.filter((d) => keep.has(d.class)) }, { W, H, lines, fresh: true, focus });
     return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
   }
@@ -405,9 +425,11 @@ export async function reportZip({ name, video, comp, settings }) {
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
-  const csv = [[t('laikas_s'), t('data_laikas'), ...st.map((s) => s.label)].join(';')];
-  for (const r of comp.track) csv.push([(r.t / 1000).toFixed(1), fmtClock(new Date(comp.started + r.t)), ...groups.map((g) => r.counts[g] ?? 0)].join(';'));
-  files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img].join(';')).join('\n') + '\n');
+  const hasPos = comp.track.some((r) => r.pos);
+  const csv = [[t('laikas_s'), t('data_laikas'), ...st.map((s) => s.label), ...(hasPos ? [t('platuma'), t('ilguma'), t('aukstis_m')] : [])].join(';')];
+  for (const r of comp.track) csv.push([(r.t / 1000).toFixed(1), fmtClock(new Date(comp.started + r.t)), ...groups.map((g) => r.counts[g] ?? 0), ...(hasPos ? [r.pos?.[0] ?? '', r.pos?.[1] ?? '', r.pos?.[2] ?? ''] : [])].join(';'));
+  if (comp.route.length > 1) files['marsrutas.gpx'] = strToU8(trackGpx(`${name} – ${comp.drone || ''}`, comp.route));
+  files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras'), t('platuma'), t('ilguma')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img, e.pos?.[0] ?? '', e.pos?.[1] ?? ''].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
     JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
@@ -438,6 +460,7 @@ export async function reportZip({ name, video, comp, settings }) {
   th { color: var(--mut); font-weight: 600; font-size: 12px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   td img { width: 220px; border-radius: 6px; display: block; }
+  a.geo { color: var(--mut); font-size: 12px; }
   a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
   .meta td:first-child { color: var(--mut); width: 220px; }
   footer { text-align: center; color: var(--mut); font-size: 12px; }
@@ -456,7 +479,7 @@ ${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span>${comp.unique?.[
 <section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, stR)}</section>
 <section><h2>${esc(t('Įvykiai'))}</h2>
 ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('Data ir laikas'))}</th><th>${esc(t('Įvykis'))}</th><th>${esc(t('Kadras'))}</th></tr>
-${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span></td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
+${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span>${e.pos ? `<br><a class="geo" href="https://maps.google.com/?q=${e.pos[0]},${e.pos[1]}" target="_blank">${esc(t('Drono vieta'))}: ${e.pos[0].toFixed(6)}, ${e.pos[1].toFixed(6)}${e.pos[2] != null ? ` · ${Math.round(e.pos[2])} m` : ''}</a>` : ''}</td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">
@@ -465,6 +488,7 @@ ${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 10
 <tr><td>${esc(t('Trukmė'))}</td><td>${esc(fmtDur(dur))}</td></tr>
 <tr><td>${esc(t('Ieškota'))}</td><td>${esc(Object.values(GROUPS).map((g) => g.label).join(', '))}</td></tr>
 <tr><td>${esc(t('Ataskaitoje'))}</td><td>${esc(stR.map((x) => x.label).join(', ') || '–')}</td></tr>
+${comp.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(comp.drone)}${comp.route.length > 1 ? ` · ${esc(t('maršrutas: marsrutas.gpx'))}` : ''}</td></tr>` : ''}
 <tr><td>${esc(t('AI modelis'))}</td><td>${esc(settings.modelName || t('Standartinis (COCO)'))}</td></tr>
 <tr><td>${esc(t('Jautrumas'))}</td><td>${Math.round((settings.threshold || 0) * 100)} %</td></tr>
 <tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/</td></tr>
