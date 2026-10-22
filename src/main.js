@@ -21,6 +21,9 @@ import { renderTopDown } from './ai/ortho.js';
 import { Basemap, BASEMAPS } from './geo/basemap.js';
 import { CompareModel, analyzeChange, buildChangeMesh } from './compare.js';
 import { exportObjZip, exportGlb, exportLas } from './export.js';
+import { whoAmI } from './portal/api.js';
+import { showLogin, showInvite, changePasswordDialog, logout } from './portal/auth.js';
+import { createPortalUI } from './portal/ui.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -876,6 +879,7 @@ function guessUp(object, suggested) {
   return s.z <= s.y ? 'z' : 'y';
 }
 
+let lastOpenedFiles = null; // portalui: „Įkelti dabar atidarytą modelį“
 async function openFiles(files, opts = {}) {
   if (!files || !files.length) return;
   tools.deactivate();
@@ -891,6 +895,7 @@ async function openFiles(files, opts = {}) {
       heightSystem: opts.heightSystem ?? null,
     });
     res.warnings.forEach((w) => toast(w, /perskaičiuot/.test(w) ? 'info' : 'error', 7000));
+    lastOpenedFiles = opts.remote ? null : Array.from(files);
   } catch (err) {
     console.error(err);
     toast(tr('Nepavyko atidaryti: {e}', { e: err.message || err }), 'error', 7000);
@@ -1964,7 +1969,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), planUI.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -1981,6 +1986,7 @@ $('#btn-live').addEventListener('click', () => {
   if (liveUI.isOpen) return liveUI.close();
   if (odmUI.isOpen) odmUI.close();
   planUI.close();
+  portalUI?.close();
   liveUI.open();
 });
 
@@ -1992,8 +1998,64 @@ $('#btn-plan').addEventListener('click', () => {
   if (planUI.isOpen) return planUI.close();
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
+  portalUI?.close();
   planUI.open();
 });
+
+// ---------------------------------------------------------------------------
+// Portalas: paskyros (admin / klientas) ir „Mano sritis“. Teises tikrina serveris – čia tik sąsaja.
+// ---------------------------------------------------------------------------
+let portalUI = null;
+(async () => {
+  const invite = /#invite=([\w-]+)/.exec(location.hash)?.[1];
+  if (invite) return showInvite(invite);
+  const who = await whoAmI();
+  if (who.mode === 'login') return showLogin();
+  if (who.mode !== 'user') return; // be serverio (iš disko) – kaip anksčiau
+  const user = who.user;
+  document.body.classList.add('portal', `role-${user.role}`);
+  $('#user-name').textContent = user.name || user.email;
+  portalUI = createPortalUI({
+    user,
+    toast,
+    loading: (on, text, p) => setLoading(on, text, p),
+    openModel: (files, name) => openFiles(files, { name, remote: true }),
+    openStream: (item) => (odmUI.isOpen && odmUI.close(), planUI.close(), liveUI.openItem(item)),
+    lastModelFiles: () => lastOpenedFiles,
+  });
+  liveUI.setPortal({ role: user.role, portal: portalUI });
+  const openPortal = () => {
+    if (portalUI.isOpen) return portalUI.close();
+    if (odmUI.isOpen) odmUI.close();
+    liveUI.close();
+    planUI.close();
+    portalUI.open();
+  };
+  $('#btn-portal').addEventListener('click', openPortal);
+  $('#btn-portal-2').addEventListener('click', () => (portalUI.isOpen || openPortal()));
+  $('#btn-user').addEventListener('click', (e) => {
+    const old = document.querySelector('.user-menu');
+    if (old) return old.remove();
+    const m = document.createElement('div');
+    m.className = 'user-menu';
+    m.innerHTML = `<div class="small"><b>${escapeHtml(user.name || user.email)}</b><div class="muted">${escapeHtml(user.email)} · ${escapeHtml(tr(user.role === 'admin' ? 'administratorius' : 'klientas'))}</div></div>
+      <button class="btn btn-ghost btn-sm" data-um="pw">${icon('edit')}${escapeHtml(tr('Keisti slaptažodį'))}</button>
+      <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>`;
+    document.body.append(m);
+    const r = e.currentTarget.getBoundingClientRect();
+    m.style.top = `${r.bottom + 6}px`;
+    m.style.right = `${Math.max(8, innerWidth - r.right)}px`;
+    m.addEventListener('click', (ev) => {
+      const a = ev.target.closest('[data-um]')?.dataset.um;
+      if (a === 'pw') changePasswordDialog(toast);
+      else if (a === 'out') logout();
+      m.remove();
+    });
+    setTimeout(() => document.addEventListener('pointerdown', (ev) => !m.contains(ev.target) && m.remove(), { once: true }), 0);
+  });
+  // Klientas pradeda nuo savo srities
+  if (user.role === 'client') portalUI.open();
+})();
 
 // Skydelis mažuose ekranuose
 $('#btn-panel').addEventListener('click', () => $('#sidepanel').classList.toggle('open'));
@@ -2010,7 +2072,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2066,6 +2128,7 @@ onLangChange(() => {
   odmUI.rerender();
   liveUI.rerender();
   planUI.rerender();
+  portalUI?.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
     $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });

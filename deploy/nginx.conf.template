@@ -13,6 +13,7 @@ server {
   set $ai_upstream ai:8000;
   set $odm_upstream nodeodm:3000;
   set $live_upstream mediamtx;
+  set $portal_upstream portal:8000;
   server_name _;
   root /usr/share/nginx/html;
   index index.html;
@@ -20,12 +21,43 @@ server {
   # Didžiuliai nuotraukų įkėlimai (1000+ nuotraukų po 10–20 MB)
   client_max_body_size 0;
 
+  add_header X-Content-Type-Options nosniff always;
+  add_header Referrer-Policy same-origin always;
+  add_header X-Frame-Options SAMEORIGIN always;
+
   location / {
     try_files $uri $uri/ /index.html;
   }
 
+  # Portalas: paskyros, prieigos teisės, klientų duomenys (3D modeliai, ataskaitos, įrašai)
+  location /api/ {
+    proxy_pass http://$portal_upstream;
+    proxy_http_version 1.1;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+
+  # Prieigos tikrinimas (auth_request): kiekviena ODM / AI / transliacijų užklausa – tik prisijungusiam ir tik
+  # su teisėmis (klientui – tik jam priskirtos transliacijos ir AI aptikimas; ODM, AI mokymas, serverio API – adminui)
+  location = /_auth {
+    internal;
+    proxy_pass http://$portal_upstream/api/auth/check;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+    proxy_set_header X-Original-Method $request_method;
+    proxy_set_header Cookie $http_cookie;
+    proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+
   # Vietinė AI paslauga
   location /ai/ {
+    auth_request /_auth;
     rewrite ^/ai/(.*)$ /$1 break;
     proxy_pass http://$ai_upstream;
     proxy_http_version 1.1;
@@ -36,6 +68,7 @@ server {
 
   # NodeODM API per tą patį adresą (be CORS problemų)
   location /odm/ {
+    auth_request /_auth;
     set $args "${odm_token_prefix}${args}";
     rewrite ^/odm/(.*)$ /$1 break;
     proxy_pass http://$odm_upstream;
@@ -57,6 +90,7 @@ server {
     add_header Access-Control-Allow-Headers "Content-Type, If-Match, Authorization" always;
     add_header Access-Control-Expose-Headers "Location, ETag, Link" always;
     if ($request_method = OPTIONS) { return 204; }
+    auth_request /_auth;
     rewrite ^/live/api/(.*)$ /$1 break;
     proxy_set_header Origin "";
     proxy_set_header Sec-Fetch-Site "";
@@ -72,6 +106,7 @@ server {
     add_header Access-Control-Allow-Headers "Content-Type, If-Match, Authorization" always;
     add_header Access-Control-Expose-Headers "Location, ETag, Link" always;
     if ($request_method = OPTIONS) { return 204; }
+    auth_request /_auth;
     rewrite ^/live/webrtc/(.*)$ /$1 break;
     proxy_set_header Origin "";
     proxy_set_header Sec-Fetch-Site "";
@@ -84,6 +119,7 @@ server {
   # Naršyklė jungiasi prie mūsų serverio, o šis – prie diab su diab „Origin“ (jei diab neleidžia kitų svetainių).
   # Leidžiami tik *.diab.app adresai – tai ne atviras tarpininkas.
   location ~ ^/ext/diab/(?<diab_host>[a-z0-9-]+\.diab\.app)/(?<diab_path>.*)$ {
+    auth_request /_auth;
     proxy_pass https://$diab_host/$diab_path$is_args$args;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -103,6 +139,7 @@ server {
     add_header Access-Control-Allow-Headers "Content-Type, If-Match, Authorization" always;
     add_header Access-Control-Expose-Headers "Location, ETag, Link" always;
     if ($request_method = OPTIONS) { return 204; }
+    auth_request /_auth;
     rewrite ^/live/hls/(.*)$ /$1 break;
     proxy_set_header Origin "";
     proxy_set_header Sec-Fetch-Site "";

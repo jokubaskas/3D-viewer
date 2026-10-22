@@ -278,6 +278,53 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
 
 Modeliai saugomi Docker tome `ai-models`, todėl išlieka atnaujinus programą. Procesoriumi mokymas trunka valandas, todėl mokykite, pavyzdžiui, per naktį: „Mažas“ modelis yra ~3 kartus greitesnis už „Didelį“. Su NVIDIA GPU (`docker-compose.gpu.yml`) mokymas yra keliasdešimt kartų greitesnis.
 
+## Paskyros, klientai ir prieiga iš interneto
+
+Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia prisijungti. Vaidmenys:
+- **Administratorius** – visos funkcijos: 3D modelių atidarymas, ODM, planavimas, transliacijos, AI mokymas, klientų valdymas.
+- **Klientas** – tik tai, ką jam priskyrėte. Skiltys „Mano sritis“:
+  - **Mano 3D modeliai** – peržiūra ir matavimai;
+  - **Mano gyvos transliacijos** – žiūrėjimas, AI aptikimas ir atpažįstamų objektų pasirinkimas, kadrai, įrašai;
+  - **Mano ataskaitos**, **Mano įrašai** – peržiūra ir atsisiuntimas.
+
+**Kaip tai veikia:**
+- Teises tikrina serveris, ne naršyklė. Portalas (`deploy/portal`, FastAPI + SQLite) saugo paskyras, priskyrimus ir failus Docker tome `portal-data`.
+- nginx kiekvieną `/odm/`, `/ai/`, `/live/` ir `/ext/` užklausą tikrina per `auth_request`:
+  - ODM, AI mokymas ir transliacijų serverio valdymas – tik administratoriui;
+  - klientui – tik jam priskirtos transliacijos ir AI aptikimas.
+- Kitų klientų duomenys neatskleidžiami – serveris atsako „nėra“.
+
+**Saugumas:**
+- slaptažodžiai užšifruojami scrypt (su druska); sesijos slapukas HttpOnly, SameSite=Strict, per HTTPS – Secure;
+- keičiančioms užklausoms reikalinga `X-Atea` antraštė (apsauga nuo kitų svetainių užklausų);
+- prisijungimo bandymai ribojami;
+- kvietimo nuorodos vienkartinės ir galioja 7 dienas;
+- išjungus paskyrą sesijos iškart nutraukiamos;
+- transliacijos šaltinio adresas ir raktai lieka serveryje – klientas gauna tik kelią;
+- HTML ir kiti aktyvūs failai tik atsisiunčiami, ne atidaromi naršyklėje.
+
+**Pirmas paleidimas:**
+1. `start-windows.bat` paleidžia serverį. Jei administratoriaus dar nėra, jis paprašo el. pašto (arba paleiskite `deploy\create-admin.bat`).
+2. Atsiradusią nuorodą atidarykite naršyklėje ir nusistatykite slaptažodį. `create-admin.bat` tinka ir pamiršus slaptažodį.
+
+**Klientai ir duomenys:**
+- **Klientas:** „Mano sritis“ → **Klientai** → **Sukurti paskyrą**. Nuorodą nusiųskite klientui (mygtukas „Siųsti el. paštu“) – slaptažodį jis nusistatys pats.
+- **3D modeliai, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus.
+- **Transliacijos:** transliacijos langelyje mygtukas 👤 **Priskirti klientams**.
+
+**Prieiga iš interneto (Cloudflare Tunnel)** – maršrutizatoriuje nieko atidaryti nereikia, HTTPS automatiškai:
+1. Domenas (pvz. `atea3d.lt`, ~10 €/m.) turi būti valdomas Cloudflare (nemokamas planas): Cloudflare → **Add a domain** → pakeiskite domeno registratoriaus vardų serverius (nameservers) į Cloudflare nurodytus.
+2. Cloudflare **Zero Trust** → **Networks** → **Tunnels** → **Create a tunnel** → **Cloudflared** → pavadinimas → nukopijuokite **raktą (token)**. Programos diegti nereikia – ji paleidžiama Docker'yje.
+3. Tunelio **Public Hostname**: pvz. `3d.atea3d.lt`, **Service**: `HTTP`, `web:80`.
+4. `deploy\.env` faile įrašykite `CF_TUNNEL_TOKEN=<raktas>` ir `PUBLIC_URL=https://3d.atea3d.lt`, paleiskite `start-windows.bat`.
+5. Rekomenduojama: Cloudflare → **Security** → **WAF** → **Rate limiting rules** – riboti `/api/auth/` užklausas (pvz. 20 per minutę iš vieno IP).
+
+**Pastabos:**
+- Kompiuteris turi būti įjungtas ir neužmigęs: Windows → Maitinimas → Miegas: **Niekada**; Docker Desktop → **Start when you sign in**.
+- Duomenų atsarginės kopijos: `docker run --rm -v deploy_portal-data:/d -v %cd%:/b alpine tar czf /b/portalas.tgz -C /d .`
+- Iš interneto transliacijos rodomos per HLS (~2–5 s vėlavimas): WebRTC vaizdo srautas per tunelį neina.
+- Programa, atidaryta iš disko (`release\…html`), su serveriu neprisijungia – serverio funkcijoms atidarykite `http://localhost:8080`.
+
 ## Kūrimas
 
 ```bash
@@ -297,11 +344,13 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/compute.js` – geometrija: plotai, plokštumos, tūrio ir paviršiaus skaičiavimas tinkleliu, profiliai
 - `src/main.js` – sąsaja, įrankių valdymas, eksportas
 - `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
-- `src/logo.js` – ATEA žodinis ženklas (SVG, perpieštas; oficialų SVG galima įdėti vietoje `LOGO_PATHS`)
+- `src/logo.js` – ATEA logotipas (vektorinis kontūras)
 - `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)
 - `src/odm/` – nuotraukų EXIF/XMP skaitymas, projekto analizė, `geo.txt`, NodeODM klientas, rezultatų archyvo skaitymas srautu, sąsaja, nuotraukų peržiūra ir srities pasirinkimas (`preview.js`)
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai, žemėlapis po modeliu (`basemap.js`)
-- `deploy/` – Docker Compose: NodeODM + AI paslauga + MediaMTX (transliacijos) + nginx su programa
+- `deploy/` – Docker Compose: NodeODM + AI paslauga + MediaMTX (transliacijos) + portalas + nginx su programa (+ Cloudflare Tunnel)
+- `deploy/portal/` – portalas: paskyros, sesijos, klientų duomenys, prieigos tikrinimas nginx'ui (`app.py`, testai – `test_portal.py`)
+- `src/portal/` – prisijungimas, kvietimai (`auth.js`), „Mano sritis“ skiltys ir klientų valdymas (`ui.js`), API (`api.js`)
 - `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`, `/raster/lks94` – GeoTIFF perskaičiavimas į LKS-94)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
 - `src/export.js` – 3D modelio išsaugojimas (OBJ su tekstūromis, GLB, LAS)

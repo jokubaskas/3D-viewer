@@ -595,3 +595,58 @@ dl.kv dd { margin: 0; text-align: right; font-weight: 600; font-variant-numeric:
 .live-map-tile .live-view { background: #1a1e21; }
 .live-map-tile canvas { position: absolute; inset: 0; touch-action: none; }
 .live-tools .on { color: var(--atea-green-text); }
+
+/* ------------------------------------------------------------------ Portalas: vaidmenys, prisijungimas, „Mano sritis“ */
+.portal-only, .client-only { display: none !important; }
+body.portal .portal-only { display: inline-flex !important; }
+body.role-client .btn.client-only { display: inline-flex !important; }
+body.role-client section.client-only, body.role-client p.client-only { display: block !important; }
+body.role-client .admin-only, .live-client .admin-only { display: none !important; }
+
+.auth-screen { position: fixed; inset: 0; z-index: 1000; background: radial-gradient(circle at 30% 20%, #23302a, var(--bg) 60%); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.auth-card { width: min(380px, 100%); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 28px 26px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow); }
+.auth-card .auth-logo { height: 30px; width: auto; color: #fff; fill: #fff; align-self: flex-start; }
+.auth-sub { color: var(--ink-2); font-weight: 600; margin-top: -6px; }
+.auth-card h1 { font-size: 19px; margin: 8px 0 0; }
+.auth-card label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.auth-card input { padding: 9px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-3); color: var(--ink); font-size: 14px; }
+.auth-card .btn { justify-content: center; }
+.auth-card p { margin: 0; }
+.auth-err { color: #ff8a80; font-size: 13px; }
+
+.user-menu { position: fixed; z-index: 200; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); min-width: 220px; }
+.user-menu .btn { justify-content: flex-start; }
+
+.portal-page { overflow: hidden; }
+.pt-tabs { display: flex; gap: 6px; padding: 4px 24px 0; border-bottom: 1px solid var(--line-2); overflow-x: auto; flex: none; }
+.pt-tab { display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px; border: 0; background: none; color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.pt-tab svg { width: 16px; height: 16px; }
+.pt-tab b { font-size: 11px; background: var(--surface-3); border-radius: 99px; padding: 1px 7px; color: var(--ink-2); }
+.pt-tab.active { color: var(--ink); border-bottom-color: var(--atea-green); }
+.pt-body { flex: 1; overflow: auto; padding: 16px 24px 32px; display: flex; flex-direction: column; gap: 12px; }
+.pt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.pt-card { background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.pt-card p { margin: 0; }
+.pt-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.pt-card-head b { font-size: 15px; overflow-wrap: anywhere; }
+.pt-files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.pt-files li { display: flex; align-items: center; gap: 6px; }
+.pt-files li span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-clients { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.pt-clients svg { width: 14px; height: 14px; color: var(--ink-2); }
+.pt-empty { padding: 40px; text-align: center; border: 2px dashed var(--line); border-radius: 10px; }
+.pt-hint { display: flex; gap: 8px; align-items: flex-start; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.pt-hint svg { width: 16px; height: 16px; flex: none; }
+.pt-checks { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; padding: 4px 0; }
+.pt-newuser { display: flex; flex-wrap: wrap; gap: 8px; }
+.pt-newuser input, .pt-newuser select { padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface-3); color: var(--ink); font: inherit; min-width: 200px; }
+.pt-invite { background: var(--atea-green-soft); border: 1px solid var(--atea-green); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.pt-invite a.btn { text-decoration: none; }
+.pt-invite input { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-3); color: var(--ink); font: 12px monospace; }
+.pt-users { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.pt-users th, .pt-users td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+.pt-users th { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.pt-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+@media (max-width: 700px) { .pt-users thead { display: none; } .pt-users td { display: block; border: 0; padding: 3px 8px; } .pt-users tr { display: block; border-bottom: 1px solid var(--line-2); padding: 6px 0; } .pt-actions { justify-content: flex-start; } .pt-tabs, .pt-body { padding-left: 12px; padding-right: 12px; } }
+/* Administratoriui antraštėje daugiau mygtukų – siauresniame ekrane tik ikonėlės (pavadinimai – patarimuose) */
+@media (max-width: 1560px) { body.role-admin .topbar-file .btn .hide-sm, body.role-admin #btn-portal span:last-child { display: none; } body.role-admin .topbar-file .file-name { max-width: 160px; } }
