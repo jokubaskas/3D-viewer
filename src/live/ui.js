@@ -112,8 +112,8 @@ export function createLiveUI(app) {
           <h3>Išsaugotos</h3>
           <div id="live-list"></div>
         </section>
-        <section class="card client-only" data-card="mine">
-          <h3>Mano gyvos transliacijos</h3>
+        <section class="card portal-card" data-card="mine">
+          <h3 id="live-mine-title">Mano gyvos transliacijos</h3>
           <div id="live-mine"></div>
         </section>
         <section class="card" data-card="ai">
@@ -437,7 +437,7 @@ export function createLiveUI(app) {
       // Admin: transliacija klientams – serveryje lieka šaltinis ir raktai, klientas gauna tik kelią
       const src = p.publishSource();
       if (!src) return app.toast(t('Šios transliacijos klientams priskirti negalima: serveris gali perduoti tik RTSP, RTMP, SRT, HLS ir WebRTC srautus (ne tinklalapį, MJPEG ar vaizdo failą).'), 'error', 7000);
-      portal?.publishStream(s.name, src);
+      portal?.publishStream(s.name, src, renderMine);
     } else if (act === 'ai') {
       if (!tile.ai)
         tile.ai = new LiveDetector(p, el.querySelector('.live-view'), {
@@ -963,23 +963,46 @@ export function createLiveUI(app) {
   let role = null;
   let mine = [];
   /** Kliento priskirtos transliacijos. */
+  /** Serveryje saugomos transliacijos: klientui – jam priskirtos, administratoriui – visos priskirtos klientams. */
   async function renderMine() {
-    if (role !== 'client') return;
+    if (!role) return;
+    const admin = role === 'admin';
+    $('#live-mine-title').textContent = t(admin ? 'Priskirtos klientams' : 'Mano gyvos transliacijos');
     try {
       mine = await api('items?kind=stream');
     } catch (e) {
       $('#live-mine').innerHTML = `<p class="small bad">${esc(e.message)}</p>`;
       return;
     }
+    const who = (i) => (i.clients?.length ? t('{n} klient.', { n: i.clients.length }) : t('nepriskirta'));
     $('#live-mine').innerHTML = mine.length
-      ? mine.map((i) => `<div class="live-item" data-mine="${i.id}"><span class="live-dot ${tiles.get(`item-${i.id}`)?.player.state || ''}"></span><b>${esc(i.title)}</b><button class="btn btn-sm btn-outline" data-mine-act="watch">${icon('play')}${esc(t('Žiūrėti'))}</button></div>`).join('')
-      : `<p class="small muted">${esc(t('Dar nėra priskirtų transliacijų.'))}</p>`;
+      ? mine
+          .map(
+            (i) => `<div class="live-item" data-mine="${i.id}"><span class="live-dot ${tiles.get(`item-${i.id}`)?.player.state || ''}"></span>
+            <b>${esc(i.title)}</b>${admin ? `<span class="small muted">${esc(who(i))}</span>` : ''}
+            <span class="live-item-tools"><button class="btn btn-sm btn-outline" data-mine-act="watch">${icon('play')}${esc(t('Žiūrėti'))}</button>
+            ${admin ? `<button class="btn btn-ghost btn-sm icon-only" data-mine-act="assign" title="${esc(t('Priskirti klientams'))}">${icon('user')}</button><button class="btn btn-ghost btn-sm icon-only danger" data-mine-act="del" title="${esc(t('Ištrinti'))}">${icon('trash')}</button>` : ''}</span></div>`,
+          )
+          .join('')
+      : `<p class="small muted">${esc(t(admin ? 'Dar nėra – prie rodomos transliacijos spauskite 👤 „Priskirti klientams“.' : 'Dar nėra priskirtų transliacijų.'))}</p>`;
   }
-  page.addEventListener('click', (e) => {
+  page.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-mine-act]');
     if (!b) return;
     const it = mine.find((x) => x.id === +b.closest('[data-mine]').dataset.mine);
-    if (it) openItem(it).catch((ex) => app.toast(ex.message, 'error', 7000));
+    if (!it) return;
+    try {
+      if (b.dataset.mineAct === 'watch') await openItem(it);
+      else if (b.dataset.mineAct === 'assign') portal?.assignItem(it, renderMine);
+      else if (b.dataset.mineAct === 'del') {
+        if (!confirm(t('Ištrinti „{n}“? Klientai jos nebematys.', { n: it.title }))) return;
+        await api(`items/${it.id}`, { method: 'DELETE' });
+        hide(`item-${it.id}`);
+        renderMine();
+      }
+    } catch (ex) {
+      app.toast(ex.message, 'error', 7000);
+    }
   });
   /** Priskirta transliacija: serveris paruošia šaltinį, rodoma per serverį (iš interneto – HLS, vietoje – WebRTC). */
   async function openItem(item) {

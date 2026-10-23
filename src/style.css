@@ -767,3 +767,10 @@ body.portal.page-open .viewer-only { display: none !important; }
 .btn > svg { width: 18px; height: 18px; flex: none; }
 .btn-sm > svg { width: 16px; height: 16px; }
 .pt-card .btn.icon-only > svg, .pt-files .btn > svg { width: 17px; height: 17px; }
+
+/* Transliacijos serveryje (klientui – „Mano gyvos transliacijos“, adminui – „Priskirtos klientams“) */
+.portal-card { display: none; }
+body.portal .portal-card { display: block; }
+#live-mine .live-item { flex-wrap: wrap; }
+.live-item-tools { margin-left: auto; display: flex; gap: 2px; align-items: center; }
+#live-mine .live-item { gap: 6px; }
