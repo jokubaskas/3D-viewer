@@ -260,6 +260,7 @@ export class Viewer extends EventTarget {
         o.userData.origMaterial = o.material;
       }
     });
+    if (this.theme) this.setTheme(this.theme);
     // BVH greitam spindulių sekimui (svarbu didiesiems fotogrametrijos modeliams)
     for (let i = 0; i < toIndex.length; i++) {
       onStatus?.(t('Ruošiamas greitas matavimas ({i}/{n})…', { i: i + 1, n: toIndex.length }));
@@ -443,6 +444,16 @@ export class Viewer extends EventTarget {
       this.heightMatPts.uniforms.uSize.value = this.pointSize;
       pc.material = mat;
       setCommon(mat);
+    }
+    this.dirty = true;
+  }
+
+  /** Tema: taškų debesims be spalvų – kontrastinga spalva. */
+  setTheme(th) {
+    this.theme = th;
+    for (const pc of this.pointClouds || []) {
+      const m = pc.userData.origMaterial;
+      if (m?.isPointsMaterial && !m.vertexColors) m.color.set(th === 'light' ? 0x3d4a45 : 0xcfd8d4);
     }
     this.dirty = true;
   }

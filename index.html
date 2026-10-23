@@ -6,6 +6,10 @@
   <title>Atea 3D Matuoklis</title>
   <meta name="description" content="Fotogrametrijos 3D modelių peržiūra ir matavimai: atstumai, aukščiai, plotai, tūriai, profiliai." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231F2326'/%3E%3Cpath d='M8 22 L16 8 L24 22 Z' fill='none' stroke='%23008B01' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='8' r='2.5' fill='white'/%3E%3C/svg%3E" />
+    <script>
+      // Tema pritaikoma iš karto (be tamsaus „mirktelėjimo“ šviesioje temoje)
+      try { document.documentElement.dataset.theme = localStorage.getItem('atea3d.theme') === 'light' ? 'light' : 'dark'; } catch (e) {}
+    </script>
 </head>
 <body>
   <div id="app">
@@ -20,10 +24,10 @@
         <button class="btn btn-ghost portal-only" id="btn-portal" title="Pradžia">
           <span data-icon="home"></span><span>Pradžia</span>
         </button>
-        <button class="btn btn-primary admin-only" id="btn-open" title="Atidaryti modelį (Ctrl+O)">
+        <button class="btn btn-primary admin-only viewer-only" id="btn-open" title="Atidaryti modelį (Ctrl+O)">
           <span data-icon="open"></span><span>Atidaryti</span>
         </button>
-        <button class="btn btn-ghost admin-only" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
+        <button class="btn btn-ghost admin-only viewer-only" id="btn-open-folder" title="Atidaryti visą aplanką (OBJ + MTL + tekstūros)">
           <span data-icon="folder"></span><span class="hide-sm">Aplankas</span>
         </button>
         <button class="btn btn-ghost admin-only nav-local" id="btn-odm" title="Sukurti 3D modelį iš drono nuotraukų (OpenDroneMap)">
@@ -36,16 +40,21 @@
           <span data-icon="live"></span><span class="hide-sm">Transliacija</span>
         </button>
         <button class="badge admin-only" id="odm-badge" hidden></button>
-        <span class="file-name" id="file-name">Modelis neįkeltas</span>
+        <span class="file-name viewer-only" id="file-name">Modelis neįkeltas</span>
       </div>
       <div class="topbar-right">
+        <div class="theme-switch" id="theme-switch" role="radiogroup" aria-label="Tema" title="Tamsi / šviesi tema">
+          <span class="lang-thumb" aria-hidden="true"></span>
+          <button type="button" role="radio" data-theme-set="dark" title="Tamsi"><span data-icon="moon"></span></button>
+          <button type="button" role="radio" data-theme-set="light" title="Šviesi"><span data-icon="sun"></span></button>
+        </div>
         <div class="lang-switch" id="lang-switch" role="radiogroup" aria-label="Kalba" title="Kalba / Language">
           <span class="lang-thumb" aria-hidden="true"></span>
           <button type="button" role="radio" data-lang="lt">LT</button>
           <button type="button" role="radio" data-lang="en">EN</button>
         </div>
-        <span class="badge" id="scale-badge" hidden title="Modelis kalibruotas pagal žinomą atstumą"></span>
-        <label class="unit-select" title="Matavimo vienetai">
+        <span class="badge viewer-only" id="scale-badge" hidden title="Modelis kalibruotas pagal žinomą atstumą"></span>
+        <label class="unit-select viewer-only" title="Matavimo vienetai">
           <span data-icon="ruler"></span>
           <select id="unit-select">
             <option value="m">m</option>
@@ -55,8 +64,8 @@
             <option value="ft">ft</option>
           </select>
         </label>
-        <button class="btn btn-ghost icon-only" id="btn-screenshot" title="Ekrano kopija su matavimais (P)"><span data-icon="camera"></span></button>
-        <button class="btn btn-ghost icon-only panel-toggle" id="btn-panel" title="Matavimų skydelis"><span data-icon="table"></span></button>
+        <button class="btn btn-ghost icon-only viewer-only" id="btn-screenshot" title="Ekrano kopija su matavimais (P)"><span data-icon="camera"></span></button>
+        <button class="btn btn-ghost icon-only panel-toggle viewer-only" id="btn-panel" title="Matavimų skydelis"><span data-icon="table"></span></button>
  <button class="btn btn-ghost portal-only" id="btn-user" title="Paskyra"><span data-icon="user"></span><span class="hide-sm" id="user-name"></span></button>
         <button class="btn btn-ghost icon-only" id="btn-help" title="Pagalba ir spartieji klavišai (?)"><span data-icon="help"></span></button>
       </div>

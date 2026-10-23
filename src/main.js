@@ -2073,6 +2073,14 @@ const closePages = () => {
   });
   const goHome = () => (closePages(), homeUI.open());
   $('#btn-portal').addEventListener('click', goHome);
+  // Puslapių „×“ → „← Pradžia“ (puslapio kairėje, kaip pradžios ekrano navigacija)
+  document.querySelectorAll('.odm-page .odm-head').forEach((head) => {
+    const x = head.querySelector('[data-act=close], [data-pa=close]');
+    if (!x) return;
+    x.className = 'btn btn-outline btn-sm head-back';
+    x.innerHTML = `${icon('back')}<span>${escapeHtml(tr('Pradžia'))}</span>`;
+    head.prepend(x);
+  });
   $('#btn-portal-2').addEventListener('click', portalTab('model'));
   $('#brand-logo').closest('.brand').addEventListener('click', goHome);
   // Puslapio „Uždaryti“ (×) – grįžtama į pradžią
@@ -2107,6 +2115,38 @@ const closePages = () => {
   });
   homeUI.open();
 })();
+
+// Ar atidarytas kuris nors puslapis (ne 3D peržiūra) – antraštėje tada nerodomi 3D peržiūros mygtukai
+{
+  const sync = () => document.body.classList.toggle('page-open', [...document.querySelectorAll('.odm-page, .home-page')].some((p) => !p.hidden));
+  new MutationObserver(sync).observe(document.getElementById('app'), { attributes: true, subtree: true, attributeFilter: ['hidden'], childList: true });
+  sync();
+}
+
+// Šoninių stulpelių kortelės sutraukiamos (antraštė – mygtukas); būsena įsimenama
+{
+  const LS_CARDS = 'atea3d.cards';
+  const DEFAULT_CLOSED = ['live:diab', 'live:train', 'live:push', 'plan:saved', 'odm:server'];
+  let state = {};
+  try {
+    state = JSON.parse(localStorage.getItem(LS_CARDS)) || {};
+  } catch { /* nebūtina */ }
+  const pageKey = (el) => (el.closest('.live-page') ? 'live' : el.closest('.plan-page') ? 'plan' : 'odm');
+  const setup = (card) => {
+    if (card.dataset.collapsible) return;
+    card.dataset.collapsible = '1';
+    const key = `${pageKey(card)}:${card.dataset.card}`;
+    card.classList.add('collapsible');
+    card.classList.toggle('collapsed', state[key] ?? DEFAULT_CLOSED.includes(key));
+    card.querySelector(':scope > h3')?.addEventListener('click', () => {
+      state[key] = card.classList.toggle('collapsed');
+      try {
+        localStorage.setItem(LS_CARDS, JSON.stringify(state));
+      } catch { /* nebūtina */ }
+    });
+  };
+  document.querySelectorAll('.odm-side section.card[data-card]').forEach(setup);
+}
 
 // Skydelis mažuose ekranuose
 $('#btn-panel').addEventListener('click', () => $('#sidepanel').classList.toggle('open'));
@@ -2154,6 +2194,25 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'm') toggleMap();
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
+
+// ---------------------------------------------------------------------------
+// Tema (tamsi / šviesi) – kaip kalbos perjungiklis, įsimenama naršyklėje
+// ---------------------------------------------------------------------------
+const themeSwitch = $('#theme-switch');
+function applyTheme(th) {
+  document.documentElement.dataset.theme = th;
+  themeSwitch.dataset.theme = th;
+  themeSwitch.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themeSet === th)));
+  viewer.setTheme?.(th);
+  try {
+    localStorage.setItem('atea3d.theme', th);
+  } catch { /* privatus režimas */ }
+}
+themeSwitch.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-theme-set]');
+  applyTheme(b ? b.dataset.themeSet : document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+});
+applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
 
 // ---------------------------------------------------------------------------
 // Kalba (LT / EN)
