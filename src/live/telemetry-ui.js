@@ -141,7 +141,7 @@ export function createTelemetryUI(o) {
     else if (st === 'retry') status = `<span class="bad">${esc(link.error)}</span> <span class="muted">${esc(t('Bandoma vėl po {s} s…', { s: link.retryIn }))}</span>`;
     if (exp && st !== 'off') status += `<div class="muted">${esc(t(exp < Date.now() ? 'Raktas nebegalioja nuo {d}' : 'Raktas galioja iki {d}', { d: new Date(exp).toLocaleString(locale()) }))}</div>`;
     $('#tm-status').innerHTML = status;
-    $('#tm-boxes').innerHTML = [...link.boxes.values()].map(boxHtml).join('');
+    syncBoxes();
     $('#tm-raw-wrap').hidden = !link.raw;
     if (link.raw && $('#tm-raw-wrap').open) $('#tm-raw').textContent = JSON.stringify(link.other ? { ...link.raw, kitas: link.other } : link.raw, null, 2);
     if (map) {
@@ -158,6 +158,36 @@ export function createTelemetryUI(o) {
   }
   $('#tm-raw-wrap').addEventListener('toggle', render);
 
+  /**
+   * Dokų kortelės atnaujinamos po vieną, o jų mygtukai paliekami tie patys DOM elementai (pakeičiami tik pasikeitus
+   * mygtukų rinkiniui). Kitaip skrendant (pranešimai kas sekundę) mygtukas būtų perpieštas tarp paspaudimo ir
+   * atleidimo – naršyklė tokio paspaudimo neužskaito.
+   */
+  function syncBoxes() {
+    const wrap = $('#tm-boxes');
+    const keys = new Set();
+    for (const b of link.boxes.values()) {
+      keys.add(b.key);
+      const html = boxHtml(b);
+      const el = [...wrap.children].find((x) => x.dataset.box === b.key);
+      if (el?._html === html) continue;
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      const nu = tmp.firstElementChild;
+      const newAct = nu.querySelector('.pane-actions');
+      nu._html = html;
+      nu._act = newAct?.innerHTML; // lyginama su ankstesniu žymėjimu, ne su gyvu DOM
+      if (!el) {
+        wrap.append(nu);
+        continue;
+      }
+      const oldAct = el.querySelector('.pane-actions');
+      if (oldAct && newAct && el._act === nu._act) newAct.replaceWith(oldAct);
+      el.replaceWith(nu);
+    }
+    for (const el of [...wrap.children]) if (!keys.has(el.dataset.box)) el.remove();
+  }
+
   function boxHtml(b) {
     const d = b.drone, n = (link.tracks.get(b.key) || []).length;
     const warn = [];
@@ -169,12 +199,13 @@ export function createTelemetryUI(o) {
       [t('Skrydis'), [d.alt != null ? t('aukštis {v} m', { v: nf(d.alt, 0) }) : '', d.speed != null ? `${nf(d.speed, 1)} m/s` : '', d.heading != null ? `${nf(d.heading, 0)}°` : ''].filter(Boolean).join(' · ')],
       [t('Oras'), [b.wind != null ? t('vėjas {v} m/s', { v: nf(b.wind, 1) }) : '', b.rain != null ? (b.rain ? t('lyja') : t('nelyja')) : '', b.extTemp != null ? t('lauke {v} °C', { v: nf(b.extTemp, 1) }) : ''].filter(Boolean).join(' · ')],
       [t('Dokas'), [b.temp != null ? t('viduje {v} °C', { v: nf(b.temp, 1) }) : '', b.charger === 'CHARGING' ? t('kraunama') : '', b.pilot ? t('pilotas {p}', { p: b.pilot }) : ''].filter(Boolean).join(' · ')],
+      [t('Maršrutas'), n > 1 ? t('{n} taškų', { n }) : ''],
     ].filter(([, v]) => v);
     return `<div class="tm-box" data-box="${esc(b.key)}">
       <div class="row"><b>${esc(b.name)}</b><span class="chip ${b.status === 'ONLINE' ? 'ok' : ''}">${esc(t(STATUS[b.status] || b.status))}</span></div>
       ${rows.map(([k, v]) => `<div class="small"><span class="muted">${esc(k)}:</span> ${esc(v)}</div>`).join('')}
       ${warn.length ? `<div class="small bad">${esc(warn.join(' · '))}</div>` : ''}
-      <div class="pane-actions">${b.dock || d.pos ? `<button class="btn btn-sm btn-ghost" data-tm="show">${icon('target')}${esc(t('Rodyti'))}</button>` : ''}${n > 1 ? `<button class="btn btn-sm btn-ghost" data-tm="gpx">${icon('save')}GPX (${n})</button><button class="btn btn-sm btn-ghost" data-tm="clear">${esc(t('Valyti maršrutą'))}</button>` : ''}</div>
+      <div class="pane-actions">${b.dock || d.pos ? `<button class="btn btn-sm btn-ghost" data-tm="show">${icon('target')}${esc(t('Rodyti'))}</button>` : ''}${n > 1 ? `<button class="btn btn-sm btn-ghost" data-tm="gpx">${icon('save')}GPX</button><button class="btn btn-sm btn-ghost" data-tm="clear">${esc(t('Valyti maršrutą'))}</button>` : ''}</div>
     </div>`;
   }
 

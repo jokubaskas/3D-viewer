@@ -302,6 +302,8 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - kvietimo nuorodos vienkartinės ir galioja 7 dienas;
 - išjungus paskyrą sesijos iškart nutraukiamos;
 - transliacijos šaltinio adresas ir raktai lieka serveryje – klientas gauna tik kelią;
+- transliacijų serveris (MediaMTX) leidžia žiūrėti tik programai (Docker tinklas `atea3d`, 172.29.88.0/24); dronai ir kameros siųsti gali iš vietinio tinklo, bet tiesiai per RTSP / RTMP žiūrėti negalima;
+- prieigos tikrinimas atmeta adresus su `..`, `//` ar `%` užkoduotais simboliais (kad nebūtų galima apeiti patikros);
 - HTML ir kiti aktyvūs failai tik atsisiunčiami, ne atidaromi naršyklėje.
 
 **Pirmas paleidimas:**

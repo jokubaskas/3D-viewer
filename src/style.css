@@ -672,3 +672,9 @@ body.home-open .topbar-file .file-name, body.home-open #btn-open, body.home-open
   body.portal .brand-title, body.portal .brand-sep, body.portal #btn-portal span:last-child, body.portal #user-name { display: none; }
   body.home-open .unit-select, body.home-open #btn-screenshot, body.home-open #scale-badge, body.home-open #btn-panel { display: none !important; }
 }
+@media (max-width: 640px) {
+  body.portal .topbar-file .file-name, body.portal #btn-open-folder, body.portal #btn-screenshot, body.portal #scale-badge { display: none !important; }
+  body.portal #btn-open span:last-child { display: none; }
+  body.portal .unit-select select { padding-right: 4px; }
+}
+@media (max-width: 420px) { body.portal .lang-switch, body.portal #btn-help { display: none !important; } }

@@ -109,6 +109,14 @@ services:
     ports:
       - "${WEB_PORT:-8080}:80"
 
+# Vidinis tinklas su žinomu adresų intervalu: transliacijų serveris (mediamtx.yml) leidžia žiūrėti tik iš jo
+networks:
+  default:
+    name: atea3d
+    ipam:
+      config:
+        - subnet: 172.29.88.0/24
+
 volumes:
   nodeodm-data:
   ai-models:

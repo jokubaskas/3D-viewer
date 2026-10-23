@@ -163,9 +163,10 @@ export function createPortalUI(app) {
   function dialog(html, onOk) {
     const d = document.createElement('dialog');
     d.className = 'dialog';
-    d.innerHTML = `<form method="dialog">${html}<div class="auth-err" hidden></div><menu><button class="btn btn-ghost" value="cancel" formnovalidate>${esc(t('Atšaukti'))}</button><button class="btn btn-primary" value="ok">${esc(t('Gerai'))}</button></menu></form>`;
+    d.innerHTML = `<form method="dialog">${html}<div class="auth-err" hidden></div><menu><button class="btn btn-ghost" type="button" data-cancel>${esc(t('Atšaukti'))}</button><button class="btn btn-primary" value="ok">${esc(t('Gerai'))}</button></menu></form>`;
     document.body.append(d);
     const f = d.querySelector('form');
+    d.querySelector('[data-cancel]').addEventListener('click', () => d.close());
     f.addEventListener('submit', async (e) => {
       if (e.submitter?.value !== 'ok') return;
       e.preventDefault();
@@ -183,9 +184,10 @@ export function createPortalUI(app) {
     return d;
   }
   const clientChecks = (sel = []) => {
-    const cl = users.filter((u) => u.role === 'client' && !u.disabled);
+    // Išjungti klientai rodomi tik jei jau priskirti – pažymėti ir neaktyvūs, kad išsaugojus priskyrimas nedingtų
+    const cl = users.filter((u) => u.role === 'client' && (!u.disabled || sel.includes(u.id)));
     return cl.length
-      ? `<div class="pt-checks">${cl.map((u) => `<label class="check small"><input type="checkbox" name="client" value="${u.id}" ${sel.includes(u.id) ? 'checked' : ''}/> ${esc(u.name || u.email)} <span class="muted">${esc(u.name ? u.email : '')}</span></label>`).join('')}</div>`
+      ? `<div class="pt-checks">${cl.map((u) => `<label class="check small"><input type="checkbox" name="client" value="${u.id}" ${sel.includes(u.id) ? 'checked' : ''} ${u.disabled ? 'disabled' : ''}/> ${esc(u.name || u.email)} <span class="muted">${esc(u.name ? u.email : '')}${u.disabled ? ` · ${esc(t('išjungta'))}` : ''}</span></label>`).join('')}</div>`
       : `<p class="small muted">${esc(t('Dar nėra klientų – sukurkite juos skiltyje „Klientai“.'))}</p>`;
   };
   const checked = (f) => [...f.querySelectorAll('input[name=client]:checked')].map((x) => +x.value);

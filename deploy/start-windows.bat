@@ -43,6 +43,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0export-certs.ps1" >nul
 rem Tik jei eksportas pavyko (tuscias failas be sertifikatu sugadintu HTTPS patikra)
 for %%F in ("certs\windows-roots.pem") do if %%~zF GTR 1000 set "CA_DIR=/certs"
 
+rem Adresas kvietimu nuorodoms: is .env (PUBLIC_URL), kitaip - sio kompiuterio prievadas
+set "PUBLIC="
+for /f "tokens=1,* delims==" %%a in ('findstr /b "PUBLIC_URL=" .env 2^>nul') do set "PUBLIC=%%b"
+if not defined PUBLIC set "PUBLIC_URL=http://localhost:%PORT%"
+
 rem Prieiga is interneto (Cloudflare Tunnel) - tik jei .env faile nustatytas CF_TUNNEL_TOKEN
 set "PROFILE="
 for /f "tokens=1,* delims==" %%a in ('findstr /b "CF_TUNNEL_TOKEN=" .env 2^>nul') do if not "%%b"=="" set "PROFILE=--profile internet"
@@ -106,8 +111,6 @@ if errorlevel 2 (
   echo Dar nera administratoriaus paskyros - sukurkite ja dabar.
   call "%~dp0create-admin.bat" nopause
 )
-set "PUBLIC="
-for /f "tokens=1,* delims==" %%a in ('findstr /b "PUBLIC_URL=" .env 2^>nul') do set "PUBLIC=%%b"
 
 echo.
 echo ============================================================

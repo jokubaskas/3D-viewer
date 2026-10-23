@@ -22,7 +22,7 @@ import { Basemap, BASEMAPS } from './geo/basemap.js';
 import { CompareModel, analyzeChange, buildChangeMesh } from './compare.js';
 import { exportObjZip, exportGlb, exportLas } from './export.js';
 import { whoAmI } from './portal/api.js';
-import { showLogin, showInvite, changePasswordDialog, logout } from './portal/auth.js';
+import { showLogin, showInvite, showDown, changePasswordDialog, logout } from './portal/auth.js';
 import { createPortalUI } from './portal/ui.js';
 import { createHome } from './portal/home.js';
 import { api } from './portal/api.js';
@@ -882,8 +882,10 @@ function guessUp(object, suggested) {
 }
 
 let lastOpenedFiles = null; // portalui: „Įkelti dabar atidarytą modelį“
-async function openFiles(files, opts = {}) {
-  if (!files || !files.length) return;
+async function openFiles(fileList, opts = {}) {
+  if (!fileList || !fileList.length) return;
+  // Kopija iškart: kvietėjas po to išvalo <input type=file>, o tada tas pats FileList ištuštėja
+  const files = Array.from(fileList);
   tools.deactivate();
   odmProject = null;
   setLoading(true, 'Įkeliama…', 0);
@@ -897,7 +899,7 @@ async function openFiles(files, opts = {}) {
       heightSystem: opts.heightSystem ?? null,
     });
     res.warnings.forEach((w) => toast(w, /perskaičiuot/.test(w) ? 'info' : 'error', 7000));
-    lastOpenedFiles = opts.remote ? null : Array.from(files);
+    lastOpenedFiles = opts.remote ? null : files;
   } catch (err) {
     console.error(err);
     toast(tr('Nepavyko atidaryti: {e}', { e: err.message || err }), 'error', 7000);
@@ -2024,6 +2026,7 @@ const closePages = () => {
   if (invite) return showInvite(invite);
   const who = await whoAmI();
   if (who.mode === 'login') return showLogin();
+  if (who.mode === 'down') return showDown();
   if (who.mode !== 'user') return; // be serverio (iš disko) – kaip anksčiau
   const user = who.user;
   document.body.classList.add('portal', `role-${user.role}`);

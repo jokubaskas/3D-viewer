@@ -419,7 +419,8 @@ export function createLiveUI(app) {
   function hint(tile) {
     const c = tile.stream.path ? { kind: 'gateway' } : classify(tile.stream.url);
     let h = '';
-    if ((c.kind === 'gateway' || tile.stream.via === 'server') && gwState !== 'ok') h = t('Transliacijų serveris nepasiekiamas – paleiskite start-windows.bat (Docker).');
+    if (role === 'client') h = t('Šaltinis šiuo metu nesiunčia vaizdo – bandoma vėl automatiškai. Jei neprasideda, kreipkitės į administratorių.');
+    else if ((c.kind === 'gateway' || tile.stream.via === 'server') && gwState !== 'ok') h = t('Transliacijų serveris nepasiekiamas – paleiskite start-windows.bat (Docker).');
     else if (c.kind === 'gateway') h = t('Patikrinkite, ar šaltinis siunčia vaizdą ir ar adresas pasiekiamas iš šio kompiuterio.');
     else if (tile.stream.via === 'direct') h = t('Jei šaltinis neleidžia rodyti kitose svetainėse (CORS), pasirinkite „Per serverį“.');
     return h ? `<span class="small muted">${esc(h)}</span>` : '';
@@ -434,7 +435,7 @@ export function createLiveUI(app) {
     else if (act === 'publish') {
       // Admin: transliacija klientams – serveryje lieka šaltinis ir raktai, klientas gauna tik kelią
       const src = p.publishSource();
-      if (!src) return app.toast(t('Šios transliacijos klientams priskirti negalima: tai įterptas tinklalapis, o ne vaizdo srautas.'), 'error', 7000);
+      if (!src) return app.toast(t('Šios transliacijos klientams priskirti negalima: serveris gali perduoti tik RTSP, RTMP, SRT, HLS ir WebRTC srautus (ne tinklalapį, MJPEG ar vaizdo failą).'), 'error', 7000);
       portal?.publishStream(s.name, src);
     } else if (act === 'ai') {
       if (!tile.ai)
