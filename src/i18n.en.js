@@ -1268,4 +1268,13 @@ export const EN = {
   "Su šalmu": "With helmet",
   "Be liemenės": "No vest",
   "Su liemene": "With vest",
+  "Atidaryti ataskaitą": "Open report",
+  "Atidaryti HTML ataskaitą": "Open HTML report",
+  "Atsisiųsti ZIP": "Download ZIP",
+  "Spausdinti / PDF": "Print / PDF",
+  "Ruošiama ataskaita…": "Preparing report…",
+  "Tai ne ZIP failas": "Not a ZIP file",
+  "ZIP faile nėra HTML ataskaitos": "The ZIP has no HTML report",
+  "Nepalaikomas ZIP glaudinimas": "Unsupported ZIP compression",
+  "Per didelis ZIP (ZIP64) – atsisiųskite jį": "ZIP too large (ZIP64) – please download it",
 };

@@ -2,6 +2,7 @@
 // Bando būdus iš eilės, kol vienas pavyksta; ryšiui nutrūkus jungiasi iš naujo.
 import { classify, probeKind } from './sources.js';
 import { t } from '../i18n.js';
+import { fixWebmDuration } from './webm-duration.js';
 
 const START_TIMEOUT = 12000; // per kiek laiko turi pasirodyti vaizdas
 const STALL_TIMEOUT = 10000; // kiek laiko be naujų kadrų laikoma nutrūkimu
@@ -548,13 +549,16 @@ export class LivePlayer {
     const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8e6 });
     const chunks = [];
     rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    let t0 = 0;
     const done = new Promise((res) => {
       rec.onstop = () => {
         stream._stop?.();
-        res(new Blob(chunks, { type: mimeType.split(';')[0] }));
+        const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+        res(mimeType.startsWith('video/webm') ? fixWebmDuration(blob, performance.now() - t0) : blob);
       };
     });
     rec.start(1000);
+    t0 = performance.now();
     return { rec, done, ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm' };
   }
 
