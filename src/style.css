@@ -649,4 +649,26 @@ body.role-client .admin-only, .live-client .admin-only { display: none !importan
 .pt-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
 @media (max-width: 700px) { .pt-users thead { display: none; } .pt-users td { display: block; border: 0; padding: 3px 8px; } .pt-users tr { display: block; border-bottom: 1px solid var(--line-2); padding: 6px 0; } .pt-actions { justify-content: flex-start; } .pt-tabs, .pt-body { padding-left: 12px; padding-right: 12px; } }
 /* Administratoriui antraštėje daugiau mygtukų – siauresniame ekrane tik ikonėlės (pavadinimai – patarimuose) */
-@media (max-width: 1560px) { body.role-admin .topbar-file .btn .hide-sm, body.role-admin #btn-portal span:last-child { display: none; } body.role-admin .topbar-file .file-name { max-width: 160px; } }
+@media (max-width: 1100px) { body.role-admin .topbar-file .btn .hide-sm { display: none; } body.role-admin .topbar-file .file-name { max-width: 160px; } }
+
+/* ------------------------------------------------------------------ Pradžios ekranas (po prisijungimo) */
+body.portal .nav-local { display: none !important; }
+body.portal .brand { cursor: pointer; }
+body.home-open .topbar-file .file-name, body.home-open #btn-open, body.home-open #btn-open-folder { visibility: hidden; }
+.home-page { position: absolute; inset: var(--topbar-h) 0 0 0; z-index: 35; overflow: auto; background: var(--vp-bg); display: flex; }
+.home-inner { margin: auto; width: 100%; max-width: 1080px; padding: 40px 24px 48px; text-align: center; }
+.home-inner h1 { margin: 0 0 6px; font-size: 28px; color: #fff; }
+.home-inner > p { margin: 0 0 32px; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 230px)); gap: 20px; justify-content: center; }
+.home-tile { position: relative; aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px 16px; border-radius: 18px; border: 1px solid var(--line); background: rgba(31, 35, 38, 0.86); color: var(--ink); font: inherit; cursor: pointer; text-align: center; box-shadow: var(--shadow-sm); transition: transform .15s, border-color .15s, background .15s; }
+.home-tile:hover, .home-tile:focus-visible { transform: translateY(-3px); border-color: var(--atea-green); background: rgba(38, 43, 47, 0.95); outline: none; }
+.home-tile b { font-size: 17px; line-height: 1.25; }
+.home-icon { width: 68px; height: 68px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--atea-green-soft); color: var(--atea-green-text); }
+.home-icon svg { width: 34px; height: 34px; }
+.home-desc { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+.home-count { position: absolute; top: 12px; right: 12px; min-width: 26px; padding: 2px 8px; border-radius: 99px; background: var(--surface-3); font-size: 12px; font-weight: 700; color: var(--ink-2); }
+@media (max-width: 560px) { .home-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .home-tile { padding: 12px 8px; border-radius: 14px; } .home-icon { width: 52px; height: 52px; } .home-icon svg { width: 26px; height: 26px; } .home-tile b { font-size: 14.5px; } .home-desc { display: none; } .home-inner h1 { font-size: 22px; } }
+@media (max-width: 640px) {
+  body.portal .brand-title, body.portal .brand-sep, body.portal #btn-portal span:last-child, body.portal #user-name { display: none; }
+  body.home-open .unit-select, body.home-open #btn-screenshot, body.home-open #scale-badge, body.home-open #btn-panel { display: none !important; }
+}

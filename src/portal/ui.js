@@ -32,7 +32,7 @@ export function createPortalUI(app) {
   page.hidden = true;
   page.innerHTML = `
     <header class="odm-head">
-      <div><h2>Mano sritis</h2><p class="muted small" id="pt-who"></p></div>
+      <div><h2 id="pt-title">Mano sritis</h2><p class="muted small" id="pt-who"></p></div>
       <button class="btn btn-ghost icon-only" data-pa="close" title="Uždaryti">${icon('close')}</button>
     </header>
     <nav class="pt-tabs" id="pt-tabs"></nav>
@@ -41,7 +41,12 @@ export function createPortalUI(app) {
   const $ = (s) => page.querySelector(s);
   $('#pt-who').textContent = `${app.user.name || app.user.email} · ${t(admin ? 'administratorius' : 'klientas')}`;
 
-  const tabs = admin ? [...TABS, { id: 'clients', label: 'Klientai', icon: 'eye' }] : TABS;
+  // Administratoriui – be „Mano“ (jis valdo visų klientų duomenis)
+  const adminLabel = (l) => {
+    const r = l.replace(/^Mano /, '');
+    return r.charAt(0).toUpperCase() + r.slice(1);
+  };
+  const tabs = admin ? [...TABS.map((x) => ({ ...x, label: adminLabel(x.label) })), { id: 'clients', label: 'Klientai', icon: 'user' }] : TABS;
 
   async function load() {
     try {
@@ -53,6 +58,8 @@ export function createPortalUI(app) {
   }
 
   function render() {
+    // Antraštė – pasirinktos skilties pavadinimas (į skiltis patenkama iš pradžios ekrano)
+    $('#pt-title').textContent = t(tabs.find((x) => x.id === tab)?.label || 'Mano sritis');
     $('#pt-tabs').innerHTML = tabs
       .map((x) => {
         const n = x.id === 'clients' ? users.filter((u) => u.role === 'client').length : items.filter((i) => i.kind === x.id).length;
@@ -187,7 +194,7 @@ export function createPortalUI(app) {
   function newItemDialog(kind, presetFiles = null) {
     const title = presetFiles ? presetFiles[0]?.name.replace(/\.[^.]+$/, '') : '';
     dialog(
-      `<h2>${esc(t(TABS.find((x) => x.id === kind).label))}: ${esc(t('naujas'))}</h2>
+      `<h2>${esc(t(tabs.find((x) => x.id === kind).label))}: ${esc(t('naujas'))}</h2>
        <label class="row">${esc(t('Pavadinimas'))} <input name="title" class="num wide" style="text-align:left;width:260px" value="${esc(title)}" required /></label>
        <label class="row">${esc(t('Pastaba'))} <input name="note" class="num wide" style="text-align:left;width:260px" /></label>
        ${presetFiles ? `<p class="small">${esc(t('{n} failų iš atidaryto modelio', { n: presetFiles.length }))}</p>` : `<label class="row">${esc(t('Failai'))} <input name="files" type="file" multiple required /></label>

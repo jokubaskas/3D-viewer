@@ -24,6 +24,8 @@ import { exportObjZip, exportGlb, exportLas } from './export.js';
 import { whoAmI } from './portal/api.js';
 import { showLogin, showInvite, changePasswordDialog, logout } from './portal/auth.js';
 import { createPortalUI } from './portal/ui.js';
+import { createHome } from './portal/home.js';
+import { api } from './portal/api.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -1969,7 +1971,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), homeUI?.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -1987,6 +1989,7 @@ $('#btn-live').addEventListener('click', () => {
   if (odmUI.isOpen) odmUI.close();
   planUI.close();
   portalUI?.close();
+  homeUI?.close();
   liveUI.open();
 });
 
@@ -1999,6 +2002,7 @@ $('#btn-plan').addEventListener('click', () => {
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
   portalUI?.close();
+  homeUI?.close();
   planUI.open();
 });
 
@@ -2006,6 +2010,15 @@ $('#btn-plan').addEventListener('click', () => {
 // Portalas: paskyros (admin / klientas) ir „Mano sritis“. Teises tikrina serveris – čia tik sąsaja.
 // ---------------------------------------------------------------------------
 let portalUI = null;
+let homeUI = null;
+/** Uždaro visus puslapius (lieka 3D peržiūra). */
+const closePages = () => {
+  if (odmUI.isOpen) odmUI.close();
+  liveUI.close();
+  planUI.close();
+  portalUI?.close();
+  homeUI?.close();
+};
 (async () => {
   const invite = /#invite=([\w-]+)/.exec(location.hash)?.[1];
   if (invite) return showInvite(invite);
@@ -2024,15 +2037,45 @@ let portalUI = null;
     lastModelFiles: () => lastOpenedFiles,
   });
   liveUI.setPortal({ role: user.role, portal: portalUI });
-  const openPortal = () => {
-    if (portalUI.isOpen) return portalUI.close();
-    if (odmUI.isOpen) odmUI.close();
-    liveUI.close();
-    planUI.close();
-    portalUI.open();
-  };
-  $('#btn-portal').addEventListener('click', openPortal);
-  $('#btn-portal-2').addEventListener('click', () => (portalUI.isOpen || openPortal()));
+  const admin = user.role === 'admin';
+  const portalTab = (tab) => () => (closePages(), portalUI.open(tab));
+  // Pradžios ekranas: dideli mygtukai pagal teises
+  const tiles = admin
+    ? [
+        { id: 'model', icon: 'cube', title: '3D modeliai', desc: 'Peržiūra, matavimai, įkėlimas ir priskyrimas klientams', run: portalTab('model') },
+        { id: 'viewer', icon: 'ruler', title: 'Atidaryti iš kompiuterio', desc: 'OBJ, GLB, PLY, LAS ir kt. failai matavimams', run: () => (closePages(), openDialog()) },
+        { id: 'odm', icon: 'camera', title: 'Kurti 3D iš nuotraukų', desc: 'OpenDroneMap apdorojimas šiame kompiuteryje', run: () => (closePages(), odmUI.open()) },
+        { id: 'plan', icon: 'map', title: 'Skrydžio planas', desc: 'Maršrutas, aukštis pagal GSD, eksportas į pultą', run: () => (closePages(), planUI.open()) },
+        { id: 'stream', icon: 'live', title: 'Gyvos transliacijos', desc: 'Dronai, kameros, AI aptikimas, įrašai, diab', run: () => (closePages(), liveUI.open()) },
+        { id: 'report', icon: 'report', title: 'Ataskaitos', desc: 'Klientams skirtos ataskaitos', run: portalTab('report') },
+        { id: 'recording', icon: 'record', title: 'Įrašai', desc: 'AI įrašai ir vaizdo medžiaga klientams', run: portalTab('recording') },
+        { id: 'clients', icon: 'user', title: 'Klientai', desc: 'Paskyros, kvietimai ir prieigos', run: portalTab('clients') },
+      ]
+    : [
+        { id: 'model', icon: 'cube', title: 'Mano 3D modeliai', desc: 'Peržiūra ir matavimai', run: portalTab('model') },
+        { id: 'stream', icon: 'live', title: 'Mano gyvos transliacijos', desc: 'Tiesioginis vaizdas ir AI aptikimas', run: () => (closePages(), liveUI.open()) },
+        { id: 'report', icon: 'report', title: 'Mano ataskaitos', desc: 'Peržiūra ir atsisiuntimas', run: portalTab('report') },
+        { id: 'recording', icon: 'record', title: 'Mano įrašai', desc: 'Vaizdo įrašai ir duomenys', run: portalTab('recording') },
+      ];
+  homeUI = createHome({
+    user,
+    tiles,
+    counts: async () => {
+      const [items, users] = await Promise.all([api('items'), admin ? api('users') : Promise.resolve([])]);
+      const c = {};
+      for (const i of items) c[i.kind] = (c[i.kind] || 0) + 1;
+      if (admin) c.clients = users.filter((u) => u.role === 'client').length;
+      return c;
+    },
+  });
+  const goHome = () => (closePages(), homeUI.open());
+  $('#btn-portal').addEventListener('click', goHome);
+  $('#btn-portal-2').addEventListener('click', portalTab('model'));
+  $('#brand-logo').closest('.brand').addEventListener('click', goHome);
+  // Puslapio „Uždaryti“ (×) – grįžtama į pradžią
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.odm-page [data-act=close], .portal-page [data-pa=close]')) setTimeout(() => !odmUI.isOpen && !liveUI.isOpen && !planUI.isOpen && !portalUI.isOpen && homeUI.open());
+  });
   $('#btn-user').addEventListener('click', (e) => {
     const old = document.querySelector('.user-menu');
     if (old) return old.remove();
@@ -2051,10 +2094,15 @@ let portalUI = null;
       else if (a === 'out') logout();
       m.remove();
     });
-    setTimeout(() => document.addEventListener('pointerdown', (ev) => !m.contains(ev.target) && m.remove(), { once: true }), 0);
+    // Meniu uždaromas paspaudus bet kur kitur (klausytojas pašalinamas kartu su meniu)
+    const outside = (ev) => {
+      if (m.contains(ev.target) || ev.target.closest('#btn-user')) return;
+      m.remove();
+    };
+    new MutationObserver((_, obs) => !m.isConnected && (document.removeEventListener('pointerdown', outside, true), obs.disconnect())).observe(document.body, { childList: true });
+    setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
   });
-  // Klientas pradeda nuo savo srities
-  if (user.role === 'client') portalUI.open();
+  homeUI.open();
 })();
 
 // Skydelis mažuose ekranuose
@@ -2072,7 +2120,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || homeUI?.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2129,6 +2177,7 @@ onLangChange(() => {
   liveUI.rerender();
   planUI.rerender();
   portalUI?.rerender();
+  homeUI?.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
     $('#status-model').textContent = s.points ? tr('{n} taškų', { n: fmtInt(s.points) }) : tr('{n} trikampių', { n: fmtInt(s.triangles) });

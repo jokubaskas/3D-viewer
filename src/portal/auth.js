@@ -39,7 +39,8 @@ export function showLogin() {
       f.querySelector('button').disabled = false;
     }
   });
-  setTimeout(() => f.email.focus(), 50);
+  // Žymeklis į el. paštą – tik jei vartotojas (ar slaptažodžių tvarkyklė) dar nieko nepradėjo pildyti
+  setTimeout(() => !f.contains(document.activeElement) && f.email.focus(), 50);
 }
 
 /** Kvietimo nuoroda: slaptažodžio nusistatymas. */
@@ -79,7 +80,7 @@ export async function showInvite(token) {
       err.hidden = false;
     }
   });
-  setTimeout(() => f.password.focus(), 50);
+  setTimeout(() => !f.contains(document.activeElement) && f.password.focus(), 50);
 }
 
 /** Slaptažodžio keitimas (prisijungus). */
