@@ -259,7 +259,7 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
   - pavieniai „persigalvojimai“ būsenos nekeičia; ji pakeičiama, kai kita būsena kelis kartus matoma užtikrintai (pvz. žmogus nusiėmė šalmą);
   - įspėjimas ir ataskaita – tik užfiksuotos būsenos.
 - AI veikia CPU, todėl transliacijai greičiausias modelis yra `AI_DETECTOR=nano` faile `.env` (tada perkurkite AI: `start-windows.bat`).
-- **Kur išsaugoma (prisijungus administratoriui):** originalus vaizdas (be žymėjimų) – skiltyje **Įrašai**, AI ataskaita (ZIP su pažymėtu vaizdu, įvykiais, CSV) – **Ataskaitos**. Abu iš pradžių matomi tik administratoriui; klientams priskiriami ar ištrinami tose skiltyse. Ataskaita kuriama, kai įrašymo pradžioje įjungtas AI. Be serverio (ar klientui) – atsisiunčiama į kompiuterį, kaip anksčiau.
+- **Kur išsaugoma (prisijungus administratoriui):** originalus vaizdas (be žymėjimų) – skiltyje **Įrašai**, AI ataskaita (ZIP su pažymėtu vaizdu, įvykiais, CSV) – **Ataskaitos**. WebM įrašams įrašoma trukmė (kitaip naršyklės jų neprasuka iki galo). Abu iš pradžių matomi tik administratoriui; klientams priskiriami ar ištrinami tose skiltyse. Ataskaita kuriama, kai įrašymo pradžioje įjungtas AI. Be serverio (ar klientui) – atsisiunčiama į kompiuterį, kaip anksčiau.
 - **Įrašas su AI ir ataskaita klientui:** jei AI įjungtas, įrašymas (⏺) įrašo vaizdą su rėmeliais, skaičiais, data ir laiku. Sustabdžius atsisiunčiamas ZIP:
   - `ataskaita.html` – atsidaro bet kurioje naršyklėje: vaizdo įrašas, santrauka (kai sekama – kiek skirtingų objektų, daugiausia vienu metu, vidutiniškai, kiek laiko matėsi); sekant objektus įvykių sąraše – vienas įrašas kiekvienam objektui (#numeris, visi laikotarpiai, kai matėsi, ir geriausias jo kadras), grafikas laike, įvykių sąrašas – vienas įrašas kiekvienam objektų pasirodymui (AI kortelėje „Į įrašo ataskaitos įvykius“ galima pasirinkti, kurios grupės patenka į įvykius, santrauką ir grafiką – pvz. tik „Be šalmo“; kadruose apvedamos tik jos) (nuo–iki, daugiausia) su geriausiu AI analizuotu kadru, kuriame rėmeliai tiksliai ant objektų; pavieniai praleisti kadrai įvykių nedubliuoja; spustelėjus laiką – peršokama į įrašo vietą; galima spausdinti į PDF;
   - `irasas.mp4 / .webm` – vaizdas su žymėjimais;
@@ -289,7 +289,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - **Klientas** – tik tai, ką jam priskyrėte. Mygtukai:
   - **Mano 3D modeliai** – peržiūra ir matavimai;
   - **Mano gyvos transliacijos** – žiūrėjimas, AI aptikimas ir atpažįstamų objektų pasirinkimas, kadrai, įrašai;
-  - **Mano ataskaitos**, **Mano įrašai** – peržiūra ir atsisiuntimas.
+  - **Mano ataskaitos**, **Mano įrašai** – peržiūra ir atsisiuntimas: **Atidaryti HTML ataskaitą** atidaro AI ataskaitą iš ZIP iškart naršyklėje (vaizdas, įvykiai, grafikas, spausdinimas į PDF; ataskaita rodoma izoliuotai, be jos skriptų), **Atsisiųsti ZIP** – visą archyvą; vaizdo įrašai peržiūrimi programos lange.
 
 **Kaip tai veikia:**
 - Teises tikrina serveris, ne naršyklė. Portalas (`deploy/portal`, FastAPI + SQLite) saugo paskyras, priskyrimus ir failus Docker tome `portal-data`.

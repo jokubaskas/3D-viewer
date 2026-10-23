@@ -3,11 +3,14 @@
 import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { api, uploadFile, fileUrl } from './api.js';
+import { openVideo, openReport } from './viewer.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmtDate = (s) => (s ? new Date(s * 1000).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 const fmtSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`);
 const INLINE = /\.(pdf|png|jpe?g|webp|mp4|webm|txt|csv)$/i;
+const VIDEO = /\.(mp4|webm)$/i;
+const REPORT = /\.(zip|html?)$/i;
 
 const TABS = [
   { id: 'model', label: 'Mano 3D modeliai', icon: 'cube', empty: 'Dar nėra priskirtų 3D modelių.', desc: 'Atidarykite modelį peržiūrai ir matavimams.', adminDesc: 'Įkelkite 3D modelius ir pažymėkite, kuriems klientams jie matomi.' },
@@ -90,7 +93,7 @@ export function createPortalUI(app) {
     const files = i.files || [];
     const def = TABS.find((x) => x.id === i.kind);
     const fileRow = (f) => `<li><span title="${esc(f.name)}">${esc(f.name)}</span><span class="muted">${fmtSize(f.size)}</span>
-      ${INLINE.test(f.name) ? `<a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f)}" target="_blank" rel="noopener" title="${esc(t('Peržiūrėti'))}">${icon('eye')}</a>` : ''}
+      ${VIDEO.test(f.name) ? `<button class="btn btn-ghost btn-sm icon-only" data-pa="video" data-fid="${f.id}" title="${esc(t('Peržiūrėti'))}">${icon('eye')}</button>` : REPORT.test(f.name) && i.kind === 'report' ? `<button class="btn btn-ghost btn-sm icon-only" data-pa="report" data-fid="${f.id}" title="${esc(t('Atidaryti ataskaitą'))}">${icon('eye')}</button>` : INLINE.test(f.name) ? `<a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f)}" target="_blank" rel="noopener" title="${esc(t('Peržiūrėti'))}">${icon('eye')}</a>` : ''}
       <a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f, true)}" title="${esc(t('Atsisiųsti'))}">${icon('save')}</a>
       ${admin ? `<button class="btn btn-ghost btn-sm icon-only danger" data-pa="rmfile" data-fid="${f.id}" title="${esc(t('Ištrinti failą'))}">${icon('close')}</button>` : ''}</li>`;
     // Pagrindinis veiksmas – didelis mygtukas; modelio failai – sutraukti (jų dažniausiai nereikia)
@@ -100,7 +103,15 @@ export function createPortalUI(app) {
       if (files.length) main = `<button class="btn btn-primary" data-pa="open">${icon('cube')}${esc(t('Atidaryti 3D'))}</button>`;
       if (files.length) filesHtml = `<details class="pt-files-box"><summary>${esc(t('Failai ({n})', { n: files.length }))}</summary><ul class="pt-files">${files.map(fileRow).join('')}</ul></details>`;
     } else if (i.kind === 'stream') main = `<button class="btn btn-primary" data-pa="watch">${icon('play')}${esc(t('Žiūrėti'))}</button>`;
-    else filesHtml = files.length ? `<ul class="pt-files">${files.map(fileRow).join('')}</ul>` : '';
+    else {
+      // Įrašas – peržiūra lange; ataskaita (AI įrašo ZIP ar HTML) – atidaroma naršyklėje, ZIP lieka atsisiųsti
+      const rep = i.kind === 'report' && files.find((f) => REPORT.test(f.name));
+      const vid = files.find((f) => VIDEO.test(f.name));
+      if (rep)
+        main = `<button class="btn btn-primary" data-pa="report" data-fid="${rep.id}">${icon('report')}${esc(t('Atidaryti HTML ataskaitą'))}</button><a class="btn btn-outline" href="${fileUrl(i, rep, true)}">${icon('save')}${esc(t(/\.zip$/i.test(rep.name) ? 'Atsisiųsti ZIP' : 'Atsisiųsti'))}</a>`;
+      else if (vid) main = `<button class="btn btn-primary" data-pa="video" data-fid="${vid.id}">${icon('play')}${esc(t('Peržiūrėti'))}</button><a class="btn btn-outline" href="${fileUrl(i, vid, true)}">${icon('save')}${esc(t('Atsisiųsti'))}</a>`;
+      filesHtml = files.length ? `<ul class="pt-files">${files.map(fileRow).join('')}</ul>` : '';
+    }
     const meta = [fmtDate(i.updated), i.kind !== 'stream' ? t('{n} failų · {s}', { n: files.length, s: fmtSize(i.size || 0) }) : ''].filter(Boolean).join(' · ');
     const tools = admin
       ? `<span class="pt-card-tools">
@@ -256,6 +267,10 @@ export function createPortalUI(app) {
     if (!it) return;
     try {
       if (act === 'open') await openModel(it);
+      else if (act === 'video') {
+        const f = it.files.find((x) => x.id === +b.dataset.fid);
+        if (f) openVideo(fileUrl(it, f), it.title, fileUrl(it, f, true));
+      } else if (act === 'report') await showReport(it, it.files.find((x) => x.id === +b.dataset.fid));
       else if (act === 'watch') {
         close();
         await app.openStream(it);
@@ -328,6 +343,35 @@ export function createPortalUI(app) {
       }
     } catch (ex) {
       app.toast(ex.message, 'error', 7000);
+    }
+  }
+
+  /** Failas iš serverio su eiga (krovimo juostoje). */
+  async function fetchBlob(it, f) {
+    const r = await fetch(fileUrl(it, f, true), { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const reader = r.body.getReader();
+    const parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+      app.loading(true, t('Atsisiunčiama… {p} %', { p: Math.round((100 * got) / (f.size || 1)) }), got / (f.size || 1));
+    }
+    return new Blob(parts);
+  }
+
+  async function showReport(it, f) {
+    if (!f) return;
+    app.loading(true, t('Atsisiunčiama…'), 0);
+    try {
+      const blob = await fetchBlob(it, f);
+      app.loading(true, t('Ruošiama ataskaita…'), null);
+      await openReport(blob, { title: it.title, downloadUrl: fileUrl(it, f, true), html: /\.html?$/i.test(f.name) });
+    } finally {
+      app.loading(false);
     }
   }
 

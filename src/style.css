@@ -756,7 +756,20 @@ body.portal.page-open .viewer-only { display: none !important; }
 .pt-card-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pt-card-title b { font-size: 15.5px; overflow-wrap: anywhere; }
 .pt-card-tools { display: flex; gap: 0; flex: none; margin: -4px -6px 0 0; }
+a.btn { text-decoration: none; }
+.pt-main { display: flex; flex-direction: column; gap: 8px; }
 .pt-main .btn { width: 100%; justify-content: center; }
+
+/* Failų peržiūra (vaizdo įrašas, HTML ataskaita) */
+.dialog.fv { width: min(1200px, calc(100vw - 24px)); height: calc(100vh - 24px); max-height: none; max-width: none; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.dialog.fv:not([open]) { display: none; }
+.fv-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 18px; border-bottom: 1px solid var(--line); flex: none; }
+.fv-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--strong); }
+.fv-tools { display: flex; gap: 6px; align-items: center; flex: none; }
+.fv-body { flex: 1; min-height: 0; display: flex; background: #000; }
+.fv-body video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.fv-report { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
+@media (max-width: 640px) { .fv-tools .btn:not(.icon-only) { font-size: 0; gap: 0; padding: 0 9px; } .fv-tools .btn:not(.icon-only) svg { margin: 0; } }
 .pt-files-box summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
 .pt-files-box[open] summary { margin-bottom: 4px; }
 .pt-clients { border-top: 1px solid var(--line-2); padding-top: 8px; gap: 6px; }
