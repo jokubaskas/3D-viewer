@@ -384,7 +384,15 @@ export function createPortalUI(app) {
     rerender: render,
     reload: load,
     /** Admin: transliacijos priskyrimas klientams (iš transliacijos puslapio). */
-    async publishStream(name, source) {
+    /** Admin: kam matoma transliacija (iš transliacijų lango kortelės „Priskirtos klientams“). */
+    async assignItem(item, onDone) {
+      if (!users.length) users = await api('users').catch(() => []);
+      dialog(`<h2>${esc(t('Kam matoma: {n}', { n: item.title }))}</h2>${clientChecks(item.clients || [])}`, async (f) => {
+        await api(`items/${item.id}`, { method: 'PATCH', body: { clients: checked(f) } });
+        onDone?.();
+      });
+    },
+    async publishStream(name, source, onDone) {
       if (!users.length) users = await api('users').catch(() => []);
       const existing = items.length ? items : await api('items?kind=stream').catch(() => []);
       const same = existing.find((i) => i.kind === 'stream' && JSON.stringify(i.meta?.source || i.meta?.path) === JSON.stringify(source.source || source.path));
@@ -399,6 +407,7 @@ export function createPortalUI(app) {
           else await api('items', { method: 'POST', body });
           items = await api('items');
           app.toast(t('Transliacija priskirta'), 'success');
+          onDone?.();
         },
       );
     },
