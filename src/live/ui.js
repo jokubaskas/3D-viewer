@@ -6,7 +6,7 @@ import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
-import { api } from '../portal/api.js';
+import { api, uploadFile } from '../portal/api.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
 const LS_PUSH = 'atea3d.live.push';
@@ -75,7 +75,7 @@ export function createLiveUI(app) {
       <div>
         <h2>Tiesioginė transliacija</h2>
         <p class="muted small admin-only">Dronų, kamerų ir svetainių transliacijos, AI aptikimas, kadrai ir įrašai.</p>
-        <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami, daryti kadrus ir įrašyti.</p>
+        <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami.</p>
       </div>
       <button class="btn btn-ghost icon-only" data-act="close" title="Uždaryti">${icon('close')}</button>
     </header>
@@ -121,8 +121,8 @@ export function createLiveUI(app) {
           <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
           <label class="row">Modelis <select id="live-ai-model"></select></label>
           <div id="live-ai-groups" class="live-ai-groups"></div>
-          <div class="small muted" style="margin-top:6px">Į įrašo ataskaitos įvykius:</div>
-          <div id="live-ai-report" class="live-ai-groups"></div>
+          <div class="small muted admin-only" style="margin-top:6px">Į įrašo ataskaitos įvykius:</div>
+          <div id="live-ai-report" class="live-ai-groups admin-only"></div>
           <label class="row">Detalumas
             <select id="live-ai-detail"></select>
           </label>
@@ -321,8 +321,8 @@ export function createLiveUI(app) {
         <span class="live-tools">
           <button class="btn btn-ghost btn-sm icon-only" data-tact="ai" title="AI: žmonės ir transportas">${icon('magic')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
-          <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
-          <button class="btn btn-ghost btn-sm icon-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
+          <button class="btn btn-ghost btn-sm icon-only admin-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
+          <button class="btn btn-ghost btn-sm icon-only admin-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
           <button class="btn btn-ghost btn-sm icon-only admin-only portal-only" data-tact="publish" title="Priskirti klientams">${icon('user')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="reload" title="Prisijungti iš naujo">${icon('refresh')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="full" title="Visas ekranas">${icon('fullscreen')}</button>
@@ -432,6 +432,8 @@ export function createLiveUI(app) {
     const tile = tiles.get(e.target.closest('.live-tile')?.dataset.id);
     if (!act || !tile) return;
     const { player: p, stream: s, el } = tile;
+    // Klientas tik žiūri ir valdo AI: kadrus ir įrašus jam pateikia administratorius
+    if (role === 'client' && (act === 'snap' || act === 'rec' || act === 'publish')) return;
     if (act === 'close') hide(s.id);
     else if (act === 'publish') {
       // Admin: transliacija klientams – serveryje lieka šaltinis ir raktai, klientas gauna tik kelią
@@ -481,7 +483,7 @@ export function createLiveUI(app) {
             // Įrašas su AI žymėjimais: vaizdas + rėmeliai + skaičiai + laikas, po to – ataskaita klientui
             const comp = new AiComposer(p, tile.ai, { name: s.name, settings: aiSet, telemetry: () => tm?.boxFor(s.name) });
             try {
-              await p.startRecording({ stream: comp.stream, extra: { comp } });
+              await p.startRecording({ stream: comp.stream, extra: { comp }, original: true });
             } catch (err) {
               comp.stop();
               throw err;
@@ -534,10 +536,20 @@ export function createLiveUI(app) {
     const r = await tile.player.stopRecording();
     if (r) saveRecording(tile.stream, r, false);
   }
-  async function saveRecording(stream, { blob, ext, extra }, cut) {
+  async function saveRecording(stream, { blob, ext, extra, original }, cut) {
     const comp = extra?.comp;
     comp?.stop();
     if (!blob.size) return;
+    resetRecButton(stream.id);
+    // Administratorius (serveryje): originalus vaizdas → „Įrašai“, AI ataskaita → „Ataskaitos“
+    if (role === 'admin') {
+      try {
+        await saveToPortal(stream, { blob, ext, comp, original }, cut);
+        return;
+      } catch (err) {
+        app.toast(t('Į serverį išsaugoti nepavyko ({e}) – atsisiunčiama į kompiuterį', { e: err.message }), 'error', 8000);
+      }
+    }
     if (comp) {
       app.toast('Ruošiama ataskaita…', 'info', 3000);
       try {
@@ -549,13 +561,38 @@ export function createLiveUI(app) {
       }
     } else download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
     app.toast(cut ? 'Ryšys nutrūko – įrašas išsaugotas' : comp ? 'Įrašas ir AI ataskaita išsaugoti' : 'Įrašas išsaugotas', cut ? 'warn' : 'success', 5000);
-    const tile = tiles.get(stream.id);
-    if (tile) {
-      const btn = tile.el.querySelector('[data-tact=rec]');
-      btn.classList.remove('recording');
-      btn.innerHTML = icon('record');
-      tile.el.querySelector('.live-rec').hidden = true;
+  }
+  function resetRecButton(sid) {
+    const tile = tiles.get(sid);
+    if (!tile) return;
+    const btn = tile.el.querySelector('[data-tact=rec]');
+    btn.classList.remove('recording');
+    btn.innerHTML = icon('record');
+    tile.el.querySelector('.live-rec').hidden = true;
+  }
+  /** Įrašas ir ataskaita į portalą (nepriskirti – matomi tik administratoriui, vėliau priskiriami klientams). */
+  async function saveToPortal(stream, { blob, ext, comp, original }, cut) {
+    const when = new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' });
+    const base = `${safe(stream.name)}_${stamp()}`;
+    const video = original?.blob?.size ? original : comp ? null : { blob, ext };
+    const done = [];
+    const upload = async (kind, title, note, file, name) => {
+      const it = await api('items', { method: 'POST', body: { kind, title, note, clients: [] } });
+      app.toast(t('Įkeliama: {n}…', { n: title }), 'info', 4000);
+      await uploadFile(it.id, file, name);
+      return it;
+    };
+    if (video) {
+      await upload('recording', `${stream.name} · ${when}`, cut ? t('Ryšys nutrūko – įrašas gali būti nepilnas') : '', video.blob, `${base}.${video.ext}`);
+      done.push(t('įrašas – „Įrašai“'));
     }
+    if (comp) {
+      app.toast('Ruošiama ataskaita…', 'info', 3000);
+      const zip = await reportZip({ name: stream.name, video: { blob, ext }, comp, settings: { ...aiSet, modelName: aiSet.model ? aiSet.modelName : '' } });
+      await upload('report', `${stream.name} · AI ataskaita · ${when}`, t('Atsisiųskite ZIP ir atidarykite ataskaita.html'), zip, `${base}_AI.zip`);
+      done.push(t('AI ataskaita – „Ataskaitos“'));
+    }
+    app.toast(t('Išsaugota serveryje: {l}. Priskirti klientams galite pradžios ekrane.', { l: done.join(', ') }), cut ? 'warn' : 'success', 8000);
   }
   function tickRec() {
     clearInterval(recTimer);
