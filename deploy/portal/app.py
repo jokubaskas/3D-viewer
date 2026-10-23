@@ -262,7 +262,7 @@ async def change_pw(req: Request):
         new = str(body.get("password", ""))
         if (p := pw_problem(new)) is not None:
             raise HTTPException(400, p)
-        con.execute("UPDATE users SET pw=? WHERE id=?", (hash_pw(new), u["id"]))
+        con.execute("UPDATE users SET pw=?, invite_hash=NULL, invite_exp=NULL WHERE id=?", (hash_pw(new), u["id"]))
         # Kitos sesijos (pvz. kitame kompiuteryje) atjungiamos
         con.execute("DELETE FROM sessions WHERE user_id=? AND hash<>?", (u["id"], u["s_hash"]))
         audit(con, u["id"], client_ip(req), "password_change")
@@ -307,7 +307,18 @@ async def invite_accept(req: Request):
 
 # --------------------------------------------------------------------------- nginx auth_request
 ADMIN_ONLY = re.compile(r"^/(odm/|live/api/|ext/|ai/train|ai/models/(active|delete))")
-STREAM_PATH = re.compile(r"^/live/(?:webrtc|hls)/([^/?]+)")
+STREAM_PATH = re.compile(r"^/live/(?:webrtc|hls)/([A-Za-z0-9_-]+)(?:/|$)")
+SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~/-]*$")
+
+
+def clean_path(uri: str) -> str | None:
+    """Kelias iš X-Original-URI (nginx $request_uri – neapdorotas). nginx vietą (location) parenka pagal
+    normalizuotą kelią (%XX iškoduoti, „..“ išspręsti, „//“ sujungti), todėl tokie keliai atmetami: kitaip
+    /ai/../odm/… ar /ai/%74rain patikrą praeitų kaip /ai/…, o nginx juos nukreiptų kitur."""
+    path = uri.split("?", 1)[0].split("#", 1)[0]
+    if not SAFE_PATH.match(path) or "//" in path or any(seg in (".", "..") for seg in path.split("/")):
+        return None
+    return path
 
 
 def allowed_paths(con, user_id: int) -> set[str]:
@@ -331,7 +342,8 @@ def auth_check(req: Request):
             return Response(status_code=401)
         if u["role"] == "admin":
             return Response(status_code=204)
-        if ADMIN_ONLY.match(uri):
+        uri = clean_path(uri)
+        if uri is None or ADMIN_ONLY.match(uri):
             return Response(status_code=403)
         m = STREAM_PATH.match(uri)
         if m:
@@ -555,6 +567,9 @@ async def files_upload(iid: int, name: str, req: Request):
         path.unlink(missing_ok=True)
         raise
     with _db_lock, db() as con:
+        if not con.execute("SELECT 1 FROM items WHERE id=?", (iid,)).fetchone():  # ištrintas įkeliant
+            path.unlink(missing_ok=True)
+            raise HTTPException(404, "Nėra")
         old = con.execute("SELECT disk FROM files WHERE item_id=? AND name=?", (iid, fname)).fetchone()
         if old:
             (FILES / old["disk"]).unlink(missing_ok=True)

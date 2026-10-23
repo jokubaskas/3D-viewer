@@ -90,6 +90,11 @@ def test_auth_check_rules(env):
     assert chk(ca, "/live/hls/drone/index.m3u8") == 403  # nepriskirta
     assert chk(ca, f"/live/hls/item-{p['id']}/index.m3u8") == 403
     assert chk(ca, "/ai/detect") == 204
+    # Keliai, kuriuos nginx normalizuoja kitaip nei jie atrodo – visada atmetami
+    for uri in ["/ai/../odm/info", "/ai//train", "/ai/%74rain", "/ai/./train", "/ai/models/../models/delete",
+                f"/live/hls/item-{s['id']}/../drone/index.m3u8", f"/live/hls/item-{s['id']}/%2e%2e/drone/x", "/ai/../live/api/v3/paths/list"]:
+        assert chk(ca, uri) == 403, uri
+    assert chk(ca, f"/live/hls/item-{s['id']}/index.m3u8?_HLS_msn=3&_HLS_part=1") == 204
     assert chk(client(), "/ai/detect") == 401
     # Klientui nerodomas šaltinio adresas su slaptažodžiu
     assert "rtsp://" not in ca.get("/api/items").text

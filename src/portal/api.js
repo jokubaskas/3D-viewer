@@ -59,6 +59,7 @@ export async function whoAmI() {
   try {
     const r = await fetch('./api/me', { credentials: 'same-origin', cache: 'no-store' });
     if (r.status === 401) return { mode: 'login' };
+    if (r.status >= 500) return { mode: 'down' }; // portalas paleidžiamas arba sustojęs
     if (!r.ok) return { mode: 'local' }; // 404 – serveryje nėra portalo (pvz. kūrimo režimas)
     const ct = r.headers.get('content-type') || '';
     if (!ct.includes('json')) return { mode: 'local' };

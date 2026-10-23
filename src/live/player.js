@@ -120,6 +120,7 @@ export class LivePlayer {
       kind = p?.kind || 'guess';
       if (p?.url) url = this.srcUrl = p.url;
     }
+    this.srcKind = kind;
     const direct = {
       whep: [['webrtc', url]],
       hls: [['hls', url]],
@@ -158,9 +159,11 @@ export class LivePlayer {
   publishSource() {
     if (this.stream.path) return { path: this.stream.path };
     if (this.gwSource) return { source: { url: this.gwSource.url, extra: this.gwSource.extra } };
-    const c = classify(this.stream.url);
-    if (!this.srcUrl && (c.kind === 'embed' || this.embedded || c.kind === 'invalid')) return null;
-    return { source: { url: this.srcUrl || this.stream.url } };
+    // Serveris (MediaMTX) gali paimti tik RTSP / RTMP / SRT ir HLS srautus (WebRTC – per gwSource aukščiau);
+    // MJPEG, kadrų, MP4 failų ir tinklalapių – ne
+    if (classify(this.stream.url).kind === 'gateway') return { source: { url: this.stream.url } };
+    if (this.srcKind === 'hls') return { source: { url: this.srcUrl || this.stream.url } };
+    return null;
   }
 
   // ---------------------------------------------------------------- paleidimas

@@ -5,13 +5,21 @@
 # siųsti ir tiesiai čia: rtmp://<kompiuterio-IP>:1935/<pavadinimas>, rtsp://<IP>:8554/<pavadinimas>.
 logLevel: info
 
-# API pasiekiamas tik Docker tinkle (prievadas nepublikuojamas), todėl leidžiamas be slaptažodžio
+# Teisės:
+#  - siųsti (publish) – iš bet kur: dronas / kamera vietiniame tinkle siunčia rtmp://<kompiuteris>:1935/<pavadinimas>;
+#  - žiūrėti ir valdyti (read, playback, api) – tik programai: nginx ir portalas Docker tinkle (docker-compose
+#    „atea3d“, 172.29.88.0/24). Žiūrintieji gauna vaizdą per nginx (/live/webrtc, /live/hls) – ten tikrinamos teisės
+#    (klientas – tik jam priskirtos transliacijos). Tiesiai per RTSP / RTMP iš tinklo žiūrėti negalima.
 authInternalUsers:
   - user: any
     pass:
     ips: []
     permissions:
       - action: publish
+  - user: any
+    pass:
+    ips: ['127.0.0.1', '::1', '172.29.88.0/24']
+    permissions:
       - action: read
       - action: playback
       - action: api

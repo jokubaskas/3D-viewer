@@ -43,6 +43,13 @@ export function showLogin() {
   setTimeout(() => !f.contains(document.activeElement) && f.email.focus(), 50);
 }
 
+/** Serveris (portalas) laikinai nepasiekiamas – bandoma vėl kas 5 s. */
+export function showDown() {
+  const el = screen(`<h1>Serveris paleidžiamas</h1><p>Paskyrų paslauga dar neatsako. Puslapis atsinaujins automatiškai.</p><button class="btn btn-outline" type="submit">Bandyti dabar</button>`);
+  el.querySelector('form').addEventListener('submit', (e) => (e.preventDefault(), location.reload()));
+  setTimeout(() => location.reload(), 5000);
+}
+
 /** Kvietimo nuoroda: slaptažodžio nusistatymas. */
 export async function showInvite(token) {
   let info = null;
@@ -95,10 +102,11 @@ export function changePasswordDialog(toast) {
       <label class="row">Pakartokite <input name="password2" type="password" autocomplete="new-password" required /></label>
       <p class="small muted">Pakeitus kitose naršyklėse ir kompiuteriuose būsite atjungti.</p>
       <div class="auth-err" hidden></div>
-      <menu><button class="btn btn-ghost" value="cancel" formnovalidate>Atšaukti</button><button class="btn btn-primary" value="ok">Keisti</button></menu>
+      <menu><button class="btn btn-ghost" type="button" data-cancel>Atšaukti</button><button class="btn btn-primary" value="ok">Keisti</button></menu>
     </form>`;
   document.body.append(d);
   const f = d.querySelector('form');
+  d.querySelector('[data-cancel]').addEventListener('click', () => d.close());
   f.addEventListener('submit', async (e) => {
     if (e.submitter?.value !== 'ok') return;
     e.preventDefault();

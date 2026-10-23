@@ -767,7 +767,7 @@ export function createOdmUI(app) {
     const done = projects.filter((p) => p.statusCode === STATUS.COMPLETED && !p.seen);
     b.hidden = !running.length && !done.length;
     b.textContent = running.length ? `${t('{n} apdorojama', { n: running.length })}${running[0].statusCode === STATUS.RUNNING ? ` · ${nf(running[0].progress, 0)} %` : ''}` : t('{n} paruošta', { n: done.length });
-    b.className = `badge ${running.length ? 'run' : 'ok'}`;
+    b.className = `badge admin-only ${running.length ? 'run' : 'ok'}`;
   }
 
   // ------------------------------------------------------------------ Atidarymas / uždarymas
