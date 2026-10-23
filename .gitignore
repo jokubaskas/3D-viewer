@@ -4,3 +4,4 @@ dist-single
 .DS_Store
 *.whl
 __pycache__/
+deploy/certs/

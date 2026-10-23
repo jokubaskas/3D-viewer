@@ -48,8 +48,12 @@ services:
     restart: unless-stopped
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+      # Patikimi sertifikatai iš Windows (start-windows.bat → export-certs.ps1): įmonių tinkluose HTTPS ryšius
+      # pasirašo įmonės sertifikatas – be jo serveris negali paimti transliacijos iš https / wheps šaltinio (pvz. diab)
+      - ./certs:/certs:ro
     environment:
       - MTX_WEBRTCADDITIONALHOSTS=${LIVE_HOSTS:-127.0.0.1}
+      - SSL_CERT_DIR=${CA_DIR:-}
     expose:
       - "9997"
       - "8888"
