@@ -34,12 +34,12 @@ if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - p
 rem Vienkartinis perejimas i vidini tinkla "atea3d": seni konteineriai prijungti prie ankstesnio tinklo ir
 rem be perkurimo nepasileidzia ("network deploy_default not found"). Duomenys (projektai, modeliai, paskyros) islieka.
 set "NETFIX="
-for /f %%i in ('docker compose ps -aq 2^>nul') do (
+for /f %%i in ('docker compose --profile internet ps -aq 2^>nul') do (
   docker inspect -f "{{json .NetworkSettings.Networks}}" %%i 2>nul | findstr /c:"atea3d" >nul || set "NETFIX=1"
 )
 if defined NETFIX (
   echo Atnaujinamas vidinis Docker tinklas ^(vienkartinai^)...
-  docker compose down --remove-orphans >nul 2>nul
+  docker compose --profile internet down --remove-orphans >nul 2>nul
 )
 
 rem Senas (ar nepasileides) programos konteineris - sukuriamas is naujo
