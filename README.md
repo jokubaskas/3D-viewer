@@ -323,6 +323,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - Kompiuteris turi būti įjungtas ir neužmigęs: Windows → Maitinimas → Miegas: **Niekada**; Docker Desktop → **Start when you sign in**.
 - Duomenų atsarginės kopijos: `docker run --rm -v deploy_portal-data:/d -v %cd%:/b alpine tar czf /b/portalas.tgz -C /d .`
 - Iš interneto transliacijos rodomos per HLS (~2–5 s vėlavimas): WebRTC vaizdo srautas per tunelį neina.
+- Įmonių tinkluose HTTPS ryšius dažnai pasirašo įmonės sertifikatas. `start-windows.bat` (`export-certs.ps1`) kiekvieną kartą perduoda Windows patikimus sertifikatus transliacijų serveriui – be jų serveris negalėtų paimti vaizdo iš https / wheps šaltinio, pvz. diab (žurnale – `x509: certificate signed by unknown authority`).
 - Programa, atidaryta iš disko (`release\…html`), su serveriu neprisijungia – serverio funkcijoms atidarykite `http://localhost:8080`.
 
 ## Kūrimas

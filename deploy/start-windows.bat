@@ -37,6 +37,12 @@ docker compose rm -s -f web >nul 2>nul
 echo.
 echo Paleidziama (pirma karta atsisiuncia ~6 GB: OpenDroneMap + AI modeliai, gali uztrukti 15-30 min.)...
 echo Jei serveris jau veike, jis bus atnaujintas.
+rem Patikimi Windows sertifikatai transliaciju serveriui (imoniu tinkluose HTTPS pasirasomas imones sertifikatu)
+set "CA_DIR="
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0export-certs.ps1" >nul 2>nul
+rem Tik jei eksportas pavyko (tuscias failas be sertifikatu sugadintu HTTPS patikra)
+for %%F in ("certs\windows-roots.pem") do if %%~zF GTR 1000 set "CA_DIR=/certs"
+
 rem Prieiga is interneto (Cloudflare Tunnel) - tik jei .env faile nustatytas CF_TUNNEL_TOKEN
 set "PROFILE="
 for /f "tokens=1,* delims==" %%a in ('findstr /b "CF_TUNNEL_TOKEN=" .env 2^>nul') do if not "%%b"=="" set "PROFILE=--profile internet"
