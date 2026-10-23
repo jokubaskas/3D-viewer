@@ -75,7 +75,7 @@ export function createLiveUI(app) {
       <div>
         <h2>Tiesioginė transliacija</h2>
         <p class="muted small admin-only">Dronų, kamerų ir svetainių transliacijos, AI aptikimas, kadrai ir įrašai.</p>
-        <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami, daryti kadrus ir įrašyti.</p>
+        <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami.</p>
       </div>
       <button class="btn btn-ghost icon-only" data-act="close" title="Uždaryti">${icon('close')}</button>
     </header>
@@ -121,8 +121,8 @@ export function createLiveUI(app) {
           <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
           <label class="row">Modelis <select id="live-ai-model"></select></label>
           <div id="live-ai-groups" class="live-ai-groups"></div>
-          <div class="small muted" style="margin-top:6px">Į įrašo ataskaitos įvykius:</div>
-          <div id="live-ai-report" class="live-ai-groups"></div>
+          <div class="small muted admin-only" style="margin-top:6px">Į įrašo ataskaitos įvykius:</div>
+          <div id="live-ai-report" class="live-ai-groups admin-only"></div>
           <label class="row">Detalumas
             <select id="live-ai-detail"></select>
           </label>
@@ -321,8 +321,8 @@ export function createLiveUI(app) {
         <span class="live-tools">
           <button class="btn btn-ghost btn-sm icon-only" data-tact="ai" title="AI: žmonės ir transportas">${icon('magic')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="sound" title="Garsas">${icon('mute')}</button>
-          <button class="btn btn-ghost btn-sm icon-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
-          <button class="btn btn-ghost btn-sm icon-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
+          <button class="btn btn-ghost btn-sm icon-only admin-only" data-tact="snap" title="Kadras (PNG)">${icon('camera')}</button>
+          <button class="btn btn-ghost btn-sm icon-only admin-only" data-tact="rec" title="Įrašyti">${icon('record')}</button>
           <button class="btn btn-ghost btn-sm icon-only admin-only portal-only" data-tact="publish" title="Priskirti klientams">${icon('user')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="reload" title="Prisijungti iš naujo">${icon('refresh')}</button>
           <button class="btn btn-ghost btn-sm icon-only" data-tact="full" title="Visas ekranas">${icon('fullscreen')}</button>
@@ -432,6 +432,8 @@ export function createLiveUI(app) {
     const tile = tiles.get(e.target.closest('.live-tile')?.dataset.id);
     if (!act || !tile) return;
     const { player: p, stream: s, el } = tile;
+    // Klientas tik žiūri ir valdo AI: kadrus ir įrašus jam pateikia administratorius
+    if (role === 'client' && (act === 'snap' || act === 'rec' || act === 'publish')) return;
     if (act === 'close') hide(s.id);
     else if (act === 'publish') {
       // Admin: transliacija klientams – serveryje lieka šaltinis ir raktai, klientas gauna tik kelią

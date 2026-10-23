@@ -1164,6 +1164,7 @@ export const EN = {
   "Atsisiųskite ZIP ir atidarykite ataskaita.html": "Download the ZIP and open ataskaita.html",
   "AI ataskaita – „Ataskaitos“": "AI report – “Reports”",
   "Išsaugota serveryje: {l}. Priskirti klientams galite pradžios ekrane.": "Saved on the server: {l}. You can assign it to clients from the home screen.",
+  "Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami.": "Streams assigned to you. You can turn on AI detection and choose which objects are recognised.",
   "Prisiminti dingusį objektą": "Remember a vanished object for",
   "1 min.": "1 min",
   "5 min.": "5 min",
