@@ -74,14 +74,14 @@ export function createLiveUI(app) {
     <header class="odm-head">
       <div>
         <h2>Tiesioginė transliacija</h2>
-        <p class="muted small admin-only">Įklijuokite transliacijos nuorodą – drono, IP kameros ar svetainės. Galima žiūrėti kelias vienu metu, daryti kadrus ir įrašyti.</p>
+        <p class="muted small admin-only">Dronų, kamerų ir svetainių transliacijos, AI aptikimas, kadrai ir įrašai.</p>
         <p class="muted small client-only">Jums priskirtos transliacijos. Galite įjungti AI aptikimą ir pasirinkti, kokie objektai atpažįstami, daryti kadrus ir įrašyti.</p>
       </div>
       <button class="btn btn-ghost icon-only" data-act="close" title="Uždaryti">${icon('close')}</button>
     </header>
     <div class="odm-body">
       <aside class="odm-side">
-        <section class="card admin-only">
+        <section class="card admin-only" data-card="add">
           <h3>Nauja transliacija</h3>
           <form id="live-add" autocomplete="off">
             <input id="live-url" class="live-input" placeholder="rtsp://…, rtmp://…, https://….m3u8, YouTube…" spellcheck="false" />
@@ -108,15 +108,15 @@ export function createLiveUI(app) {
             Slaptažodį galima įrašyti nuorodoje: rtsp://vartotojas:slaptazodis@192.168.1.64:554/…
           </details>
         </section>
-        <section class="card admin-only">
+        <section class="card admin-only" data-card="saved">
           <h3>Išsaugotos</h3>
           <div id="live-list"></div>
         </section>
-        <section class="card client-only">
+        <section class="card client-only" data-card="mine">
           <h3>Mano gyvos transliacijos</h3>
           <div id="live-mine"></div>
         </section>
-        <section class="card">
+        <section class="card" data-card="ai">
           <h3>AI aptikimas</h3>
           <p class="small muted">Įjunkite prie transliacijos mygtuku ${icon('magic')}. Kadrai analizuojami šio kompiuterio AI paslaugoje (be interneto).</p>
           <label class="row">Modelis <select id="live-ai-model"></select></label>
@@ -136,14 +136,14 @@ export function createLiveUI(app) {
           <label class="row check admin-only"><input type="checkbox" id="live-ai-collect" /> Kaupti kadrus modelio mokymui</label>
           <div id="live-ai-ds" class="small muted admin-only"></div>
         </section>
-        <section class="card admin-only">
+        <section class="card admin-only" data-card="train">
           <h3>Savas AI modelis</h3>
           <p class="small muted">Apmokykite AI atpažinti tai, ko reikia jums (pvz. žmones su šalmais ir be jų) – iš Label Studio / CVAT YOLO eksporto. Mokoma šiame kompiuteryje.</p>
           <div id="live-train"></div>
           <div class="pane-actions"><button class="btn btn-sm btn-outline" data-tr="new">${icon('magic')}Mokyti naują modelį…</button></div>
           <div id="live-models"></div>
         </section>
-        <section class="card admin-only">
+        <section class="card admin-only" data-card="push">
           <h3>Drono transliacija į šį kompiuterį</h3>
           <div class="row"><span>Serveris</span><span id="live-gw" class="chip">…</span></div>
           <p class="small muted">Valdymo pulte (pvz. DJI Pilot, Anzu Smart Control) pasirinkite <b>Transliacija → RTMP</b> ir įveskite adresą. Pultas ir šis kompiuteris turi būti tame pačiame tinkle.</p>
@@ -153,11 +153,12 @@ export function createLiveUI(app) {
         </section>
       </aside>
       <div class="odm-main live-main">
-        <div id="live-grid" class="live-grid"></div>
+        <div id="live-grid" class="live-grid" data-n="0"></div>
         <div id="live-empty" class="live-empty">
           ${icon('live')}
           <b>Nėra rodomų transliacijų</b>
-          <span class="muted small">Įklijuokite nuorodą kairėje arba pasirinkite išsaugotą.</span>
+          <span class="muted small admin-only">Įklijuokite nuorodą kairėje arba pasirinkite išsaugotą.</span>
+          <span class="muted small client-only">Pasirinkite transliaciją kairėje.</span>
         </div>
       </div>
     </div>`;
@@ -994,6 +995,8 @@ export function createLiveUI(app) {
       role = o.role;
       portal = o.portal;
       page.classList.toggle('live-client', role === 'client');
+      // Pavadinimas – kaip pradžios ekrano mygtuko
+      page.querySelector('.odm-head h2').textContent = t(role === 'client' ? 'Mano gyvos transliacijos' : 'Gyvos transliacijos');
       renderMine();
     },
     openItem,

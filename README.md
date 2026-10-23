@@ -282,6 +282,8 @@ Modeliai saugomi Docker tome `ai-models`, todėl išlieka atnaujinus programą. 
 
 Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia prisijungti. Vaidmenys:
 - **Administratorius** – visos funkcijos: 3D modelių atidarymas, ODM, planavimas, transliacijos, AI mokymas, klientų valdymas.
+- **Tema:** antraštėje šalia kalbos perjungiklio – tamsi arba šviesi; įsimenama naršyklėje.
+- Kiekvienas langas atsidaro su „← Pradžia“ mygtuku. Retai naudojamos šoninių stulpelių kortelės (pvz. „Dronai (diab)“, „Savas AI modelis“, apdorojimo serveris) sutrauktos; paspaudus pavadinimą – išsiskleidžia, būsena įsimenama.
 - Prisijungus atsidaro **pradžios ekranas** su dideliais mygtukais pagal teises. Logotipas arba „Pradžia“ antraštėje grąžina į jį, kaip ir puslapio „×“.
 - **Klientas** – tik tai, ką jam priskyrėte. Mygtukai:
   - **Mano 3D modeliai** – peržiūra ir matavimai;

@@ -86,14 +86,14 @@ export function createOdmUI(app) {
     </header>
     <div class="odm-body">
       <aside class="odm-side">
-        <section class="card">
+        <section class="card" data-card="server">
           <h3>Apdorojimo serveris</h3>
           <label class="row">Adresas <input id="odm-url" class="num wide" style="text-align:left;width:170px" /></label>
           <label class="row">Raktas <input id="odm-token" type="password" class="num wide" style="text-align:left;width:170px" placeholder="(nebūtinas)" /></label>
           <div class="row"><button class="btn btn-sm btn-outline" data-act="check">${icon('check')}Tikrinti ryšį</button><span id="odm-server-state" class="small muted"></span></div>
           <div id="odm-server-info" class="small muted"></div>
         </section>
-        <section class="card">
+        <section class="card" data-card="projects">
           <h3>Projektai</h3>
           <div id="odm-projects"></div>
           <div id="odm-server-queue"></div>

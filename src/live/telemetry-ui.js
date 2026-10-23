@@ -37,6 +37,7 @@ export function createTelemetryUI(o) {
 
   const card = document.createElement('section');
   card.className = 'card admin-only';
+  card.dataset.card = 'diab';
   card.innerHTML = `
     <h3>Dronai (diab)</h3>
     <p class="small muted">Dokų ir dronų būsena bei vieta žemėlapyje iš diab. Transliacija, kurios pavadinime yra doko kodas (pvz. ATEA1), rodoma su to drono duomenimis.</p>

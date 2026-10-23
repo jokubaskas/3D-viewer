@@ -10,10 +10,10 @@ const fmtSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${
 const INLINE = /\.(pdf|png|jpe?g|webp|mp4|webm|txt|csv)$/i;
 
 const TABS = [
-  { id: 'model', label: 'Mano 3D modeliai', icon: 'cube', empty: 'Dar nėra priskirtų 3D modelių.' },
-  { id: 'stream', label: 'Mano gyvos transliacijos', icon: 'live', empty: 'Dar nėra priskirtų transliacijų.' },
-  { id: 'report', label: 'Mano ataskaitos', icon: 'report', empty: 'Dar nėra ataskaitų.' },
-  { id: 'recording', label: 'Mano įrašai', icon: 'record', empty: 'Dar nėra įrašų.' },
+  { id: 'model', label: 'Mano 3D modeliai', icon: 'cube', empty: 'Dar nėra priskirtų 3D modelių.', desc: 'Atidarykite modelį peržiūrai ir matavimams.', adminDesc: 'Įkelkite 3D modelius ir pažymėkite, kuriems klientams jie matomi.' },
+  { id: 'stream', label: 'Mano gyvos transliacijos', icon: 'live', empty: 'Dar nėra priskirtų transliacijų.', desc: 'Pasirinkite transliaciją.', adminDesc: 'Klientams priskirtos transliacijos.' },
+  { id: 'report', label: 'Mano ataskaitos', icon: 'report', empty: 'Dar nėra ataskaitų.', desc: 'Peržiūrėkite ir atsisiųskite ataskaitas.', adminDesc: 'Ataskaitos klientams.' },
+  { id: 'recording', label: 'Mano įrašai', icon: 'record', empty: 'Dar nėra įrašų.', desc: 'Vaizdo įrašai ir duomenys.', adminDesc: 'AI įrašai ir vaizdo medžiaga klientams.' },
 ];
 
 /**
@@ -35,18 +35,18 @@ export function createPortalUI(app) {
       <div><h2 id="pt-title">Mano sritis</h2><p class="muted small" id="pt-who"></p></div>
       <button class="btn btn-ghost icon-only" data-pa="close" title="Uždaryti">${icon('close')}</button>
     </header>
-    <nav class="pt-tabs" id="pt-tabs"></nav>
     <div class="pt-body" id="pt-body"></div>`;
   document.getElementById('app').append(page);
   const $ = (s) => page.querySelector(s);
-  $('#pt-who').textContent = `${app.user.name || app.user.email} · ${t(admin ? 'administratorius' : 'klientas')}`;
 
   // Administratoriui – be „Mano“ (jis valdo visų klientų duomenis)
   const adminLabel = (l) => {
     const r = l.replace(/^Mano /, '');
     return r.charAt(0).toUpperCase() + r.slice(1);
   };
-  const tabs = admin ? [...TABS.map((x) => ({ ...x, label: adminLabel(x.label) })), { id: 'clients', label: 'Klientai', icon: 'user' }] : TABS;
+  const tabs = admin
+    ? [...TABS.map((x) => ({ ...x, label: adminLabel(x.label), desc: x.adminDesc })), { id: 'clients', label: 'Klientai', icon: 'user', desc: 'Paskyros, kvietimai ir prieigos.' }]
+    : TABS;
 
   async function load() {
     try {
@@ -59,13 +59,9 @@ export function createPortalUI(app) {
 
   function render() {
     // Antraštė – pasirinktos skilties pavadinimas (į skiltis patenkama iš pradžios ekrano)
-    $('#pt-title').textContent = t(tabs.find((x) => x.id === tab)?.label || 'Mano sritis');
-    $('#pt-tabs').innerHTML = tabs
-      .map((x) => {
-        const n = x.id === 'clients' ? users.filter((u) => u.role === 'client').length : items.filter((i) => i.kind === x.id).length;
-        return `<button class="pt-tab ${tab === x.id ? 'active' : ''}" data-ptab="${x.id}">${icon(x.icon)}<span>${esc(t(x.label))}</span><b>${n}</b></button>`;
-      })
-      .join('');
+    const cur = tabs.find((x) => x.id === tab);
+    $('#pt-title').textContent = t(cur?.label || 'Mano sritis');
+    $('#pt-who').textContent = cur?.desc ? t(cur.desc) : '';
     $('#pt-body').innerHTML = tab === 'clients' ? clientsHtml() : itemsHtml(tab);
   }
 
@@ -92,36 +88,36 @@ export function createPortalUI(app) {
   function cardHtml(i) {
     const up = uploads.get(i.id);
     const files = i.files || [];
+    const def = TABS.find((x) => x.id === i.kind);
+    const fileRow = (f) => `<li><span title="${esc(f.name)}">${esc(f.name)}</span><span class="muted">${fmtSize(f.size)}</span>
+      ${INLINE.test(f.name) ? `<a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f)}" target="_blank" rel="noopener" title="${esc(t('Peržiūrėti'))}">${icon('eye')}</a>` : ''}
+      <a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f, true)}" title="${esc(t('Atsisiųsti'))}">${icon('save')}</a>
+      ${admin ? `<button class="btn btn-ghost btn-sm icon-only danger" data-pa="rmfile" data-fid="${f.id}" title="${esc(t('Ištrinti failą'))}">${icon('close')}</button>` : ''}</li>`;
+    // Pagrindinis veiksmas – didelis mygtukas; modelio failai – sutraukti (jų dažniausiai nereikia)
     let main = '';
-    if (i.kind === 'model') main = files.length ? `<button class="btn btn-primary btn-sm" data-pa="open">${icon('cube')}${esc(t('Atidaryti 3D'))}</button>` : '';
-    else if (i.kind === 'stream') main = `<button class="btn btn-primary btn-sm" data-pa="watch">${icon('play')}${esc(t('Žiūrėti'))}</button>`;
-    const fileRows =
-      i.kind === 'stream'
-        ? ''
-        : `<ul class="pt-files">${files
-            .map(
-              (f) => `<li><span title="${esc(f.name)}">${esc(f.name)}</span><span class="muted">${fmtSize(f.size)}</span>
-              ${INLINE.test(f.name) ? `<a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f)}" target="_blank" rel="noopener" title="${esc(t('Peržiūrėti'))}">${icon('eye')}</a>` : ''}
-              <a class="btn btn-ghost btn-sm icon-only" href="${fileUrl(i, f, true)}" title="${esc(t('Atsisiųsti'))}">${icon('save')}</a>
-              ${admin ? `<button class="btn btn-ghost btn-sm icon-only danger" data-pa="rmfile" data-fid="${f.id}" title="${esc(t('Ištrinti failą'))}">${icon('trash')}</button>` : ''}</li>`,
-            )
-            .join('')}</ul>`;
-    const adm = admin
-      ? `<div class="pt-clients small">${icon('eye')}${i.clients?.length ? i.clients.map((c) => `<span class="chip">${esc(clientName(c))}</span>`).join(' ') : `<span class="muted">${esc(t('Nepriskirta – mato tik administratorius'))}</span>`}</div>
-         <div class="pane-actions">
-           <button class="btn btn-outline btn-sm" data-pa="assign">${esc(t('Priskirti klientams'))}</button>
-           ${i.kind !== 'stream' ? `<button class="btn btn-ghost btn-sm" data-pa="addfiles">${icon('upload')}${esc(t('Pridėti failų'))}</button>` : ''}
-           <button class="btn btn-ghost btn-sm icon-only" data-pa="edit" title="${esc(t('Redaguoti'))}">${icon('edit')}</button>
-           <button class="btn btn-ghost btn-sm icon-only danger" data-pa="del" title="${esc(t('Ištrinti'))}">${icon('trash')}</button>
-         </div>`
+    let filesHtml = '';
+    if (i.kind === 'model') {
+      if (files.length) main = `<button class="btn btn-primary" data-pa="open">${icon('cube')}${esc(t('Atidaryti 3D'))}</button>`;
+      if (files.length) filesHtml = `<details class="pt-files-box"><summary>${esc(t('Failai ({n})', { n: files.length }))}</summary><ul class="pt-files">${files.map(fileRow).join('')}</ul></details>`;
+    } else if (i.kind === 'stream') main = `<button class="btn btn-primary" data-pa="watch">${icon('play')}${esc(t('Žiūrėti'))}</button>`;
+    else filesHtml = files.length ? `<ul class="pt-files">${files.map(fileRow).join('')}</ul>` : '';
+    const meta = [fmtDate(i.updated), i.kind !== 'stream' ? t('{n} failų · {s}', { n: files.length, s: fmtSize(i.size || 0) }) : ''].filter(Boolean).join(' · ');
+    const tools = admin
+      ? `<span class="pt-card-tools">
+          ${i.kind !== 'stream' ? `<button class="btn btn-ghost btn-sm icon-only" data-pa="addfiles" title="${esc(t('Pridėti failų'))}">${icon('upload')}</button>` : ''}
+          <button class="btn btn-ghost btn-sm icon-only" data-pa="edit" title="${esc(t('Redaguoti'))}">${icon('edit')}</button>
+          <button class="btn btn-ghost btn-sm icon-only danger" data-pa="del" title="${esc(t('Ištrinti'))}">${icon('trash')}</button></span>`
+      : '';
+    const clients = admin
+      ? `<div class="pt-clients small"><span class="muted">${esc(t('Mato:'))}</span>${i.clients?.length ? i.clients.map((c) => `<span class="chip">${esc(clientName(c))}</span>`).join('') : `<span class="muted">${esc(t('tik administratorius'))}</span>`}
+          <button class="btn btn-ghost btn-sm pt-assign" data-pa="assign">${icon('user')}${esc(t('Priskirti'))}</button></div>`
       : '';
     return `<article class="pt-card" data-item="${i.id}">
-      <div class="pt-card-head"><b>${esc(i.title)}</b><span class="muted small">${fmtDate(i.updated)}</span></div>
+      <div class="pt-card-head"><span class="pt-kind">${icon(def?.icon || 'cube')}</span><div class="pt-card-title"><b>${esc(i.title)}</b><span class="muted small">${esc(meta)}</span></div>${tools}</div>
       ${i.note ? `<p class="small">${esc(i.note)}</p>` : ''}
-      ${i.kind !== 'stream' ? `<div class="small muted">${esc(t('{n} failų · {s}', { n: files.length, s: fmtSize(i.size || 0) }))}</div>` : ''}
       ${up != null ? `<div class="progress"><div class="progress-bar" style="width:${Math.round(up * 100)}%"></div></div>` : ''}
-      ${main ? `<div class="pane-actions">${main}</div>` : ''}
-      ${fileRows}${adm}
+      ${main ? `<div class="pt-main">${main}</div>` : ''}
+      ${filesHtml}${clients}
     </article>`;
   }
 

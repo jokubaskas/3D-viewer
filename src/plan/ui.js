@@ -73,7 +73,7 @@ export function createPlanUI(app) {
     </header>
     <div class="odm-body">
       <aside class="odm-side">
-        <section class="card">
+        <section class="card" data-card="area">
           <h3>Teritorija</h3>
           <input id="pl-name" class="live-input" placeholder="Plano pavadinimas" />
           <div class="pane-actions">
@@ -91,7 +91,7 @@ export function createPlanUI(app) {
           </div>
           <input type="file" id="pl-file" accept=".kml,.geojson,.json" hidden />
         </section>
-        <section class="card">
+        <section class="card" data-card="camera">
           <h3>Kamera ir tikslumas</h3>
           <select id="pl-camera" class="pl-wide"></select>
           <div id="pl-custom" class="pl-grid3" hidden>
@@ -107,7 +107,7 @@ export function createPlanUI(app) {
           </div>
           <div id="pl-alt-warn" class="small bad" hidden></div>
         </section>
-        <section class="card">
+        <section class="card" data-card="overlap">
           <h3>Persidengimas ir skrydis</h3>
           <label class="row">Išilginis persidengimas <span><input id="pl-front" type="number" class="num" min="50" max="95" step="1" /> %</span></label>
           <label class="row">Skersinis persidengimas <span><input id="pl-side" type="number" class="num" min="40" max="95" step="1" /> %</span></label>
@@ -118,7 +118,7 @@ export function createPlanUI(app) {
           <label class="row">Kadro intervalas <span><input id="pl-interval" type="number" class="num" min="0.3" max="10" step="0.1" /> s</span></label>
           <label class="row">Vieno akumuliatoriaus skrydis <span><input id="pl-battery" type="number" class="num" min="5" max="90" step="1" /> min</span></label>
         </section>
-        <section class="card">
+        <section class="card" data-card="saved">
           <h3>Išsaugoti planai</h3>
           <div class="pane-actions"><button class="btn btn-sm btn-outline" data-pl="save">${icon('save')}Išsaugoti šį planą</button></div>
           <div id="pl-saved"></div>
