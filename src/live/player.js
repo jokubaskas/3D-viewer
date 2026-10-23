@@ -510,11 +510,11 @@ export class LivePlayer {
   }
 
   /** Įrašymo pradžia; įrašas (Blob) gaunamas per stopRecording(). */
-  async startRecording({ stream: custom, extra } = {}) {
+  /** Šaltinio vaizdo srautas įrašymui (be AI žymėjimų). */
+  async sourceStream() {
     const el = this.el;
     let stream;
-    if (custom) stream = custom; // pvz. drobė su AI žymėjimais
-    else if (this.embedded) {
+    if (this.embedded) {
       stream = await this.captureEmbed();
       // Naudotojas paspaudė „Nebendrinti“ – įrašas baigiamas ir išsaugomas
       stream.getVideoTracks()[0]?.addEventListener('ended', () => this.recorder && this.stopRecording().then((r) => r && this.onRecordingCut?.(r, true)));
@@ -537,6 +537,11 @@ export class LivePlayer {
       stream._stop = () => clearInterval(id);
     }
     if (!stream) throw new Error(t('Naršyklė negali įrašyti šio vaizdo'));
+    return stream;
+  }
+
+  /** MediaRecorder vienam srautui. */
+  static recorderFor(stream) {
     const types = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     const mimeType = types.find((m) => window.MediaRecorder?.isTypeSupported?.(m));
     if (!mimeType) throw new Error(t('Naršyklė negali įrašyti šio vaizdo'));
@@ -550,7 +555,22 @@ export class LivePlayer {
       };
     });
     rec.start(1000);
-    this.recorder = { rec, done, started: Date.now(), ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm', extra };
+    return { rec, done, ext: mimeType.startsWith('video/mp4') ? 'mp4' : 'webm' };
+  }
+
+  /**
+   * @param {{stream?:MediaStream, extra?:object, original?:boolean}} o – stream: pvz. drobė su AI žymėjimais;
+   *   original: kartu įrašyti ir originalų vaizdą (be žymėjimų)
+   */
+  async startRecording({ stream: custom, extra, original = false } = {}) {
+    const main = LivePlayer.recorderFor(custom || (await this.sourceStream()));
+    let orig = null;
+    if (custom && original && !this.embedded) {
+      try {
+        orig = LivePlayer.recorderFor(await this.sourceStream());
+      } catch { /* originalo įrašyti nepavyko – lieka tik su žymėjimais */ }
+    }
+    this.recorder = { ...main, orig, started: Date.now(), extra };
     return this.recorder;
   }
 
@@ -558,8 +578,8 @@ export class LivePlayer {
     const r = this.recorder;
     if (!r) return null;
     this.recorder = null;
-    if (r.rec.state !== 'inactive') r.rec.stop();
-    return { blob: await r.done, ext: r.ext, extra: r.extra };
+    for (const x of [r, r.orig]) if (x && x.rec.state !== 'inactive') x.rec.stop();
+    return { blob: await r.done, ext: r.ext, extra: r.extra, original: r.orig ? { blob: await r.orig.done, ext: r.orig.ext } : null };
   }
 
   // ---------------------------------------------------------------- sustabdymas
