@@ -31,6 +31,17 @@ for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass
 if not defined PORT set "PORT=8080"
 if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - projektu sarasas narsykleje bus atskiras.
 
+rem Vienkartinis perejimas i vidini tinkla "atea3d": seni konteineriai prijungti prie ankstesnio tinklo ir
+rem be perkurimo nepasileidzia ("network deploy_default not found"). Duomenys (projektai, modeliai, paskyros) islieka.
+set "NETFIX="
+for /f %%i in ('docker compose --profile internet ps -aq 2^>nul') do (
+  docker inspect -f "{{json .NetworkSettings.Networks}}" %%i 2>nul | findstr /c:"atea3d" >nul || set "NETFIX=1"
+)
+if defined NETFIX (
+  echo Atnaujinamas vidinis Docker tinklas ^(vienkartinai^)...
+  docker compose --profile internet down --remove-orphans >nul 2>nul
+)
+
 rem Senas (ar nepasileides) programos konteineris - sukuriamas is naujo
 docker compose rm -s -f web >nul 2>nul
 
