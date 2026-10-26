@@ -289,9 +289,19 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - Kiekvienas langas atsidaro su „← Pradžia“ mygtuku. Retai naudojamos šoninių stulpelių kortelės (pvz. „Dronai (diab)“, „Savas AI modelis“, apdorojimo serveris) sutrauktos; paspaudus pavadinimą – išsiskleidžia, būsena įsimenama.
 - Prisijungus atsidaro **pradžios ekranas** su dideliais mygtukais pagal teises. Logotipas arba „Pradžia“ antraštėje grąžina į jį, kaip ir puslapio „×“.
 - **Klientas** – tik tai, ką jam priskyrėte. Mygtukai:
+  - **Užsakyti darbą** – žr. „Užsakymai“ žemiau;
   - **Mano 3D modeliai** – peržiūra ir matavimai;
-  - **Mano gyvos transliacijos** – žiūrėjimas, AI aptikimas ir atpažįstamų objektų pasirinkimas, kadrai, įrašai;
+  - **Mano gyvos transliacijos** – žiūrėjimas, AI aptikimo įjungimas ir atpažįstamų objektų pasirinkimas (kadrus ir įrašus pateikia administratorius);
   - **Mano ataskaitos**, **Mano įrašai** – peržiūra ir atsisiuntimas: **Atidaryti HTML ataskaitą** atidaro AI ataskaitą iš ZIP iškart naršyklėje (vaizdas, įvykiai, grafikas, spausdinimas į PDF; ataskaita rodoma izoliuotai, be jos skriptų), **Atsisiųsti ZIP** – visą archyvą; vaizdo įrašai peržiūrimi programos lange.
+
+**Užsakymai** (pradžios ekrane: klientui – **Užsakyti darbą**, administratoriui – **Užsakymai**):
+- **Klientas** per du žingsnius:
+  1. **Teritorija** – randa vietą paieška (adresas ar koordinatės) arba „Mano vieta“, žemėlapyje spustelėja kampus (telefone – bakstelėja; dviem pirštais keičiamas mastelis), užbaigia „Baigti“. Plotas rodomas iškart, adresas užpildomas automatiškai. Galima įkelti KML / GeoJSON, taškus tempti, pridėti ar pašalinti.
+  2. **Darbas** – pavadinimas, darbų tipai (ortofoto, 3D modelis, tūriai, topografija, apžiūra, progreso stebėjimas, terminė apžiūra, foto / video, transliacija, kita), aprašymas, pageidaujama data, telefonas.
+- Užsakymo puslapyje matoma eiga (Naujas → Priimtas → Vykdomas → Atliktas), suplanuota data, kaina, administratoriaus pastaba, **rezultatai** (paspaudus atsidaro) ir **žinutės** (Enter – siųsti). Kol užsakymas naujas, klientas jį gali redaguoti; naują ar priimtą – atšaukti.
+- **Administratorius** mato visus užsakymus sąraše (filtrai Aktyvūs / Nauji / Atlikti / Visi, paieška) ir žemėlapyje spalvomis pagal būseną – spustelėjus sritį atsidaro užsakymas. Keičia būseną, suplanuotą datą, kainą, pastabą klientui, prideda **rezultatus** (3D modelius, ataskaitas, įrašus, transliacijas – jie automatiškai priskiriami užsakymo klientui), rašo žinutes, gali užregistruoti užsakymą klientui (pvz. gautą telefonu) ar jį ištrinti.
+- Naujienos (naujas užsakymas, būsenos pakeitimas, žinutė) pažymimos sąraše ir pradžios ekrano mygtuke; atidarytas langas atsinaujina kas 30 s.
+- Klientas mato tik savo užsakymus; teritorijos koordinatės ir plotas tikrinami serveryje, žinučių ir užsakymų kiekis ribojamas. Adreso paieška – OpenStreetMap Nominatim (tik paspaudus „Ieškoti“).
 
 **Kaip tai veikia:**
 - Teises tikrina serveris, ne naršyklė. Portalas (`deploy/portal`, FastAPI + SQLite) saugo paskyras, priskyrimus ir failus Docker tome `portal-data`.
@@ -359,7 +369,7 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai, žemėlapis po modeliu (`basemap.js`)
 - `deploy/` – Docker Compose: NodeODM + AI paslauga + MediaMTX (transliacijos) + portalas + nginx su programa (+ Cloudflare Tunnel)
 - `deploy/portal/` – portalas: paskyros, sesijos, klientų duomenys, prieigos tikrinimas nginx'ui (`app.py`, testai – `test_portal.py`)
-- `src/portal/` – prisijungimas, kvietimai (`auth.js`), „Mano sritis“ skiltys ir klientų valdymas (`ui.js`), API (`api.js`)
+- `src/portal/` – prisijungimas, kvietimai (`auth.js`), „Mano sritis“ skiltys ir klientų valdymas (`ui.js`), užsakymai su žemėlapiu (`orders.js`), failų peržiūra (`viewer.js`), API (`api.js`)
 - `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`, `/raster/lks94` – GeoTIFF perskaičiavimas į LKS-94)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas
 - `src/export.js` – 3D modelio išsaugojimas (OBJ su tekstūromis, GLB, LAS)

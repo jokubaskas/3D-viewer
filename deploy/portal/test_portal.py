@@ -137,3 +137,78 @@ def test_inline_types(env):
     assert r.headers["content-disposition"].startswith("attachment") and r.headers["content-type"] == "application/octet-stream"
     r = adm.get(f"/api/items/{it['id']}/files/{p['id']}/a.pdf")
     assert r.headers["content-disposition"].startswith("inline") and r.headers["content-type"] == "application/pdf"
+
+
+SQUARE = {"type": "Polygon", "coordinates": [[[23.9, 54.9], [23.901, 54.9], [23.901, 54.9006], [23.9, 54.9006], [23.9, 54.9]]]}
+
+
+def test_orders_flow_and_isolation(env):
+    app, client, adm = env
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    b_id, cb = make_client(adm, client, "b@klientas.lt")
+    body = {"title": "Sandėlio aikštelė", "works": ["ortho", "volume", "nesamas"], "note": "Reikia tūrių", "geometry": SQUARE, "due": "2026-12-01", "contact": "+370 600 00000"}
+    r = ca.post("/api/orders", json=body, headers=H)
+    assert r.status_code == 200, r.text
+    o = r.json()
+    assert o["works"] == ["ortho", "volume"] and o["status"] == "new"
+    assert 4000 < o["area"] < 4400  # ~64 m × 67 m
+    assert "client" not in o
+    # Be X-Atea – atmesta; neteisinga geometrija / data / be darbų
+    assert ca.post("/api/orders", json=body).status_code == 403
+    assert ca.post("/api/orders", json={**body, "geometry": {"type": "Point", "coordinates": [1, 2]}}, headers=H).status_code == 400
+    assert ca.post("/api/orders", json={**body, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [1, 1]]]}}, headers=H).status_code == 400
+    assert ca.post("/api/orders", json={**body, "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [500, 1], [1, 2]]]}}, headers=H).status_code == 400
+    assert ca.post("/api/orders", json={**body, "due": "rytoj"}, headers=H).status_code == 400
+    assert ca.post("/api/orders", json={**body, "works": []}, headers=H).status_code == 400
+    # B nemato A užsakymo ir negali jo keisti ar komentuoti
+    assert cb.get("/api/orders").json() == []
+    assert cb.get(f"/api/orders/{o['id']}").status_code == 404
+    assert cb.patch(f"/api/orders/{o['id']}", json={"title": "x"}, headers=H).status_code == 404
+    assert cb.post(f"/api/orders/{o['id']}/comments", json={"body": "x"}, headers=H).status_code == 404
+    # Administratorius mato – neperskaitytas, su klientu
+    lst = adm.get("/api/orders").json()
+    assert len(lst) == 1 and lst[0]["unread"] and lst[0]["client"]["email"] == "a@klientas.lt"
+    d = adm.get(f"/api/orders/{o['id']}").json()
+    assert d["events"][0]["kind"] == "created"
+    assert not adm.get("/api/orders").json()[0]["unread"]
+    # Klientas: kol naujas – gali keisti; būsenos keisti negali (išskyrus atšaukimą)
+    assert ca.patch(f"/api/orders/{o['id']}", json={"note": "Ir 3D", "works": ["ortho", "model3d"]}, headers=H).json()["works"] == ["ortho", "model3d"]
+    assert ca.patch(f"/api/orders/{o['id']}", json={"status": "done"}, headers=H).status_code == 403
+    assert ca.patch(f"/api/orders/{o['id']}", json={"price": "1 €", "admin_note": "x"}, headers=H).json()["price"] == ""
+    # Admin priima, suplanuoja, nurodo kainą; klientas mato pakeitimą kaip neperskaitytą
+    r = adm.patch(f"/api/orders/{o['id']}", json={"status": "accepted", "planned": "2026-11-20", "price": "450 € + PVM"}, headers=H)
+    assert r.status_code == 200 and r.json()["status"] == "accepted"
+    assert adm.patch(f"/api/orders/{o['id']}", json={"status": "kitas"}, headers=H).status_code == 400
+    assert ca.get("/api/orders").json()[0]["unread"]
+    assert ca.patch(f"/api/orders/{o['id']}", json={"note": "keičiu"}, headers=H).status_code == 400  # priimto keisti negalima
+    # Žinutės abiem kryptimis
+    assert ca.post(f"/api/orders/{o['id']}/comments", json={"body": "  "}, headers=H).status_code == 400
+    ca.post(f"/api/orders/{o['id']}/comments", json={"body": "Ar galima anksčiau?"}, headers=H)
+    d = adm.post(f"/api/orders/{o['id']}/comments", json={"body": "Taip, 18 d."}, headers=H).json()
+    kinds = [(e["kind"], e["who"]) for e in d["events"]]
+    assert ("comment", "client") in kinds and ("comment", "admin") in kinds and ("status", "admin") in kinds
+    # Rezultatai: pridėtas modelis automatiškai priskiriamas užsakymo klientui (ir tik jam)
+    it = adm.post("/api/items", json={"kind": "model", "title": "Rezultatas"}, headers=H).json()
+    adm.patch(f"/api/orders/{o['id']}", json={"items": [it["id"], 99999], "status": "done"}, headers=H)
+    assert [x["id"] for x in ca.get("/api/items").json()] == [it["id"]]
+    assert cb.get("/api/items").json() == []
+    assert ca.get(f"/api/orders/{o['id']}").json()["items"] == [{"id": it["id"], "kind": "model", "title": "Rezultatas"}]
+    # Užbaigto atšaukti negalima; trinti – tik administratorius
+    assert ca.patch(f"/api/orders/{o['id']}", json={"status": "cancelled"}, headers=H).status_code == 400
+    assert ca.delete(f"/api/orders/{o['id']}", headers=H).status_code == 403
+    assert adm.delete(f"/api/orders/{o['id']}", headers=H).status_code == 200
+    assert ca.get("/api/orders").json() == []
+
+
+def test_orders_admin_for_client_and_cancel(env):
+    app, client, adm = env
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    body = {"title": "Telefonu", "works": ["inspection"], "geometry": SQUARE}
+    assert adm.post("/api/orders", json=body, headers=H).status_code == 400  # be kliento
+    o = adm.post("/api/orders", json={**body, "client_id": a_id}, headers=H).json()
+    assert o["client"]["id"] == a_id
+    assert ca.get("/api/orders").json()[0]["id"] == o["id"]
+    assert ca.patch(f"/api/orders/{o['id']}", json={"status": "cancelled"}, headers=H).json()["status"] == "cancelled"
+    # Išjungtas klientas nebepasiekia
+    adm.patch(f"/api/users/{a_id}", json={"disabled": True}, headers=H)
+    assert ca.get("/api/orders").status_code == 401

@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 /**
  * @param {{user:{name:string,email:string,role:string}, tiles:{id:string,icon:string,title:string,desc:string,run:()=>void}[],
- *   counts?:()=>Promise<Record<string,number>>}} o
+ *   counts?:()=>Promise<Record<string,number|{n:number,title?:string}>>}} o
  */
 export function createHome(o) {
   const page = document.createElement('section');
@@ -25,7 +25,7 @@ export function createHome(o) {
           ${o.tiles
             .map(
               (x) => `<button class="home-tile" data-home="${x.id}">
-                ${counts[x.id] != null ? `<span class="home-count">${counts[x.id]}</span>` : ''}
+                ${counts[x.id] == null ? '' : typeof counts[x.id] === 'object' ? `<span class="home-count alert" title="${esc(t(counts[x.id].title || ''))}">${counts[x.id].n}</span>` : `<span class="home-count">${counts[x.id]}</span>`}
                 <span class="home-icon">${icon(x.icon)}</span>
                 <b>${esc(t(x.title))}</b>
                 <span class="home-desc">${esc(t(x.desc))}</span>

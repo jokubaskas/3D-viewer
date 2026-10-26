@@ -25,6 +25,7 @@ import { whoAmI } from './portal/api.js';
 import { showLogin, showInvite, showDown, changePasswordDialog, logout } from './portal/auth.js';
 import { createPortalUI } from './portal/ui.js';
 import { createHome } from './portal/home.js';
+import { createOrdersUI } from './portal/orders.js';
 import { api } from './portal/api.js';
 
 const $ = (s) => document.querySelector(s);
@@ -1973,7 +1974,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), homeUI?.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), ordersUI?.close(), homeUI?.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -1991,6 +1992,7 @@ $('#btn-live').addEventListener('click', () => {
   if (odmUI.isOpen) odmUI.close();
   planUI.close();
   portalUI?.close();
+  ordersUI?.close();
   homeUI?.close();
   liveUI.open();
 });
@@ -2004,6 +2006,7 @@ $('#btn-plan').addEventListener('click', () => {
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
   portalUI?.close();
+  ordersUI?.close();
   homeUI?.close();
   planUI.open();
 });
@@ -2013,12 +2016,14 @@ $('#btn-plan').addEventListener('click', () => {
 // ---------------------------------------------------------------------------
 let portalUI = null;
 let homeUI = null;
+let ordersUI = null;
 /** Uždaro visus puslapius (lieka 3D peržiūra). */
 const closePages = () => {
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
   planUI.close();
   portalUI?.close();
+  ordersUI?.close();
   homeUI?.close();
 };
 (async () => {
@@ -2042,9 +2047,12 @@ const closePages = () => {
   liveUI.setPortal({ role: user.role, portal: portalUI });
   const admin = user.role === 'admin';
   const portalTab = (tab) => () => (closePages(), portalUI.open(tab));
+  ordersUI = createOrdersUI({ user, toast, openResult: (it) => portalTab(it.kind)() });
+  const openOrders = () => (closePages(), ordersUI.open());
   // Pradžios ekranas: dideli mygtukai pagal teises
   const tiles = admin
     ? [
+        { id: 'orders', icon: 'order', title: 'Užsakymai', desc: 'Klientų užsakymai žemėlapyje, būsena ir žinutės', run: openOrders },
         { id: 'model', icon: 'cube', title: '3D modeliai', desc: 'Peržiūra, matavimai, įkėlimas ir priskyrimas klientams', run: portalTab('model') },
         { id: 'viewer', icon: 'ruler', title: 'Atidaryti iš kompiuterio', desc: 'OBJ, GLB, PLY, LAS ir kt. failai matavimams', run: () => (closePages(), openDialog()) },
         { id: 'odm', icon: 'camera', title: 'Kurti 3D iš nuotraukų', desc: 'OpenDroneMap apdorojimas šiame kompiuteryje', run: () => (closePages(), odmUI.open()) },
@@ -2055,6 +2063,7 @@ const closePages = () => {
         { id: 'clients', icon: 'user', title: 'Klientai', desc: 'Paskyros, kvietimai ir prieigos', run: portalTab('clients') },
       ]
     : [
+        { id: 'orders', icon: 'order', title: 'Užsakyti darbą', desc: 'Pažymėkite teritoriją žemėlapyje ir aprašykite, ko reikia', run: openOrders },
         { id: 'model', icon: 'cube', title: 'Mano 3D modeliai', desc: 'Peržiūra ir matavimai', run: portalTab('model') },
         { id: 'stream', icon: 'live', title: 'Mano gyvos transliacijos', desc: 'Tiesioginis vaizdas ir AI aptikimas', run: () => (closePages(), liveUI.open()) },
         { id: 'report', icon: 'report', title: 'Mano ataskaitos', desc: 'Peržiūra ir atsisiuntimas', run: portalTab('report') },
@@ -2064,10 +2073,13 @@ const closePages = () => {
     user,
     tiles,
     counts: async () => {
-      const [items, users] = await Promise.all([api('items'), admin ? api('users') : Promise.resolve([])]);
+      const [items, users, oc] = await Promise.all([api('items'), admin ? api('users') : Promise.resolve([]), ordersUI.counts().catch(() => null)]);
       const c = {};
       for (const i of items) c[i.kind] = (c[i.kind] || 0) + 1;
       if (admin) c.clients = users.filter((u) => u.role === 'client').length;
+      // Užsakymai: su naujienomis – paryškintas skaičius, kitaip – kiek iš viso
+      if (oc?.unread) c.orders = { n: oc.unread, title: 'Yra naujienų' };
+      else if (oc?.total) c.orders = oc.total;
       return c;
     },
   });
@@ -2085,7 +2097,7 @@ const closePages = () => {
   $('#brand-logo').closest('.brand').addEventListener('click', goHome);
   // Puslapio „Uždaryti“ (×) – grįžtama į pradžią
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.odm-page [data-act=close], .portal-page [data-pa=close]')) setTimeout(() => !odmUI.isOpen && !liveUI.isOpen && !planUI.isOpen && !portalUI.isOpen && homeUI.open());
+    if (e.target.closest('.odm-page [data-act=close], .portal-page [data-pa=close]')) setTimeout(() => !odmUI.isOpen && !liveUI.isOpen && !planUI.isOpen && !portalUI.isOpen && !ordersUI.isOpen && homeUI.open());
   });
   $('#btn-user').addEventListener('click', (e) => {
     const old = document.querySelector('.user-menu');
@@ -2163,7 +2175,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || homeUI?.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || ordersUI?.isOpen || homeUI?.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2239,6 +2251,7 @@ onLangChange(() => {
   liveUI.rerender();
   planUI.rerender();
   portalUI?.rerender();
+  ordersUI?.rerender();
   homeUI?.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
