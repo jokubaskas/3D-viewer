@@ -64,7 +64,7 @@ Kiti patogumai:
   - kontroliniai taškai (RMS) ir AI aptikti objektai.
 
   Skyrius galima pasirinkti. Šriftas – Inter (SIL OFL 1.1), įterptas su lietuviškomis raidėmis (`src/report/fonts.js`).
-- **Žemėlapis po modeliu** (`M` arba mygtukas su žemėlapio ženklu) – palydovinė nuotrauka (Esri), OpenStreetMap arba bet koks XYZ plytelių adresas (`https://…/{z}/{x}/{y}.png`). Žemėlapis dedamas pagal modelio koordinates (LKS-94 arba UTM). Kiekviena plytelė perskaičiuojama iš Web Mercator į modelio sistemą, todėl modelis atsiduria tikroje vietoje. Tikrinant su ODM projektu, žemėlapis nuo modelio buvo pasislinkęs ~4 cm. Galutinį tikslumą lemia pats žemėlapis: palydovinių nuotraukų paklaida dažnai siekia 1–3 m. Permatomumas keičiamas nustatymuose. Modeliams be koordinačių sistemos (pvz. OBJ be `coords.txt`) žemėlapis nerodomas. Reikia interneto ryšio.
+- **Žemėlapis po modeliu** (`M` arba mygtukas su žemėlapio ženklu) – palydovinė nuotrauka (Esri), OpenStreetMap arba bet koks XYZ plytelių adresas (`https://…/{z}/{x}/{y}.png`). Žemėlapis dedamas pagal modelio koordinates (LKS-94 arba UTM). Kiekviena plytelė perskaičiuojama iš Web Mercator į modelio sistemą, todėl modelis atsiduria tikroje vietoje. Tikrinant su ODM projektu, žemėlapis nuo modelio buvo pasislinkęs ~4 cm. Galutinį tikslumą lemia pats žemėlapis: palydovinių nuotraukų paklaida dažnai siekia 1–3 m. Žemėlapis dedamas modelio žemės lygyje (2 % žemiausių viršūnių riba), todėl pavieniai triukšmo taškai po žeme nebekelia modelio virš žemėlapio. Žemėlapis plokščias – nuolydžio teritorijoje aukštesnė dalis natūraliai būna virš jo. Permatomumas keičiamas nustatymuose. Modeliams be koordinačių sistemos (pvz. OBJ be `coords.txt`) žemėlapis nerodomas. Reikia interneto ryšio.
 - Matavimų eksportas į **CSV** (Excel, lietuviškas formatas), išsaugojimas / įkėlimas **JSON**, ekrano kopija su etiketėmis (`P`).
 - Vienetai: m, cm, mm, km, ft; modelio vienetų ir mastelio nustatymai.
 
@@ -97,6 +97,8 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    Jei visos teritorijos nereikia, pažymėkite sritį (*Žymėti sritį*, taškus galima tempti):
    - ODM gauna ją kaip `boundary` (GeoJSON) ir apkarpo taškų debesį, 3D modelį, DEM bei ortofoto;
    - dar prieš įkėlimą atrenkamos tik nuotraukos, kuriose sritis **aiškiai matosi** (patenka į centrinius 60 % kadro); nuotraukos, kurios sritį tik užkabina kraštu ar visai jos nemato, pritemdomos ir neįkeliamos. Po to patikrinama, kad kiekvieną srities tašką (~400 taškų) matytų bent 5 atrinktos nuotraukos – jei ne, pridedamos artimiausios. Galima pasirinkti ir visas, bent kraštu liečiančias sritį.
+
+   Peržiūroje rodomos tik statmenos nuotraukos (kamera −75°…−90°), kiekviena – tik ten, kur jos centras arčiausiai (mozaika be dubliavimosi; kraštų iškraipymai ir pastatų šonai nerodomi). Jei kameros kryptis įrašyta drono atžvilgiu (kai kurie gamintojai), tai atpažįstama automatiškai. Užvedus pelę ant kadro vietos – RTK, aukštis, kameros posvyris ir kryptis, objektyvas.
 
    Apdorojimo laikas daugiausia priklauso nuo **nuotraukų skaičiaus**, nes ODM riba apkarpo tik jau sukurtą tankų taškų debesį. Įprastame skrydyje (80 m, 75 % persidengimas) taip naudojama 13–50 % mažiau nuotraukų nei visų liečiančių: kuo mažesnė sritis, tuo daugiau sutaupoma.
 

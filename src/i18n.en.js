@@ -1448,4 +1448,6 @@ export const EN = {
   "Įkeliama į portalą… {p} %": "Uploading to the portal… {p} %",
   "Atsisiunčiama… {p}": "Downloading… {p}",
   "Ortofoto žemėlapis: peržiūra": "Orthophoto map: view",
+  "Kamera: posvyris {p}°, kryptis {g}° (dronas {y}°)": "Camera: pitch {p}°, heading {g}° (drone {y}°)",
+  "židinys nežinomas": "focal length unknown",
 };
