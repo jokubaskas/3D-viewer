@@ -1277,4 +1277,11 @@ export const EN = {
   "ZIP faile nėra HTML ataskaitos": "The ZIP has no HTML report",
   "Nepalaikomas ZIP glaudinimas": "Unsupported ZIP compression",
   "Per didelis ZIP (ZIP64) – atsisiųskite jį": "ZIP too large (ZIP64) – please download it",
+  "3D objektai": "3D objects",
+  "Įstrižoms (pvz. 5 krypčių) nuotraukoms: aštresni pastatai, mašinos, sienos. Ilgiausiai, reikia daugiausia RAM.": "For oblique (e.g. 5-direction) photos: sharper buildings, cars, walls. Slowest, needs the most RAM.",
+  "Rasta {n} įstrižų nuotraukų ({p} %) – 3D modeliui parinkta kokybė „3D objektai“ (aštresni pastatai ir mašinos).": "Found {n} oblique photos ({p} %) – quality “3D objects” selected for the 3D model (sharper buildings and cars).",
+  "Apytikslis RAM poreikis: ~{n} GB (serveriui skirta {m} GB).": "Estimated RAM need: ~{n} GB (server has {m} GB).",
+  "Apytikslis RAM poreikis: ~{n} GB.": "Estimated RAM need: ~{n} GB.",
+  "Gali pritrūkti atminties: rinkitės žemesnę kokybę, mažesnę sritį ar skaidymą į dalis, arba skirkite Docker daugiau RAM (%UserProfile%\\.wslconfig → memory=…, po to wsl --shutdown). Pritrūkus programa pasiūlys pakartoti su mažesne kokybe.": "Memory may run out: choose lower quality, a smaller area or splitting, or give Docker more RAM (%UserProfile%\\.wslconfig → memory=…, then wsl --shutdown). If it runs out, the app will offer to retry with lower quality.",
+  "Šiems nustatymams reikia apie {n} GB RAM, o serveriui skirta {m} GB – apdorojimas gali nutrūkti po kelių valandų. Vis tiek pradėti? (Atšaukus galite pasirinkti žemesnę kokybę ar mažesnę sritį.)": "These settings need about {n} GB RAM, but the server has {m} GB – processing may fail after several hours. Start anyway? (Cancel to choose lower quality or a smaller area.)",
 };

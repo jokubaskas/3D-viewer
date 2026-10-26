@@ -24,7 +24,34 @@ export const PRESETS = {
     desc: 'Didžiausias detalumas. Ilgai, reikia daug RAM.',
     options: { 'feature-quality': 'high', 'pc-quality': 'high', 'mesh-size': 600000, 'mesh-octree-depth': 12, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
   },
+  objects3d: {
+    label: '3D objektai',
+    desc: 'Įstrižoms (pvz. 5 krypčių) nuotraukoms: aštresni pastatai, mašinos, sienos. Ilgiausiai, reikia daugiausia RAM.',
+    options: { 'feature-quality': 'high', 'pc-quality': 'high', 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+  },
 };
+
+/** Įstriža nuotrauka – kamera pakreipta daugiau nei 20° nuo statmeno žemyn. */
+export const isOblique = (m) => m.gimbalPitch != null && m.gimbalPitch > -70;
+
+// Apytikslis ODM RAM poreikis (GB) vienai 20 MP nuotraukai pagal taškų debesies kokybę (OpenMVS tankinimas)
+// ir tinklo (Poisson) poreikis pagal octree gylį; sukalibruota pagal WebODM rekomendacijas ir praktiką.
+const RAM_PER_IMAGE = { lowest: 0.005, low: 0.01, medium: 0.022, high: 0.05, ultra: 0.14 };
+const RAM_MESH = { 9: 0.5, 10: 1, 11: 2, 12: 4, 13: 9, 14: 20 };
+
+/**
+ * @param {{name:string,value:any}[]} options ODM parinktys
+ * @param {number} n nuotraukų skaičius
+ * @param {number} [mp] nuotraukos megapikseliai
+ * @returns {number} GB
+ */
+export function estimateRamGB(options, n, mp = 20) {
+  const o = Object.fromEntries((options || []).map((x) => [x.name, x.value]));
+  const imgs = o.split ? Math.min(n, Number(o.split) + 150) : n; // dalys apdorojamos po vieną
+  const dense = 1.5 + imgs * (mp / 20) * (RAM_PER_IMAGE[o['pc-quality'] || 'medium'] ?? 0.022);
+  const mesh = RAM_MESH[Number(o['mesh-octree-depth'] || 11)] ?? 2;
+  return Math.max(dense, mesh) + 1;
+}
 
 /** Ką dėti į all.zip (rezultatų archyvą). */
 export const ODM_OUTPUTS = [
@@ -140,10 +167,14 @@ export function analyzePhotos(metas, opts = {}) {
   const noGps = excluded.filter((e) => e.reason === 'nėra GPS koordinačių').length;
   if (noGps) warnings.push({ level: 'warn', text: t('{n} nuotr. be GPS koordinačių – praleidžiamos.', { n: noGps }) });
   const nadirShare = used.filter((m) => m.gimbalPitch != null && m.gimbalPitch < -80).length / Math.max(1, used.length);
-  if (used.length && nadirShare > 0.95) warnings.push({ level: 'info', text: t('Visos nuotraukos statmenos žemyn – vertikalios sienos (pastatai, krūvų šlaitai) gali būti mažiau detalūs. Įstrižos nuotraukos pagerintų 3D.') });
+  const oblique = used.filter(isOblique).length;
+  if (used.length && oblique / used.length >= 0.2) warnings.push({ level: 'info', text: t('Rasta {n} įstrižų nuotraukų ({p} %) – 3D modeliui parinkta kokybė „3D objektai“ (aštresni pastatai ir mašinos).', { n: oblique, p: Math.round((100 * oblique) / used.length) }) });
+  else if (used.length && nadirShare > 0.95) warnings.push({ level: 'info', text: t('Visos nuotraukos statmenos žemyn – vertikalios sienos (pastatai, krūvų šlaitai) gali būti mažiau detalūs. Įstrižos nuotraukos pagerintų 3D.') });
 
+  const mps = used.filter((m) => m.width && m.height).map((m) => (m.width * m.height) / 1e6).sort((a, b) => a - b);
   return {
-    used, excluded, rtk, stdH, stdV, lks, agl, gsd, takeoff, models, versions, totalBytes,
+    used, excluded, rtk, stdH, stdV, lks, agl, gsd, takeoff, models, versions, totalBytes, oblique,
+    megapixels: mps.length ? mps[mps.length >> 1] : null,
     areaM2: hullArea(lks), center: { lat: centerLat, lon: centerLon },
     timeFrom: dates.length ? new Date(Math.min(...dates)) : null,
     timeTo: dates.length ? new Date(Math.max(...dates)) : null,
