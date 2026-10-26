@@ -10,7 +10,17 @@
     <script>
       // Tema pritaikoma iš karto (be tamsaus „mirktelėjimo“ šviesioje temoje)
       try { document.documentElement.dataset.theme = localStorage.getItem('atea3d.theme') === 'light' ? 'light' : 'dark'; } catch (e) {}
+      // Per serverį: kol nežinoma, ar prisijungta (prisijungimas / pradžios ekranas), programos nerodome –
+      // kitaip trumpam mirkteli vietinės versijos vaizdas
+      if (location.protocol !== 'file:') document.documentElement.classList.add('booting');
     </script>
+    <style>
+      html.booting body > * { visibility: hidden !important; }
+      html.booting body { background: #16191b; }
+      html.booting[data-theme="light"] body { background: #eef1f0; }
+      html.booting body::after { content: ""; position: fixed; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 3px solid rgba(128, 128, 128, .25); border-top-color: #008b01; animation: boot-spin .8s linear infinite; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+    </style>
 </head>
 <body>
   <div id="app">

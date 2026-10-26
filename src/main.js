@@ -2072,12 +2072,15 @@ const closePages = () => {
   homeUI?.close();
 };
 (async () => {
+  // Įkėlimo užsklanda (index.html) nuimama, kai aišku, ką rodyti; atsarginis laikmatis – jei kas nors užstrigtų
+  const booted = () => document.documentElement.classList.remove('booting');
+  setTimeout(booted, 15000);
   const invite = /#invite=([\w-]+)/.exec(location.hash)?.[1];
-  if (invite) return showInvite(invite);
+  if (invite) return booted(), showInvite(invite);
   const who = await whoAmI();
-  if (who.mode === 'login') return showLogin();
-  if (who.mode === 'down') return showDown();
-  if (who.mode !== 'user') return; // be serverio (iš disko) – kaip anksčiau
+  if (who.mode === 'login') return booted(), showLogin();
+  if (who.mode === 'down') return booted(), showDown();
+  if (who.mode !== 'user') return booted(); // be serverio (iš disko) – kaip anksčiau
   const user = who.user;
   document.body.classList.add('portal', `role-${user.role}`);
   $('#user-name').textContent = user.name || user.email;
@@ -2176,6 +2179,7 @@ const closePages = () => {
     setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
   });
   homeUI.open();
+  booted();
 })();
 
 // Ar atidarytas kuris nors puslapis (ne 3D peržiūra) – antraštėje tada nerodomi 3D peržiūros mygtukai

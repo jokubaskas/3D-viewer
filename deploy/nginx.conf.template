@@ -30,6 +30,22 @@ server {
     try_files $uri $uri/ /index.html;
   }
 
+  # Programa: index.html visada tikrinamas iš naujo (po atnaujinimo – iškart nauja versija),
+  # failai su maiša pavadinime (assets/) – talpinami metams. add_header vietoje panaikina bendrus, todėl kartojami.
+  location = /index.html {
+    add_header Cache-Control "no-cache" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+  }
+  location /assets/ {
+    try_files $uri =404;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+  }
+
   # Portalas: paskyros, prieigos teisės, klientų duomenys (3D modeliai, ataskaitos, įrašai)
   location /api/ {
     proxy_pass http://$portal_upstream;
