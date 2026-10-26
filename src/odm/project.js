@@ -9,6 +9,11 @@ export const HEIGHT_MODES = {
 };
 
 export const PRESETS = {
+  orthoOnly: {
+    label: 'Tik ortofoto',
+    desc: 'Greitas 2D žemėlapis be 3D modelio: kelis kartus greičiau ir mažai RAM. DSM / DTM – apytiksliai. Geriausia statmenoms (−90°) nuotraukoms.',
+    options: { 'fast-orthophoto': true, 'skip-3dmodel': true, 'feature-quality': 'high', 'orthophoto-resolution': 2, 'dem-resolution': 10 },
+  },
   fast: {
     label: 'Greitas',
     desc: 'Peržiūrai lauke. Mažesnis taškų tankis, ~2× greičiau.',
@@ -48,6 +53,8 @@ const RAM_MESH = { 9: 0.5, 10: 1, 11: 2, 12: 4, 13: 9, 14: 20 };
 export function estimateRamGB(options, n, mp = 20) {
   const o = Object.fromEntries((options || []).map((x) => [x.name, x.value]));
   const imgs = o.split ? Math.min(n, Number(o.split) + 150) : n; // dalys apdorojamos po vieną
+  // Greitas ortofoto: be tankaus taškų debesies ir 3D tinklo – daugiausia požymių paieška ir ortofoto sudūrimas
+  if (o['fast-orthophoto']) return 2 + imgs * (mp / 20) * 0.004;
   const dense = 1.5 + imgs * (mp / 20) * (RAM_PER_IMAGE[o['pc-quality'] || 'medium'] ?? 0.022);
   const mesh = RAM_MESH[Number(o['mesh-octree-depth'] || 11)] ?? 2;
   return Math.max(dense, mesh) + 1;
@@ -248,6 +255,8 @@ export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = tru
   // JSON eilutė ("/kelias") – ją priima NodeODM tikrinimas (tipas „json“), o pašalinus kabutes ODM gauna kelią.
   if (boundary) o.boundary = JSON.stringify(boundary);
   else o['auto-boundary'] = true;
+  // Debesiui pritaikyti GeoTIFF (su peržiūros lygiais) – ortofoto programoje ir portale skaitomas dalimis
+  o.cog = true;
   if (dsm) o.dsm = true;
   if (dtm) o.dtm = true;
   if (!ortho) o['skip-orthophoto'] = true;

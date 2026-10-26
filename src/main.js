@@ -14,6 +14,7 @@ import { Gizmo } from './gizmo.js';
 import { createOdmUI } from './odm/ui.js';
 import { createLiveUI } from './live/ui.js';
 import { createPlanUI } from './plan/ui.js';
+import { createOrthoUI } from './ortho/ui.js';
 import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
@@ -887,6 +888,11 @@ async function openFiles(fileList, opts = {}) {
   if (!fileList || !fileList.length) return;
   // Kopija iškart: kvietėjas po to išvalo <input type=file>, o tada tas pats FileList ištuštėja
   const files = Array.from(fileList);
+  // Vienas GeoTIFF – ortofoto žemėlapis (ne 3D modelis)
+  if (files.length === 1 && /\.tiff?$/i.test(files[0].name)) {
+    openOrthoPage({ src: files[0], name: files[0].name.replace(/\.tiff?$/i, ''), downloadName: files[0].name, canUpload: !!orthoApp.uploadToPortal });
+    return;
+  }
   tools.deactivate();
   odmProject = null;
   setLoading(true, 'Įkeliama…', 0);
@@ -1948,6 +1954,27 @@ profile.onResize = () => viewer.resize();
 const odmUI = createOdmUI({
   toast,
   filesFromDataTransfer,
+  /** ODM ortofoto: skaitomas dalimis tiesiai iš serverio; jei serveris taip neatiduoda – išimamas iš all.zip. */
+  async openOrtho(project) {
+    const safe = project.name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'projektas';
+    const base = { name: project.name, downloadName: `${safe}_ortofoto.tif`, canUpload: !!orthoApp.uploadToPortal };
+    if (await openOrthoPage({ ...base, src: project.orthoUrl, downloadUrl: project.orthoUrl }, { quiet: true })) return true;
+    setLoading(true, tr('Atsisiunčiami rezultatai…'), 0);
+    try {
+      const files = await extractFromZipUrl(project.downloadUrl, (p) => p === 'odm_orthophoto/odm_orthophoto.tif', (p, bytes) => {
+        $('#loading-bar').style.width = `${Math.round(p * 100)}%`;
+        $('#loading-text').textContent = `${tr('Atsisiunčiami rezultatai…')} ${(bytes / 1e6).toFixed(0)} MB`;
+      });
+      setLoading(false);
+      if (!files.length) throw new Error(tr('Šiame projekte ortofoto nėra (galbūt išjungtas kuriant projektą).'));
+      return await openOrthoPage({ ...base, src: files[0] });
+    } catch (e) {
+      setLoading(false);
+      orthoUI.close();
+      toast(tr('Nepavyko atidaryti ortofoto: {e}', { e: e.message }), 'error', 9000);
+      return false;
+    }
+  },
   saveResults(project) {
     openOdmSaveDialog(project);
   },
@@ -1974,7 +2001,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), planUI.close(), portalUI?.close(), ordersUI?.close(), homeUI?.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), orthoUI.close(), portalUI?.close(), ordersUI?.close(), homeUI?.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -1993,6 +2020,7 @@ $('#btn-live').addEventListener('click', () => {
   planUI.close();
   portalUI?.close();
   ordersUI?.close();
+  orthoUI.close();
   homeUI?.close();
   liveUI.open();
 });
@@ -2001,12 +2029,28 @@ $('#btn-live').addEventListener('click', () => {
 // Skrydžio planas
 // ---------------------------------------------------------------------------
 const planUI = createPlanUI({ toast });
+
+// ---------------------------------------------------------------------------
+// Ortofoto žemėlapis (GeoTIFF): peržiūra, matavimai; administratoriui – įkėlimas į portalą
+// ---------------------------------------------------------------------------
+const orthoApp = { toast, uploadToPortal: null };
+const orthoUI = createOrthoUI(orthoApp);
+function openOrthoPage(o, opts) {
+  if (odmUI.isOpen) odmUI.close();
+  liveUI.close();
+  planUI.close();
+  portalUI?.close();
+  ordersUI?.close();
+  homeUI?.close();
+  return orthoUI.open(o, opts);
+}
 $('#btn-plan').addEventListener('click', () => {
   if (planUI.isOpen) return planUI.close();
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
   portalUI?.close();
   ordersUI?.close();
+  orthoUI.close();
   homeUI?.close();
   planUI.open();
 });
@@ -2024,6 +2068,7 @@ const closePages = () => {
   planUI.close();
   portalUI?.close();
   ordersUI?.close();
+  orthoUI.close();
   homeUI?.close();
 };
 (async () => {
@@ -2043,7 +2088,10 @@ const closePages = () => {
     openModel: (files, name) => openFiles(files, { name, remote: true }),
     openStream: (item) => (odmUI.isOpen && odmUI.close(), planUI.close(), liveUI.openItem(item)),
     lastModelFiles: () => lastOpenedFiles,
+    openOrtho: (o) => openOrthoPage(o),
+    toLks94: user.role === 'admin' ? async (blob, name) => (await aiClient()).toLks94(blob, name) : undefined,
   });
+  if (user.role === 'admin') orthoApp.uploadToPortal = (o) => portalUI.publishOrtho(o);
   liveUI.setPortal({ role: user.role, portal: portalUI });
   const admin = user.role === 'admin';
   const portalTab = (tab) => () => (closePages(), portalUI.open(tab));
@@ -2058,6 +2106,7 @@ const closePages = () => {
         { id: 'odm', icon: 'camera', title: 'Kurti 3D iš nuotraukų', desc: 'OpenDroneMap apdorojimas šiame kompiuteryje', run: () => (closePages(), odmUI.open()) },
         { id: 'plan', icon: 'map', title: 'Skrydžio planas', desc: 'Maršrutas, aukštis pagal GSD, eksportas į pultą', run: () => (closePages(), planUI.open()) },
         { id: 'stream', icon: 'live', title: 'Gyvos transliacijos', desc: 'Dronai, kameros, AI aptikimas, įrašai, diab', run: () => (closePages(), liveUI.open()) },
+        { id: 'ortho', icon: 'layers', title: 'Ortofoto žemėlapiai', desc: 'Peržiūra, matavimai ir priskyrimas klientams', run: portalTab('ortho') },
         { id: 'report', icon: 'report', title: 'Ataskaitos', desc: 'Klientams skirtos ataskaitos', run: portalTab('report') },
         { id: 'recording', icon: 'record', title: 'Įrašai', desc: 'AI įrašai ir vaizdo medžiaga klientams', run: portalTab('recording') },
         { id: 'clients', icon: 'user', title: 'Klientai', desc: 'Paskyros, kvietimai ir prieigos', run: portalTab('clients') },
@@ -2066,6 +2115,7 @@ const closePages = () => {
         { id: 'orders', icon: 'order', title: 'Užsakyti darbą', desc: 'Pažymėkite teritoriją žemėlapyje ir aprašykite, ko reikia', run: openOrders },
         { id: 'model', icon: 'cube', title: 'Mano 3D modeliai', desc: 'Peržiūra ir matavimai', run: portalTab('model') },
         { id: 'stream', icon: 'live', title: 'Mano gyvos transliacijos', desc: 'Tiesioginis vaizdas ir AI aptikimas', run: () => (closePages(), liveUI.open()) },
+        { id: 'ortho', icon: 'layers', title: 'Mano ortofoto žemėlapiai', desc: 'Žemėlapio peržiūra ir matavimai', run: portalTab('ortho') },
         { id: 'report', icon: 'report', title: 'Mano ataskaitos', desc: 'Peržiūra ir atsisiuntimas', run: portalTab('report') },
         { id: 'recording', icon: 'record', title: 'Mano įrašai', desc: 'Vaizdo įrašai ir duomenys', run: portalTab('recording') },
       ];
@@ -2097,7 +2147,7 @@ const closePages = () => {
   $('#brand-logo').closest('.brand').addEventListener('click', goHome);
   // Puslapio „Uždaryti“ (×) – grįžtama į pradžią
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.odm-page [data-act=close], .portal-page [data-pa=close]')) setTimeout(() => !odmUI.isOpen && !liveUI.isOpen && !planUI.isOpen && !portalUI.isOpen && !ordersUI.isOpen && homeUI.open());
+    if (e.target.closest('.odm-page [data-act=close], .portal-page [data-pa=close]')) setTimeout(() => !odmUI.isOpen && !liveUI.isOpen && !planUI.isOpen && !portalUI.isOpen && !ordersUI.isOpen && !orthoUI.isOpen && homeUI.open());
   });
   $('#btn-user').addEventListener('click', (e) => {
     const old = document.querySelector('.user-menu');
@@ -2175,7 +2225,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || ordersUI?.isOpen || homeUI?.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || ordersUI?.isOpen || orthoUI.isOpen || homeUI?.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();
@@ -2252,6 +2302,7 @@ onLangChange(() => {
   planUI.rerender();
   portalUI?.rerender();
   ordersUI?.rerender();
+  orthoUI.rerender();
   homeUI?.rerender();
   if (viewer.hasModel) {
     const s = viewer.stats;
@@ -2265,7 +2316,7 @@ syncLangSwitch();
 startI18n();
 
 // Testams / derinimui: ?debug
-if (new URLSearchParams(location.search).has('debug')) window.__atea = { viewer, units, items, settings };
+if (new URLSearchParams(location.search).has('debug')) window.__atea = { viewer, units, items, settings, ortho: orthoUI };
 
 // Vaizdo atnaujinimas – gizmo
 viewer.addEventListener('render', () => gizmo.update());

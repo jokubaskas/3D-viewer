@@ -99,6 +99,7 @@ export class PlanMap {
   }
 
   _drawTiles(g) {
+    if (this.basemap === 'none') return;
     const src = BASEMAPS[this.basemap] || BASEMAPS.satellite;
     const z = Math.max(0, Math.min(src.maxZoom || 19, Math.round(this.zoom)));
     const n = 2 ** z;
@@ -172,8 +173,8 @@ export class PlanMap {
     g.fillRect(16, this.H - 16, px, 3);
     g.font = '11px Inter, Segoe UI, sans-serif';
     g.fillText(len >= 1000 ? `${new Intl.NumberFormat(locale()).format(len / 1000)} km` : `${new Intl.NumberFormat(locale()).format(len)} m`, 16, this.H - 21);
-    const src = BASEMAPS[this.basemap] || BASEMAPS.satellite;
-    if (src.attribution) {
+    const src = BASEMAPS[this.basemap];
+    if (src?.attribution) {
       g.font = '10px Inter, Segoe UI, sans-serif';
       const w = g.measureText(src.attribution).width;
       g.fillStyle = 'rgba(20,23,25,0.6)';

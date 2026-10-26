@@ -11,17 +11,20 @@ const fmtSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${
 const INLINE = /\.(pdf|png|jpe?g|webp|mp4|webm|txt|csv)$/i;
 const VIDEO = /\.(mp4|webm)$/i;
 const REPORT = /\.(zip|html?)$/i;
+const TIFF = /\.tiff?$/i;
 
 const TABS = [
   { id: 'model', label: 'Mano 3D modeliai', icon: 'cube', empty: 'Dar nėra priskirtų 3D modelių.', desc: 'Atidarykite modelį peržiūrai ir matavimams.', adminDesc: 'Įkelkite 3D modelius ir pažymėkite, kuriems klientams jie matomi.' },
   { id: 'stream', label: 'Mano gyvos transliacijos', icon: 'live', empty: 'Dar nėra priskirtų transliacijų.', desc: 'Pasirinkite transliaciją.', adminDesc: 'Klientams priskirtos transliacijos.' },
+  { id: 'ortho', label: 'Mano ortofoto žemėlapiai', icon: 'layers', empty: 'Dar nėra ortofoto žemėlapių.', desc: 'Atidarykite žemėlapį peržiūrai ir matavimams.', adminDesc: 'Ortofoto (GeoTIFF) klientams: peržiūra ir matavimai naršyklėje.' },
   { id: 'report', label: 'Mano ataskaitos', icon: 'report', empty: 'Dar nėra ataskaitų.', desc: 'Peržiūrėkite ir atsisiųskite ataskaitas.', adminDesc: 'Ataskaitos klientams.' },
   { id: 'recording', label: 'Mano įrašai', icon: 'record', empty: 'Dar nėra įrašų.', desc: 'Vaizdo įrašai ir duomenys.', adminDesc: 'AI įrašai ir vaizdo medžiaga klientams.' },
 ];
 
 /**
  * @param {{user:{id:number,email:string,name:string,role:string}, toast:Function, loading:(on:boolean,text?:string,p?:number|null)=>void,
- *   openModel:(files:File[], name:string)=>Promise<void>, openStream:(item:object)=>Promise<void>, lastModelFiles:()=>File[]|null}} app
+ *   openModel:(files:File[], name:string)=>Promise<void>, openStream:(item:object)=>Promise<void>, lastModelFiles:()=>File[]|null,
+ *   openOrtho:(o:{src:string,name:string,downloadUrl:string,item:object})=>void, toLks94?:(blob:Blob,name:string)=>Promise<Blob>}} app
  */
 export function createPortalUI(app) {
   const admin = app.user.role === 'admin';
@@ -103,7 +106,11 @@ export function createPortalUI(app) {
       if (files.length) main = `<button class="btn btn-primary" data-pa="open">${icon('cube')}${esc(t('Atidaryti 3D'))}</button>`;
       if (files.length) filesHtml = `<details class="pt-files-box"><summary>${esc(t('Failai ({n})', { n: files.length }))}</summary><ul class="pt-files">${files.map(fileRow).join('')}</ul></details>`;
     } else if (i.kind === 'stream') main = `<button class="btn btn-primary" data-pa="watch">${icon('play')}${esc(t('Žiūrėti'))}</button>`;
-    else {
+    else if (i.kind === 'ortho') {
+      const tif = files.find((f) => TIFF.test(f.name));
+      if (tif) main = `<button class="btn btn-primary" data-pa="ortho" data-fid="${tif.id}">${icon('map')}${esc(t('Atidaryti žemėlapį'))}</button><a class="btn btn-outline" href="${fileUrl(i, tif, true)}">${icon('save')}${esc(t('Atsisiųsti GeoTIFF'))}</a>`;
+      filesHtml = files.length ? `<ul class="pt-files">${files.map(fileRow).join('')}</ul>` : '';
+    } else {
       // Įrašas – peržiūra lange; ataskaita (AI įrašo ZIP ar HTML) – atidaroma naršyklėje, ZIP lieka atsisiųsti
       const rep = i.kind === 'report' && files.find((f) => REPORT.test(f.name));
       const vid = files.find((f) => VIDEO.test(f.name));
@@ -207,7 +214,7 @@ export function createPortalUI(app) {
        <label class="row">${esc(t('Pavadinimas'))} <input name="title" class="num wide" style="text-align:left;width:260px" value="${esc(title)}" required /></label>
        <label class="row">${esc(t('Pastaba'))} <input name="note" class="num wide" style="text-align:left;width:260px" /></label>
        ${presetFiles ? `<p class="small">${esc(t('{n} failų iš atidaryto modelio', { n: presetFiles.length }))}</p>` : `<label class="row">${esc(t('Failai'))} <input name="files" type="file" multiple required /></label>
-       <p class="small muted">${esc(kind === 'model' ? t('3D: OBJ + MTL + tekstūros, GLB, PLY, LAS/LAZ, ZIP (pvz. ODM rezultatai). Kelis failus galima pasirinkti kartu.') : t('PDF ataskaitos, AI įrašų ZIP, vaizdo įrašai, GPX, CSV ir kt.'))}</p>`}
+       <p class="small muted">${esc(kind === 'model' ? t('3D: OBJ + MTL + tekstūros, GLB, PLY, LAS/LAZ, ZIP (pvz. ODM rezultatai). Kelis failus galima pasirinkti kartu.') : kind === 'ortho' ? t('Ortofoto GeoTIFF (.tif), pvz. ODM odm_orthophoto.tif. Patogiau – atidarius ortofoto programoje, mygtukas „Įkelti į portalą klientui“.') : t('PDF ataskaitos, AI įrašų ZIP, vaizdo įrašai, GPX, CSV ir kt.'))}</p>`}
        <div class="small">${esc(t('Kam matoma:'))}</div>${clientChecks()}`,
       async (f) => {
         const files = presetFiles || [...f.files.files];
@@ -271,6 +278,13 @@ export function createPortalUI(app) {
         const f = it.files.find((x) => x.id === +b.dataset.fid);
         if (f) openVideo(fileUrl(it, f), it.title, fileUrl(it, f, true));
       } else if (act === 'report') await showReport(it, it.files.find((x) => x.id === +b.dataset.fid));
+      else if (act === 'ortho') {
+        const f = it.files.find((x) => x.id === +b.dataset.fid);
+        if (f) {
+          close();
+          app.openOrtho({ src: new URL(fileUrl(it, f), location.href).href, name: it.title, downloadUrl: fileUrl(it, f, true), downloadName: f.name.split('/').pop(), item: it });
+        }
+      }
       else if (act === 'watch') {
         close();
         await app.openStream(it);
@@ -435,6 +449,52 @@ export function createPortalUI(app) {
         await api(`items/${item.id}`, { method: 'PATCH', body: { clients: checked(f) } });
         onDone?.();
       });
+    },
+    /** Admin: atidarytą ortofoto – į portalą (pasirinktinai perskaičiavus į LKS-94 su peržiūros lygiais). */
+    async publishOrtho({ src, name, title }) {
+      if (!users.length) users = await api('users').catch(() => []);
+      dialog(
+        `<h2>${esc(t('Ortofoto – į portalą'))}</h2>
+         <label class="row">${esc(t('Pavadinimas'))} <input name="title" class="num wide" style="text-align:left;width:260px" value="${esc(title)}" required /></label>
+         ${app.toLks94 ? `<label class="row check"><input type="checkbox" name="lks" checked /> ${esc(t('Perskaičiuoti į LKS-94 ir sukurti peržiūros lygius (greitesnė peržiūra klientui)'))}</label>` : ''}
+         <div class="small">${esc(t('Kam matoma:'))}</div>${clientChecks()}`,
+        async (f) => {
+          const want = { title: f.title.value, lks: !!f.lks?.checked, clients: checked(f) };
+          (async () => {
+            try {
+              let blob = src;
+              if (typeof src === 'string') {
+                app.loading(true, t('Atsisiunčiama…'), 0);
+                const r = await fetch(src, { credentials: 'same-origin' });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const total = +r.headers.get('content-length') || 0;
+                const reader = r.body.getReader();
+                const parts = [];
+                let got = 0;
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  parts.push(value);
+                  got += value.length;
+                  app.loading(true, t('Atsisiunčiama… {p}', { p: total ? `${Math.round((100 * got) / total)} %` : `${Math.round(got / 1e6)} MB` }), total ? got / total : null);
+                }
+                blob = new Blob(parts, { type: 'image/tiff' });
+              }
+              if (want.lks) {
+                app.loading(true, t('Perskaičiuojama į LKS-94…'), null);
+                blob = await app.toLks94(blob, name.replace(/\.tiff?$/i, ''));
+              }
+              const it = await api('items', { method: 'POST', body: { kind: 'ortho', title: want.title, clients: want.clients } });
+              await uploadFile(it.id, blob, want.lks ? name.replace(/(\.tiff?)?$/i, '_LKS94.tif') : name, (p) => app.loading(true, t('Įkeliama į portalą… {p} %', { p: Math.round(p * 100) }), p));
+              app.toast(t('Ortofoto įkeltas į portalą: {n}', { n: want.title }), 'success', 6000);
+            } catch (e) {
+              app.toast(t('Įkelti nepavyko: {e}', { e: e.message }), 'error', 9000);
+            } finally {
+              app.loading(false);
+            }
+          })();
+        },
+      );
     },
     async publishStream(name, source, onDone) {
       if (!users.length) users = await api('users').catch(() => []);

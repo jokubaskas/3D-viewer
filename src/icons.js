@@ -13,6 +13,7 @@ export const ICONS = {
   fit: p('<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/>'),
   undo: p('<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
   check: p('<path d="m5 12.5 4.5 4.5L19 7"/>'),
+  layers: p('<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12.5 9 5 9-5M3 16.5l9 5 9-5"/>'),
   plus: p('<path d="M12 5v14M5 12h14"/>'),
   send: p('<path d="M21 3 10 14"/><path d="M21 3 14.5 21l-4.5-7-7-4.5z"/>'),
   order: p('<path d="M8 4h8l1 2h2a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h2z"/><path d="M8 4v3h8V4M8 12h8M8 16h5"/>'),

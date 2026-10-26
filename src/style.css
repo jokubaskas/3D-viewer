@@ -949,3 +949,39 @@ body.portal .portal-card { display: block; }
   .or-maphint { display: none; }
 }
 @media (max-width: 480px) { .or-facts, .or-grid2 { grid-template-columns: 1fr; } .or-search { height: 38px; } }
+
+/* ---------------------------------------------------------------- Ortofoto žemėlapis */
+.ot-main { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-right: 0; }
+.ot-map-wrap { position: relative; flex: 1; min-height: 360px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-sm); background: #1a1e21; }
+.ot-map-wrap canvas { position: absolute; inset: 0; display: block; touch-action: none; }
+.ot-info { display: flex; flex-direction: column; gap: 6px; }
+.ot-info > div { display: flex; justify-content: space-between; gap: 10px; }
+.ot-info > div b { text-align: right; overflow-wrap: anywhere; }
+.ot-warn { margin: 4px 0 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--ink-2); line-height: 1.45; }
+.ot-range { display: flex; align-items: center; gap: 10px; font-size: 13px; margin: 10px 0 4px; }
+.ot-range input { flex: 1; accent-color: var(--atea-green); }
+.ot-range span { min-width: 42px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ot-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ot-tool { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 4px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-0); color: var(--ink-2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; transition: border-color .12s, background .12s; }
+.ot-tool svg { width: 20px; height: 20px; color: var(--c); }
+.ot-tool:hover { border-color: var(--c); }
+.ot-tool.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); color: var(--strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent); }
+.ot-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.ot-m { display: flex; align-items: center; gap: 8px; padding: 8px 6px 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-0); cursor: pointer; }
+.ot-m.sel { border-color: var(--c); box-shadow: inset 3px 0 0 var(--c); }
+.ot-m-ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c); flex: none; }
+.ot-m-ic svg { width: 17px; height: 17px; }
+.ot-m-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ot-m-t b { font-size: 13.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ot-coords { position: absolute; left: 50%; transform: translateX(-50%); bottom: 10px; background: rgba(16,19,21,.82); color: #e6ebe8; padding: 5px 12px; border-radius: 14px; pointer-events: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ot-loading { position: absolute; left: 12px; top: 12px; display: flex; align-items: center; gap: 8px; background: rgba(16,19,21,.82); color: #e6ebe8; padding: 6px 12px; border-radius: 14px; pointer-events: none; }
+.ot-loading .spinner { margin: 0; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; animation: ot-spin .8s linear infinite; }
+@keyframes ot-spin { to { transform: rotate(360deg); } }
+.ortho-page .or-drawbar { bottom: 48px; }
+@media (max-width: 1000px) {
+  .ot-body { grid-template-rows: auto; }
+  .ot-main { order: -1; overflow: visible; }
+  .ot-map-wrap { min-height: 52vh; }
+  .ortho-page .odm-head p { display: none; }
+}
+.ot-note { margin: 8px 0 0; line-height: 1.4; }

@@ -2,7 +2,7 @@
 
 Vaidmenys:
   admin  – visos programos funkcijos (ODM, AI mokymas, transliacijų serveris, klientų valdymas);
-  client – tik jam priskirti duomenys: 3D modeliai, gyvos transliacijos, ataskaitos, įrašai.
+  client – tik jam priskirti duomenys: 3D modeliai, ortofoto, gyvos transliacijos, ataskaitos, įrašai; užsakymai.
 
 Saugumas:
   * slaptažodžiai – scrypt (druska kiekvienam), sesijos ir kvietimų raktai DB saugomi tik kaip SHA-256;
@@ -43,7 +43,7 @@ MEDIAMTX_API = os.environ.get("MEDIAMTX_API", "http://mediamtx:9997")
 SESSION_DAYS = float(os.environ.get("SESSION_DAYS", "14"))
 INVITE_DAYS = 7
 COOKIE = "atea_sess"
-KINDS = {"model", "stream", "report", "recording"}
+KINDS = {"model", "stream", "report", "recording", "ortho"}
 MIN_PW = 10
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
