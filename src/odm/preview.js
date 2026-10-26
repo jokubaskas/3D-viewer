@@ -334,6 +334,7 @@ export class PhotoPreview {
         let img = this.tiles.get(key);
         if (!img) {
           img = new Image();
+          img.referrerPolicy = 'strict-origin-when-cross-origin'; // OSM reikalauja Referer (svetainės adresas)
           img.onload = () => this.redraw();
           img.onerror = () => (img.failed = true);
           img.src = src.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
