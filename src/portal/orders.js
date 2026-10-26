@@ -41,8 +41,8 @@ export const WORKS = {
   live: { label: 'Gyva transliacija', icon: 'live' },
   other: { label: 'Kita', icon: 'edit' },
 };
-const KIND_LABEL = { model: '3D modelis', stream: 'Transliacija', report: 'Ataskaita', recording: 'Įrašas' };
-const KIND_ICON = { model: 'cube', stream: 'live', report: 'report', recording: 'record' };
+const KIND_LABEL = { ortho: 'Ortofoto žemėlapis', model: '3D modelis', stream: 'Transliacija', report: 'Ataskaita', recording: 'Įrašas' };
+const KIND_ICON = { ortho: 'layers', model: 'cube', stream: 'live', report: 'report', recording: 'record' };
 const FILTERS = [
   { id: 'active', label: 'Aktyvūs', test: (o) => ['new', 'accepted', 'in_progress'].includes(o.status) },
   { id: 'new', label: 'Nauji', test: (o) => o.status === 'new' },
@@ -519,7 +519,7 @@ export function createOrdersUI(app) {
     const cur = new Set(o.items.map((i) => i.id));
     const d = document.createElement('dialog');
     d.className = 'dialog wide';
-    const groups = ['model', 'report', 'recording', 'stream'];
+    const groups = ['ortho', 'model', 'report', 'recording', 'stream'];
     d.innerHTML = `<form method="dialog">
       <h2>${esc(t('Užsakymo rezultatai'))}</h2>
       <p class="small muted">${esc(t('Pažymėti duomenys bus priskirti klientui „{c}“ ir matomi užsakyme.', { c: o.client?.name || o.client?.email || '' }))}</p>

@@ -43,6 +43,10 @@ Kiti patogumai:
   - Atidarytas 3D modelis išsaugomas kaip **OBJ + tekstūros (ZIP)** su tikromis koordinatėmis: LKS-94 georeferencuotiems modeliams, Z – aukštis, 0,1 mm tikslumu, įskaitant kontrolinių taškų pataisą. Tinka CAD ir GIS programoms.
   - Taip pat galima išsaugoti kaip **GLB** peržiūros programoms. GLB koordinatės santykinės, poslinkis įrašomas šakninio mazgo `extras.atea.offset`.
   - Taškų debesis išsaugomas kaip **LAS** (1 mm tikslumu, su spalvomis).
+  - **Ortofoto žemėlapis** – GeoTIFF ortofoto peržiūra ant palydovinio / OSM pagrindo (arba be jo), su permatomumu. Atidaromas iš ODM projekto (mygtukas *Ortofoto*), iš kompiuterio (vienas `.tif` failas per „Atidaryti“ arba nutempus) arba iš portalo. Skaitomos tik matomos dalys pagal mastelį (iš peržiūros lygių, per HTTP Range) – nereikia atsisiųsti viso failo. Palaikomos UTM, LKS-94, WGS84 ir Web Mercator sistemos.
+    - Matavimai: **atstumas** (laužtė), **plotas** su perimetru, **taškas** su LKS-94 X / Y ir WGS84 koordinatėmis; po pele rodomos LKS-94 koordinatės. Atstumai ir plotai – tikri, žemės paviršiuje (patikrinta: 100 m × 50 m stačiakampis UTM tinklelyje → 100,03 m ir 5 002,5 m², t. y. tiksliai pagal UTM mastelį; taško LKS-94 koordinatės sutampa su PROJ iki 1 mm).
+    - Eksportas: GeoJSON (WGS84) ir CSV (su LKS-94 koordinatėmis).
+    - Administratoriui – **Įkelti į portalą klientui**: pasirinktinai perskaičiuojama į LKS-94 su peržiūros lygiais (AI paslauga), sukuriamas „Ortofoto žemėlapis“ ir priskiriamas klientams.
   - Modeliams, sukurtiems „Iš nuotraukų“ (ir projektų sąraše mygtukas *Atsisiųsti*), galima atsisiųsti tikrą ODM **ortofoto**, **DSM**, **DTM** (GeoTIFF), taškų debesį (LAZ) ir originalų ODM 3D modelį. Rastrai gali būti **perskaičiuoti į LKS-94** (EPSG:3346): tai daro AI paslauga su GDAL (`rasterio`), išlaikomas tas pats pikselio dydis, sukuriami peržiūros lygiai. Arba galima atsisiųsti originalią ODM sistemą (WGS84 / UTM).
 - **AI skaičiavimų atšaukimas** – transporto paiešką, AI kontūrą ar pokyčių skaičiavimą galima nutraukti mygtuku *Atšaukti* arba `Esc`. AI serveris tada nustoja skaičiuoti ties kita plytele, todėl iškart gali priimti kitą užklausą.
 - **Palyginimas su kita data** (*Modelis → Palyginimas su kita data*). Įkeliamas to paties objekto modelis iš kitos datos: ZIP, aplankas ar failas, pvz. kitas ODM projektas. Programa jį padeda pagal koordinates ir tinkleliu palygina abu paviršius. Rezultatai:
@@ -97,7 +101,9 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    Apdorojimo laikas daugiausia priklauso nuo **nuotraukų skaičiaus**, nes ODM riba apkarpo tik jau sukurtą tankų taškų debesį. Įprastame skrydyje (80 m, 75 % persidengimas) taip naudojama 13–50 % mažiau nuotraukų nei visų liečiančių: kuo mažesnė sritis, tuo daugiau sutaupoma.
 
    Peržiūra apytikslė: aukštis skaičiuojamas nuo pakilimo vietos, todėl kalvotoje vietovėje mastelis gali skirtis keliais procentais.
-2. **Nustatymai** – kokybė (greitas / standartinis / aukšta / **3D objektai**), DSM, DTM, ortofoto, aukščių sistema:
+2. **Nustatymai** – kokybė (**tik ortofoto** / greitas / standartinis / aukšta / **3D objektai**), DSM, DTM, ortofoto, aukščių sistema:
+   - *Tik ortofoto* – greitas 2D žemėlapis be 3D modelio (`fast-orthophoto`, `skip-3dmodel`): kelis kartus greičiau, RAM – keli GB net dideliems plotams; DSM / DTM tada apytiksliai. Geriausia statmenoms nuotraukoms. Baigus projektų sąraše – mygtukas **Ortofoto**.
+   - Visi GeoTIFF rezultatai kuriami debesiui pritaikyti (`cog` – su peržiūros lygiais), todėl ortofoto programoje ir portale skaitomas dalimis.
    - *3D objektai* – įstrižoms (pvz. 5 krypčių: statmenai + 4 × 45°) nuotraukoms: `pc-quality high`, `mesh-size 2 000 000`, `mesh-octree-depth 13` – aštresni pastatai, mašinos ir sienos (be „pakilusio“ asfalto aplink juos). Parenkama automatiškai, kai ≥ 20 % nuotraukų įstrižos (kamera pakreipta daugiau nei 20° nuo statmens, pagal XMP `GimbalPitchDegree`).
    - Rodomas **apytikslis RAM poreikis** (pagal nuotraukų skaičių, raišką ir kokybę) ir kiek RAM skirta serveriui. Jei gali neužtekti – įspėjama ir prieš pradedant paklausiama; pritrūkus programa vis tiek pasiūlys pakartoti su mažesne kokybe.
    - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
@@ -291,6 +297,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - **Klientas** – tik tai, ką jam priskyrėte. Mygtukai:
   - **Užsakyti darbą** – žr. „Užsakymai“ žemiau;
   - **Mano 3D modeliai** – peržiūra ir matavimai;
+  - **Mano ortofoto žemėlapiai** – ortofoto peržiūra ir matavimai naršyklėje (atstumas, plotas, LKS-94 koordinatės), GeoTIFF atsisiuntimas;
   - **Mano gyvos transliacijos** – žiūrėjimas, AI aptikimo įjungimas ir atpažįstamų objektų pasirinkimas (kadrus ir įrašus pateikia administratorius);
   - **Mano ataskaitos**, **Mano įrašai** – peržiūra ir atsisiuntimas: **Atidaryti HTML ataskaitą** atidaro AI ataskaitą iš ZIP iškart naršyklėje (vaizdas, įvykiai, grafikas, spausdinimas į PDF; ataskaita rodoma izoliuotai, be jos skriptų), **Atsisiųsti ZIP** – visą archyvą; vaizdo įrašai peržiūrimi programos lange.
 
@@ -327,7 +334,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 
 **Klientai ir duomenys:**
 - **Klientas:** „Mano sritis“ → **Klientai** → **Sukurti paskyrą**. Nuorodą nusiųskite klientui (mygtukas „Siųsti el. paštu“) – slaptažodį jis nusistatys pats.
-- **3D modeliai, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus.
+- **3D modeliai, ortofoto, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus. Ortofoto patogiausia įkelti iš ortofoto peržiūros – **Įkelti į portalą klientui**. Visus juos galima pridėti ir kaip užsakymo rezultatus.
 - **Transliacijos:** transliacijos langelyje mygtukas 👤 **Priskirti klientams**.
 
 **Prieiga iš interneto (Cloudflare Tunnel)** – maršrutizatoriuje nieko atidaryti nereikia, HTTPS automatiškai:
@@ -369,6 +376,7 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/geo/` – LKS-94 / UTM projekcijos, UTM → LKS-94 perskaičiavimas, geoido modeliai, žemėlapis po modeliu (`basemap.js`)
 - `deploy/` – Docker Compose: NodeODM + AI paslauga + MediaMTX (transliacijos) + portalas + nginx su programa (+ Cloudflare Tunnel)
 - `deploy/portal/` – portalas: paskyros, sesijos, klientų duomenys, prieigos tikrinimas nginx'ui (`app.py`, testai – `test_portal.py`)
+- `src/ortho/` – ortofoto (GeoTIFF) skaitymas dalimis ir piešimas žemėlapyje (`raster.js`, geotiff.js), peržiūra ir matavimai (`ui.js`)
 - `src/portal/` – prisijungimas, kvietimai (`auth.js`), „Mano sritis“ skiltys ir klientų valdymas (`ui.js`), užsakymai su žemėlapiu (`orders.js`), failų peržiūra (`viewer.js`), API (`api.js`)
 - `deploy/ai/` – vietinė AI paslauga (FastAPI: `/detect`, `/segment`, `/raster/lks94` – GeoTIFF perskaičiavimas į LKS-94)
 - `src/ai/` – vaizdas iš viršaus AI modeliams ir AI paslaugos klientas

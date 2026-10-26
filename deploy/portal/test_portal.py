@@ -212,3 +212,24 @@ def test_orders_admin_for_client_and_cancel(env):
     # Išjungtas klientas nebepasiekia
     adm.patch(f"/api/users/{a_id}", json={"disabled": True}, headers=H)
     assert ca.get("/api/orders").status_code == 401
+
+
+def test_ortho_items_range_and_orders(env):
+    app, client, adm = env
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    b_id, cb = make_client(adm, client, "b@klientas.lt")
+    it = adm.post("/api/items", json={"kind": "ortho", "title": "Aikštelės ortofoto"}, headers=H).json()
+    data = bytes(range(256)) * 400
+    f = adm.put(f"/api/items/{it['id']}/files", params={"name": "ortofoto.tif"}, content=data, headers=H).json()
+    # Priskiriama per užsakymo rezultatus – tik užsakymo klientui
+    o = ca.post("/api/orders", json={"title": "Ortofoto", "works": ["ortho"], "geometry": SQUARE}, headers=H).json()
+    adm.patch(f"/api/orders/{o['id']}", json={"items": [it["id"]], "status": "done"}, headers=H)
+    assert [x["kind"] for x in ca.get("/api/items").json()] == ["ortho"]
+    assert cb.get("/api/items").json() == []
+    assert ca.get(f"/api/orders/{o['id']}").json()["items"][0]["kind"] == "ortho"
+    # Peržiūra skaito failą dalimis (HTTP Range); TIFF naršyklėje neatidaromas kaip puslapis
+    url = f"/api/items/{it['id']}/files/{f['id']}/ortofoto.tif"
+    r = ca.get(url, headers={"Range": "bytes=100-199"})
+    assert r.status_code == 206 and r.content == data[100:200]
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert cb.get(url, headers={"Range": "bytes=0-9"}).status_code == 404

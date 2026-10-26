@@ -384,6 +384,9 @@ export function createOdmUI(app) {
   let presetTouched = false; // vartotojas pats pasirinko – automatiškai nebekeičiama
   function setPreset(k) {
     preset = k;
+    // „Tik ortofoto“ – ortofoto privalomas
+    $('#odm-ortho').disabled = k === 'orthoOnly';
+    if (k === 'orthoOnly') $('#odm-ortho').checked = true;
     page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x.dataset.preset === k));
     $('#odm-preset-desc').textContent = PRESETS[preset].desc;
     updateStartSummary();
@@ -408,7 +411,7 @@ export function createOdmUI(app) {
     const n = photos.length;
     const bytes = photos.reduce((s, m) => s + m.size, 0);
     // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
-    const perImg = { fast: 4, standard: 8, high: 18, objects3d: 30 }[preset];
+    const perImg = { orthoOnly: 2, fast: 4, standard: 8, high: 18, objects3d: 30 }[preset];
     const need = ramNeed(photos);
     const have = serverInfo?.totalMemory ? serverInfo.totalMemory / 2 ** 30 : null;
     const ram = have
@@ -451,7 +454,7 @@ export function createOdmUI(app) {
 
     const project = {
       uuid: null, name, server: server.url, created: Date.now(), photos: entries.length,
-      rtkFix: photos.filter((m) => m.rtkFlag === 50).length, preset, area: boundary ? Math.round(preview.areaM2) : null, heightSystem: heightSystem(), status: 'uploading', progress: 0,
+      rtkFix: photos.filter((m) => m.rtkFlag === 50).length, preset, ortho: $('#odm-ortho').checked, area: boundary ? Math.round(preview.areaM2) : null, heightSystem: heightSystem(), status: 'uploading', progress: 0,
     };
     const ctrl = new AbortController();
     uploading = { abort: () => ctrl.abort(), project };
@@ -608,8 +611,9 @@ export function createOdmUI(app) {
         ${p.pollError ? `<div class="small bad">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}</div>` : ''}
         <div class="odm-proj-actions">
           ${p.statusCode === STATUS.COMPLETED ? `
-            <button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
-            <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>
+            ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
+            <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>`}
+            ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
             <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
@@ -635,6 +639,8 @@ export function createOdmUI(app) {
       if (act === 'model' || act === 'points') {
         await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid) }, act);
         close();
+      } else if (act === 'ortho') {
+        if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: c.url(`task/${uuid}/download/orthophoto.tif`) })) close();
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
       } else if (act === 'restart') {
