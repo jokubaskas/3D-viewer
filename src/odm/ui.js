@@ -2,7 +2,7 @@
 import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
-import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
+import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
 import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
@@ -64,6 +64,7 @@ export function createOdmUI(app) {
   /** Projekto serveris: vietiniam serveriui – dabartinis adresas (prievadas galėjo pasikeisti). */
   const serverFor = (p) => (isLocalOdm(p.server) ? server.url : p.server);
   let analysis = null;
+  let serverInfo = null;
   let metas = [];
   let geoid = null; // GeoidGrid
   let uploading = null; // {abort, project}
@@ -208,6 +209,8 @@ export function createOdmUI(app) {
     st.className = 'small muted';
     try {
       const i = await client.info();
+      serverInfo = i;
+      updateStartSummary();
       st.textContent = '● Prisijungta';
       st.className = 'small ok';
       $('#odm-server-info').innerHTML = `NodeODM ${esc(i.version)} · ODM ${esc(i.engineVersion || '')}<br>
@@ -265,6 +268,7 @@ export function createOdmUI(app) {
   function reanalyze() {
     if (!metas.length) return;
     analysis = analyzePhotos(metas, { onlyFix: $('#odm-onlyfix').checked });
+    if (!presetTouched) setPreset(analysis.oblique / Math.max(1, analysis.used.length) >= 0.2 ? 'objects3d' : 'standard');
     renderAnalysis();
     $('#odm-step-settings').hidden = false;
     $('#odm-split-row').hidden = analysis.used.length < 500;
@@ -377,14 +381,26 @@ export function createOdmUI(app) {
   });
 
   let preset = 'standard';
+  let presetTouched = false; // vartotojas pats pasirinko – automatiškai nebekeičiama
+  function setPreset(k) {
+    preset = k;
+    page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x.dataset.preset === k));
+    $('#odm-preset-desc').textContent = PRESETS[preset].desc;
+    updateStartSummary();
+  }
   page.querySelectorAll('#odm-preset button').forEach((b) =>
     b.addEventListener('click', () => {
-      preset = b.dataset.preset;
-      page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x === b));
-      $('#odm-preset-desc').textContent = PRESETS[preset].desc;
-      updateStartSummary();
+      presetTouched = true;
+      setPreset(b.dataset.preset);
     }),
   );
+
+  /** Apytikslis RAM poreikis dabartiniams nustatymams ir pasirinktoms nuotraukoms. */
+  function ramNeed(photos) {
+    const options = buildOdmOptions(preset, { split: $('#odm-split').checked });
+    return estimateRamGB(options, photos.length, analysis?.megapixels || 20);
+  }
+  $('#odm-split').addEventListener('change', () => updateStartSummary());
 
   function updateStartSummary() {
     if (!analysis) return;
@@ -392,9 +408,14 @@ export function createOdmUI(app) {
     const n = photos.length;
     const bytes = photos.reduce((s, m) => s + m.size, 0);
     // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
-    const perImg = { fast: 4, standard: 8, high: 18 }[preset];
+    const perImg = { fast: 4, standard: 8, high: 18, objects3d: 30 }[preset];
+    const need = ramNeed(photos);
+    const have = serverInfo?.totalMemory ? serverInfo.totalMemory / 2 ** 30 : null;
+    const ram = have
+      ? `<br><span class="${need > have * 1.5 ? 'bad' : need > have ? 'warn' : ''}">${esc(t('Apytikslis RAM poreikis: ~{n} GB (serveriui skirta {m} GB).', { n: nf(need, 0), m: nf(have, 1) }))}${need > have ? ` ${esc(t('Gali pritrūkti atminties: rinkitės žemesnę kokybę, mažesnę sritį ar skaidymą į dalis, arba skirkite Docker daugiau RAM (%UserProfile%\\.wslconfig → memory=…, po to wsl --shutdown). Pritrūkus programa pasiūlys pakartoti su mažesne kokybe.'))}` : ''}</span>`
+      : `<br>${esc(t('Apytikslis RAM poreikis: ~{n} GB.', { n: nf(need, 0) }))}`;
     const area = preview?.hasSelection ? ` · ${t('sritis {a} ha', { a: nf(preview.areaM2 / 1e4, 2) })}` : '';
-    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })}${n < analysis.used.length ? ` ${t('iš {n}', { n: nf(analysis.used.length) })}` : ''} (${fmtBytes(bytes)})${area} · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}`;
+    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })}${n < analysis.used.length ? ` ${t('iš {n}', { n: nf(analysis.used.length) })}` : ''} (${fmtBytes(bytes)})${area} · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}${ram}`;
   }
 
   // ------------------------------------------------------------------ Paleidimas
@@ -409,6 +430,9 @@ export function createOdmUI(app) {
     const info = await checkServer(true);
     if (!info) return app.toast('Apdorojimo serveris nepasiekiamas', 'error');
     if (info.maxImages && photos.length > info.maxImages) return app.toast(t('Serveris priima iki {n} nuotraukų', { n: info.maxImages }), 'error');
+    const need = ramNeed(photos);
+    const have = info.totalMemory ? info.totalMemory / 2 ** 30 : null;
+    if (have && need > have && !confirm(t('Šiems nustatymams reikia apie {n} GB RAM, o serveriui skirta {m} GB – apdorojimas gali nutrūkti po kelių valandų. Vis tiek pradėti? (Atšaukus galite pasirinkti žemesnę kokybę ar mažesnę sritį.)', { n: nf(need, 0), m: nf(have, 1) }))) return;
     if ($('#odm-hmode').value === 'ellipsoid' && geoidMode() === 'const' && !geoidFn()) {
       return app.toast('Įveskite geoido aukštį N arba pasirinkite kitą variantą', 'error');
     }

@@ -97,7 +97,9 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    Apdorojimo laikas daugiausia priklauso nuo **nuotraukų skaičiaus**, nes ODM riba apkarpo tik jau sukurtą tankų taškų debesį. Įprastame skrydyje (80 m, 75 % persidengimas) taip naudojama 13–50 % mažiau nuotraukų nei visų liečiančių: kuo mažesnė sritis, tuo daugiau sutaupoma.
 
    Peržiūra apytikslė: aukštis skaičiuojamas nuo pakilimo vietos, todėl kalvotoje vietovėje mastelis gali skirtis keliais procentais.
-2. **Nustatymai** – kokybė (greitas / standartinis / aukšta), DSM, DTM, ortofoto, aukščių sistema:
+2. **Nustatymai** – kokybė (greitas / standartinis / aukšta / **3D objektai**), DSM, DTM, ortofoto, aukščių sistema:
+   - *3D objektai* – įstrižoms (pvz. 5 krypčių: statmenai + 4 × 45°) nuotraukoms: `pc-quality high`, `mesh-size 2 000 000`, `mesh-octree-depth 13` – aštresni pastatai, mašinos ir sienos (be „pakilusio“ asfalto aplink juos). Parenkama automatiškai, kai ≥ 20 % nuotraukų įstrižos (kamera pakreipta daugiau nei 20° nuo statmens, pagal XMP `GimbalPitchDegree`).
+   - Rodomas **apytikslis RAM poreikis** (pagal nuotraukų skaičių, raišką ir kokybę) ir kiek RAM skirta serveriui. Jei gali neužtekti – įspėjama ir prieš pradedant paklausiama; pritrūkus programa vis tiek pasiūlys pakartoti su mažesne kokybe.
    - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
    - Galima palikti elipsoidinius ir pataisyti kontroliniais taškais.
 3. **Apdorojimas** – nuotraukos įkeliamos dalimis (su pakartojimais), kartu siunčiamas `geo.txt` su perskaičiuotais aukščiais ir RTK tikslumais (FIX nuotraukos gauna didesnį svorį).
