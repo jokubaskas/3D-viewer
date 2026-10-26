@@ -303,7 +303,10 @@ export function createOdmUI(app) {
     preview = new PhotoPreview($('#odm-preview'), a.used, {
       agl: a.agl,
       rtkColor,
-      tooltip: (m) => `<b>${esc(m.name)}</b><br>RTK ${t(rtkLabel(m.rtkFlag))}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>${t('Aukštis {h} m (virš pakil. {r} m)', { h: nf(m.absAlt ?? m.alt, 2), r: nf(m.relAlt, 1) })}`,
+      tooltip: (m) =>
+        `<b>${esc(m.name)}</b><br>RTK ${t(rtkLabel(m.rtkFlag))}${m.stdLat != null ? ` ±${nf(Math.max(m.stdLat, m.stdLon) * 100, 1)} / ${nf(m.stdHgt * 100, 1)} cm` : ''}<br>${t('Aukštis {h} m (virš pakil. {r} m)', { h: nf(m.absAlt ?? m.alt, 2), r: nf(m.relAlt, 1) })}` +
+        `<br>${t('Kamera: posvyris {p}°, kryptis {g}° (dronas {y}°)', { p: m.gimbalPitch != null ? nf(m.gimbalPitch, 1) : '—', g: m.gimbalYaw != null ? nf(m.gimbalYaw, 1) : '—', y: m.yaw != null ? nf(m.yaw, 1) : '—' })}` +
+        `<br>${esc(m.model || '')} · ${m.f35 ? `${nf(m.f35)} mm (35 mm ekv.)` : t('židinys nežinomas')} · ${m.width || '?'}×${m.height || '?'}`,
       onChange: () => updateStartSummary(),
     });
   }

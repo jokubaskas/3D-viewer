@@ -41,6 +41,36 @@ export function projectionOf(crs) {
   return m ? UTM(+m[1]) : null;
 }
 
+/** Žemės lygis modelio (modelRoot) koordinatėmis: 2 % žemiausių viršūnių riba (iki 200 000 imčių). */
+function groundLevel(v, inv, lb) {
+  const meshes = [];
+  let total = 0;
+  v.content.traverse((o) => {
+    const pos = (o.isMesh || o.isPoints) && o.geometry.attributes.position;
+    if (pos) {
+      meshes.push(o);
+      total += pos.count;
+    }
+  });
+  if (total < 50) return lb.min.z;
+  const step = Math.max(1, Math.floor(total / 200000));
+  const zs = [];
+  const p = new THREE.Vector3();
+  const m = new THREE.Matrix4();
+  for (const o of meshes) {
+    m.multiplyMatrices(inv, o.matrixWorld);
+    const pos = o.geometry.attributes.position;
+    // Tik z: z' = m[2]x + m[6]y + m[10]z + m[14]
+    const e = m.elements;
+    for (let i = 0; i < pos.count; i += step) {
+      p.fromBufferAttribute(pos, i);
+      zs.push(e[2] * p.x + e[6] * p.y + e[10] * p.z + e[14]);
+    }
+  }
+  zs.sort((a, b) => a - b);
+  return Math.max(lb.min.z, zs[Math.floor(zs.length * 0.02)]);
+}
+
 export class Basemap {
   /** @param {import('../viewer.js').Viewer} viewer */
   constructor(viewer) {
@@ -128,9 +158,10 @@ export class Basemap {
     });
     const size = lb.getSize(new THREE.Vector3());
     const ext = Math.max(size.x, size.y, 20);
-    // Žemėlapis – šiek tiek žemiau žemiausio modelio taško, kad nepersidengtų su paviršiumi
+    // Žemėlapis – žemės lygyje, šiek tiek žemiau paviršiaus. Ne pagal žemiausią tašką: ODM modeliuose būna pavienių
+    // triukšmo taškų ar „užuolaidų“ kraštuose toli po žeme – tada visas modelis atrodytų pakilęs virš žemėlapio.
     const gap = Math.max(0.05, ext * 0.0005);
-    const baseZ = lb.min.z - gap;
+    const baseZ = groundLevel(v, inv, lb) - gap;
 
     // Lokalios -> lon/lat ir atgal (vertinant originalias koordinates be pataisos; pataisą taiko group.position)
     const toLonLat = (x, y) => proj.inverse(x + c.x, y + c.y);

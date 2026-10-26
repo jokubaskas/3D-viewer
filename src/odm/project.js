@@ -36,8 +36,8 @@ export const PRESETS = {
   },
 };
 
-/** Įstriža nuotrauka – kamera pakreipta daugiau nei 20° nuo statmeno žemyn. */
-export const isOblique = (m) => m.gimbalPitch != null && m.gimbalPitch > -70;
+/** Įstriža nuotrauka – kamera pakreipta 15° ir daugiau nuo statmeno žemyn. */
+export const isOblique = (m) => m.gimbalPitch != null && m.gimbalPitch >= -75;
 
 // Apytikslis ODM RAM poreikis (GB) vienai 20 MP nuotraukai pagal taškų debesies kokybę (OpenMVS tankinimas)
 // ir tinklo (Poisson) poreikis pagal octree gylį; sukalibruota pagal WebODM rekomendacijas ir praktiką.

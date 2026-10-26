@@ -20,16 +20,35 @@ export function localProjection(lat0, lon0) {
   };
 }
 
+/**
+ * Kaip suprasti kameros kryptį (visam rinkiniui): DJI „GimbalYawDegree“ – nuo šiaurės (absoliuti), bet kai kurie
+ * gamintojai rašo ją drono atžvilgiu. Jei gimbalo kryptis beveik pastovi ~0°, o drono kryptis kaitaliojasi
+ * (skrendant pirmyn–atgal) – ji santykinė: kryptis = drono + gimbalo.
+ */
+export function yawMode(photos) {
+  const circ = (a) => {
+    const x = a.reduce((s, v) => s + Math.cos(v * D2R), 0) / a.length, y = a.reduce((s, v) => s + Math.sin(v * D2R), 0) / a.length;
+    return { r: Math.hypot(x, y), mean: Math.atan2(y, x) / D2R };
+  };
+  const both = photos.filter((m) => m.gimbalYaw != null && m.yaw != null && (m.gimbalPitch == null || m.gimbalPitch < -75));
+  if (both.length < 6) return 'abs';
+  const g = circ(both.map((m) => m.gimbalYaw)), f = circ(both.map((m) => m.yaw));
+  return g.r > 0.97 && Math.abs(g.mean) < 15 && f.r < 0.7 ? 'rel' : 'abs';
+}
+
+/** Ar statmena (žemyn) nuotrauka. Jei kampas nežinomas, o kitų nuotraukų – žinomas, laikoma nežinoma (nepiešiama). */
+export const isNadir = (m, anyPitch = false) => (m.gimbalPitch == null ? !anyPitch : m.gimbalPitch < -75);
+
 /** Nuotraukos pėdsakas žemėje (statmena nuotrauka): centras, kryptys ir dydis metrais. */
-export function footprint(m, toEN, fallbackAgl) {
+export function footprint(m, toEN, fallbackAgl, { yaw = 'abs', anyPitch = false } = {}) {
   const [e, n] = toEN(m.lon, m.lat);
   const agl = m.relAlt > 2 ? m.relAlt : fallbackAgl;
   const w = m.width || 4000, h = m.height || 3000;
   // 35 mm ekvivalentas skaičiuojamas pagal 4:3 jutiklio įstrižainę (16:9 kadras – apkirptas 4:3)
   const hEff = Math.max(h, (w * 3) / 4);
   const gsd = agl && m.f35 ? (agl * (43.27 / m.f35)) / Math.hypot(w, hEff) : null;
-  const heading = (m.gimbalYaw ?? m.yaw ?? 0) * D2R;
-  const nadir = m.gimbalPitch == null || m.gimbalPitch < -70;
+  const heading = (yaw === 'rel' ? (m.yaw ?? 0) + (m.gimbalYaw ?? 0) : m.gimbalYaw ?? m.yaw ?? 0) * D2R;
+  const nadir = isNadir(m, anyPitch);
   const up = [Math.sin(heading), Math.cos(heading)], right = [Math.cos(heading), -Math.sin(heading)];
   const W = gsd ? gsd * w : 0, H = gsd ? gsd * h : 0;
   const corners = gsd
@@ -60,6 +79,64 @@ const polyArea = (P) => Math.abs(P.reduce((s, [x, y], i) => s + x * P[(i + 1) % 
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+/** Daugiakampio apkarpymas pusplokštuma (p − m)·d ≤ 0 (Sutherland–Hodgman). */
+function clipHalf(P, mx, my, dx, dy) {
+  const out = [];
+  const side = ([x, y]) => (x - mx) * dx + (y - my) * dy;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length];
+    const sa = side(a), sb = side(b);
+    if (sa <= 0) out.push(a);
+    if (sa * sb < 0) {
+      const k = sa / (sa - sb);
+      out.push([a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Mozaika „arčiausias kadro centras“: kiekviena statmena nuotrauka piešiama tik savo Voronojaus langelyje
+ * (ten, kur ji – arčiausiai), apkarpytame centrine kadro dalimi. Siūlės – per vidurį tarp kadrų, todėl
+ * nedideli GPS / aukščio netikslumai mažiau matomi, o kraštų iškraipymai (ir pastatų šonai) – nerodomi.
+ */
+export function voronoiCells(fp) {
+  const idx = fp.map((f, i) => i).filter((i) => fp[i].gsd && fp[i].nadir);
+  const cells = new Map();
+  if (!idx.length) return cells;
+  const R = Math.max(...idx.map((i) => Math.hypot(fp[i].W, fp[i].H)));
+  // Tinklelis kaimynų paieškai
+  const grid = new Map();
+  const key = (x, y) => `${Math.floor(x / R)},${Math.floor(y / R)}`;
+  for (const i of idx) {
+    const k = key(fp[i].e, fp[i].n);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(i);
+  }
+  for (const i of idx) {
+    const f = fp[i];
+    // Centrinė kadro dalis (kraštai labiausiai iškraipyti)
+    const c = 0.9;
+    let P = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([a, b]) => [f.e + (f.right[0] * a * f.W * c) / 2 + (f.up[0] * b * f.H * c) / 2, f.n + (f.right[1] * a * f.W * c) / 2 + (f.up[1] * b * f.H * c) / 2]);
+    const gx = Math.floor(f.e / R), gy = Math.floor(f.n / R);
+    for (let x = gx - 1; x <= gx + 1 && P.length; x++)
+      for (let y = gy - 1; y <= gy + 1 && P.length; y++)
+        for (const j of grid.get(`${x},${y}`) || []) {
+          if (j === i) continue;
+          const g = fp[j];
+          const dx = g.e - f.e, dy = g.n - f.n;
+          if (dx * dx + dy * dy < 1e-6) {
+            if (j < i) P = []; // ta pati vieta – lieka viena
+            continue;
+          }
+          P = clipHalf(P, (f.e + g.e) / 2, (f.n + g.n) / 2, dx, dy);
+          if (!P.length) break;
+        }
+    if (P.length >= 3) cells.set(i, P);
+  }
+  return cells;
+}
+
 // Nuotraukų atranka pagal sritį
 const CORE = 0.6; // sritis turi patekti į centrinę kadro dalį (60 % pločio ir aukščio) – ten ji tikrai matosi
 const MIN_VIEWS = 5; // kiekvieną srities tašką turi matyti bent tiek atrinktų nuotraukų (ODM užtenka 3–5)
@@ -79,7 +156,10 @@ export class PhotoPreview {
     const lon0 = photos.reduce((s, m) => s + m.lon, 0) / photos.length;
     this.lat0 = lat0;
     this.proj = localProjection(lat0, lon0);
-    this.fp = photos.map((m) => footprint(m, this.proj.toEN, opts.agl));
+    const ctx = { yaw: yawMode(photos), anyPitch: photos.some((m) => m.gimbalPitch != null) };
+    this.yawMode = ctx.yaw;
+    this.fp = photos.map((m) => footprint(m, this.proj.toEN, opts.agl, ctx));
+    this.cells = voronoiCells(this.fp);
     this.thumbs = new Map(); // indeksas -> ImageBitmap
     this.tiles = new Map(); // z/x/y -> Image
     this.poly = []; // pasirinkta sritis (E, N)
@@ -210,12 +290,26 @@ export class PhotoPreview {
         g.stroke();
         continue;
       }
+      const cell = this.cells.get(i);
+      if (!cell) continue;
+      // Apkarpoma savo langeliu (truputį praplėstu, kad tarp langelių neliktų plyšių)
+      g.save();
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const C = cell.map(([e, n]) => this.toScreen(e, n));
+      const cx0 = C.reduce((a, p) => a + p[0], 0) / C.length, cy0 = C.reduce((a, p) => a + p[1], 0) / C.length;
+      g.beginPath();
+      C.forEach(([x, y], k) => {
+        const d = Math.hypot(x - cx0, y - cy0) || 1;
+        const px = x + ((x - cx0) / d) * 0.8, py = y + ((y - cy0) / d) * 0.8;
+        k ? g.lineTo(px, py) : g.moveTo(px, py);
+      });
+      g.closePath();
+      g.clip();
       const k = (f.gsd * f.imgW) / bmp.width; // metrų miniatiūros pikseliui
       const [x0, y0] = this.toScreen(f.e - (f.right[0] * f.W) / 2 + (f.up[0] * f.H) / 2, f.n - (f.right[1] * f.W) / 2 + (f.up[1] * f.H) / 2);
       g.setTransform(dpr * s * k * f.right[0], -dpr * s * k * f.right[1], -dpr * s * k * f.up[0], dpr * s * k * f.up[1], dpr * x0, dpr * y0);
-      // Kraštai labiau iškraipyti – piešiame centrinę dalį
-      const cx = bmp.width * 0.08, cy = bmp.height * 0.08;
-      g.drawImage(bmp, cx, cy, bmp.width - 2 * cx, bmp.height - 2 * cy, cx, cy, bmp.width - 2 * cx, bmp.height - 2 * cy);
+      g.drawImage(bmp, 0, 0);
+      g.restore();
     }
     g.globalAlpha = 1;
   }
@@ -240,6 +334,7 @@ export class PhotoPreview {
         let img = this.tiles.get(key);
         if (!img) {
           img = new Image();
+          img.referrerPolicy = 'strict-origin-when-cross-origin'; // OSM reikalauja Referer (svetainės adresas)
           img.onload = () => this.redraw();
           img.onerror = () => (img.failed = true);
           img.src = src.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
