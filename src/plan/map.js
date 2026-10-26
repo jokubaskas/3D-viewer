@@ -13,7 +13,8 @@ const y2lat = (y) => Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) / D2R;
 export class PlanMap {
   /**
    * @param {HTMLCanvasElement} cv
-   * @param {{onChange?:()=>void, onHome?:(ll:[number,number])=>void, overlay?:(g:CanvasRenderingContext2D, map:PlanMap)=>void}} opts
+   * @param {{onChange?:()=>void, onHome?:(ll:[number,number])=>void, overlay?:(g:CanvasRenderingContext2D, map:PlanMap)=>void,
+   *   onClick?:(ll:[number,number], xy:[number,number])=>void, color?:string}} opts
    */
   constructor(cv, opts = {}) {
     this.cv = cv;
@@ -25,6 +26,8 @@ export class PlanMap {
     this.closed = false;
     this.mode = null; // null | 'draw' | 'home'
     this.basemap = 'satellite';
+    this.editable = true; // ar galima tempti viršūnes
+    this.color = opts.color || '#00e5ff';
     this.tiles = new Map();
     this._raf = 0;
     this._bind();
@@ -128,14 +131,15 @@ export class PlanMap {
     if (!this.poly.length) return;
     const P = this.poly.map((p) => this.toScreen(p));
     g.lineWidth = 2;
-    g.strokeStyle = '#00e5ff';
-    g.fillStyle = 'rgba(0,229,255,0.10)';
+    g.strokeStyle = this.color;
+    g.fillStyle = `${this.color}1f`;
     g.beginPath();
     P.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
     if (this.mode === 'draw' && this._hover) g.lineTo(...this._hover);
     if (this.closed) g.closePath();
     g.fill();
     g.stroke();
+    if (!this.editable && this.mode !== 'draw') return;
     P.forEach(([x, y], i) => {
       g.fillStyle = i === 0 && this.mode === 'draw' && P.length >= 3 ? '#ffd23f' : '#fff';
       g.beginPath();
@@ -201,6 +205,17 @@ export class PlanMap {
     this.opts.onChange?.();
     this.redraw();
   }
+  /** Užbaigti brėžimą (mygtukas – patogu jutikliniame ekrane). */
+  finish() {
+    if (this.mode === 'draw') this._close();
+  }
+  /** Pašalinti paskutinį nubrėžtą tašką. */
+  undo() {
+    if (this.mode !== 'draw' || !this.poly.length) return;
+    this.poly.pop();
+    this.opts.onChange?.();
+    this.redraw();
+  }
   _close() {
     if (this.poly.length < 3) return;
     this.closed = true;
@@ -232,11 +247,22 @@ export class PlanMap {
       this.lat += before[1] - after[1];
       this.redraw();
     }, { passive: false });
+    // Du pirštai – mastelis ir slinkimas (telefone / planšetėje)
+    const touches = new Map();
+    let pinch = null;
+    const pinchStart = () => {
+      const [a, b] = [...touches.values()];
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, zoom: this.zoom, mid: this.toLL((a[0] + b[0]) / 2, (a[1] + b[1]) / 2) };
+      down = null;
+    };
     cv.addEventListener('pointerdown', (e) => {
       const [x, y] = pos(e);
       cv.setPointerCapture(e.pointerId);
+      touches.set(e.pointerId, [x, y]);
+      if (touches.size === 2) return pinchStart();
+      if (touches.size > 2) return;
       let vertex = -1;
-      if (this.closed && this.mode !== 'draw') {
+      if (this.closed && this.mode !== 'draw' && this.editable) {
         vertex = near(x, y, this.poly.map((p) => this.toScreen(p)));
         if (vertex < 0) {
           const m = near(x, y, mids(), 7);
@@ -250,6 +276,18 @@ export class PlanMap {
     });
     cv.addEventListener('pointermove', (e) => {
       const [x, y] = pos(e);
+      if (touches.has(e.pointerId)) touches.set(e.pointerId, [x, y]);
+      if (pinch && touches.size === 2) {
+        const [a, b] = [...touches.values()];
+        const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+        this.zoom = Math.min(Math.max(pinch.zoom + Math.log2(Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d), 3), 21);
+        // Pirštų vidurio taškas lieka ties ta pačia vieta žemėlapyje
+        const s = this.scale;
+        this.lon = x2lon(lon2x(pinch.mid[0]) - (mx - this.W / 2) / s);
+        this.lat = y2lat(lat2y(pinch.mid[1]) - (my - this.H / 2) / s);
+        this.redraw();
+        return;
+      }
       if (down) {
         if (Math.hypot(x - down.x, y - down.y) > 4) down.moved = true;
         if (down.vertex >= 0) {
@@ -269,10 +307,24 @@ export class PlanMap {
         this.redraw();
       }
       const P = this.poly.map((p) => this.toScreen(p));
-      cv.style.cursor = this.mode ? 'crosshair' : this.closed && (near(x, y, P) >= 0 || near(x, y, mids(), 7) >= 0) ? 'move' : 'grab';
+      cv.style.cursor = this.mode ? 'crosshair' : this.closed && this.editable && (near(x, y, P) >= 0 || near(x, y, mids(), 7) >= 0) ? 'move' : this.opts.onClick ? 'pointer' : 'grab';
+    });
+    const lift = (e) => {
+      touches.delete(e.pointerId);
+      if (pinch && touches.size < 2) {
+        pinch = null;
+        down = null;
+        return true;
+      }
+      return false;
+    };
+    cv.addEventListener('pointercancel', (e) => {
+      lift(e);
+      down = null;
     });
     cv.addEventListener('pointerup', (e) => {
       const [x, y] = pos(e);
+      if (lift(e)) return;
       const d = down;
       down = null;
       if (!d) return;
@@ -282,7 +334,7 @@ export class PlanMap {
         this.mode = null;
         return this.opts.onHome?.(this.toLL(x, y));
       }
-      if (this.mode !== 'draw') return;
+      if (this.mode !== 'draw') return this.opts.onClick?.(this.toLL(x, y), [x, y]);
       if (this.poly.length >= 3 && near(x, y, [this.toScreen(this.poly[0])]) === 0) return this._close();
       this.poly.push(this.toLL(x, y));
       this.opts.onChange?.();
@@ -299,7 +351,7 @@ export class PlanMap {
       e.preventDefault();
       const [x, y] = pos(e);
       const i = near(x, y, this.poly.map((p) => this.toScreen(p)));
-      if (i >= 0 && this.poly.length > 3) {
+      if (i >= 0 && this.poly.length > 3 && (this.editable || this.mode === 'draw')) {
         this.poly.splice(i, 1);
         this.opts.onChange?.();
         this.redraw();

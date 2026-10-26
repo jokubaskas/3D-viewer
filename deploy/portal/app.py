@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -88,6 +89,20 @@ def init_db():
             CREATE TABLE IF NOT EXISTS fails(key TEXT PRIMARY KEY, count INTEGER NOT NULL, until REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, at REAL NOT NULL, user_id INTEGER, ip TEXT,
               action TEXT NOT NULL, detail TEXT);
+            CREATE TABLE IF NOT EXISTS orders(
+              id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              title TEXT NOT NULL, works TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '',
+              geometry TEXT NOT NULL, area REAL NOT NULL DEFAULT 0, address TEXT NOT NULL DEFAULT '',
+              due TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'new', planned TEXT NOT NULL DEFAULT '', price TEXT NOT NULL DEFAULT '',
+              admin_note TEXT NOT NULL DEFAULT '', items TEXT NOT NULL DEFAULT '[]',
+              created REAL NOT NULL, updated REAL NOT NULL, seen_admin REAL NOT NULL DEFAULT 0, seen_client REAL NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS order_events(
+              id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+              user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, kind TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+              created REAL NOT NULL);
+            CREATE INDEX IF NOT EXISTS orders_client ON orders(client_id);
+            CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id);
             """
         )
 
@@ -663,6 +678,265 @@ def items_play(iid: int, req: Request):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Transliacijų serveris nepasiekiamas: {e}") from e
     return {"path": name}
+
+
+# --------------------------------------------------------------------------- užsakymai
+# Klientas žemėlapyje pažymi teritoriją ir aprašo darbą; administratorius mato visus užsakymus, keičia būseną,
+# planuoja datą, nurodo kainą ir prideda rezultatus (jie automatiškai priskiriami klientui). Abu gali rašyti žinutes.
+ORDER_STATUS = ("new", "accepted", "in_progress", "done", "cancelled", "rejected")
+ORDER_WORKS = {"ortho", "model3d", "volume", "topo", "inspection", "progress", "thermal", "media", "live", "other"}
+DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})?$")
+MAX_VERTS = 2000
+
+
+def clean_text(v, n: int) -> str:
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(v or "")).strip()[:n]
+
+
+def clean_geometry(g) -> tuple[str, float]:
+    """GeoJSON Polygon (WGS84). Patikrinamos koordinatės; plotas skaičiuojamas serveryje (m²)."""
+    if not isinstance(g, dict) or g.get("type") != "Polygon" or not isinstance(g.get("coordinates"), list) or not g["coordinates"]:
+        raise HTTPException(400, "Pažymėkite teritoriją žemėlapyje")
+    ring = g["coordinates"][0]
+    if not isinstance(ring, list) or not 3 <= len(ring) <= MAX_VERTS + 1:
+        raise HTTPException(400, "Teritorijoje turi būti nuo 3 iki 2000 taškų")
+    pts = []
+    for p in ring:
+        if not isinstance(p, (list, tuple)) or len(p) < 2:
+            raise HTTPException(400, "Neteisingos koordinatės")
+        try:
+            lon, lat = float(p[0]), float(p[1])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, "Neteisingos koordinatės") from e
+        if not (-180 <= lon <= 180 and -85 <= lat <= 85):
+            raise HTTPException(400, "Neteisingos koordinatės")
+        pts.append([round(lon, 8), round(lat, 8)])
+    if pts[0] != pts[-1]:
+        pts.append(pts[0])
+    if len(pts) < 4:
+        raise HTTPException(400, "Teritorijoje turi būti bent 3 taškai")
+    # Plotas: vietinė lygiaplotė projekcija aplink centrą (pakanka iki kelių dešimčių km)
+    lat0 = sum(p[1] for p in pts[:-1]) / (len(pts) - 1)
+    k = math.cos(math.radians(lat0))
+    R = 6371008.8
+    xy = [(math.radians(lon) * R * k, math.radians(lat) * R) for lon, lat in pts]
+    area = abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(xy, xy[1:]))) / 2
+    if area < 1:
+        raise HTTPException(400, "Teritorija per maža")
+    if area > 5e9:
+        raise HTTPException(400, "Teritorija per didelė")
+    return json.dumps({"type": "Polygon", "coordinates": [pts]}), area
+
+
+def clean_works(v) -> str:
+    if not isinstance(v, list):
+        return "[]"
+    return json.dumps([w for w in dict.fromkeys(str(x) for x in v) if w in ORDER_WORKS])
+
+
+def order_json(con, r, u, detail=False) -> dict:
+    admin = u["role"] == "admin"
+    seen = r["seen_admin"] if admin else r["seen_client"]
+    # Neperskaityta – kita pusė parašė ar pakeitė po paskutinio peržiūrėjimo
+    last_other = con.execute(
+        "SELECT MAX(created) FROM order_events WHERE order_id=? AND (user_id IS NULL OR user_id<>?)", (r["id"], u["id"])
+    ).fetchone()[0] or 0
+    ids = json.loads(r["items"] or "[]")
+    if not admin:  # klientui – tik jam priskirti rezultatai
+        ids = [i for i in ids if con.execute("SELECT 1 FROM assign WHERE item_id=? AND user_id=?", (i, u["id"])).fetchone()]
+    items = [dict(x) for x in con.execute(f"SELECT id, kind, title FROM items WHERE id IN ({','.join('?' * len(ids))})", ids)] if ids else []
+    out = {
+        "id": r["id"], "title": r["title"], "works": json.loads(r["works"]), "note": r["note"],
+        "geometry": json.loads(r["geometry"]), "area": r["area"], "address": r["address"], "due": r["due"],
+        "contact": r["contact"], "status": r["status"], "planned": r["planned"], "price": r["price"],
+        "admin_note": r["admin_note"], "items": items, "created": r["created"], "updated": r["updated"],
+        "unread": last_other > seen or (admin and r["seen_admin"] == 0),
+        "comments": con.execute("SELECT COUNT(*) FROM order_events WHERE order_id=? AND kind='comment'", (r["id"],)).fetchone()[0],
+    }
+    if admin:
+        c = con.execute("SELECT id, email, name FROM users WHERE id=?", (r["client_id"],)).fetchone()
+        out["client"] = dict(c) if c else {"id": r["client_id"], "email": "", "name": ""}
+    if detail:
+        out["events"] = [
+            {"id": e["id"], "kind": e["kind"], "body": e["body"], "created": e["created"], "mine": e["user_id"] == u["id"],
+             "who": ("admin" if e["role"] == "admin" else "client") if e["role"] else "system", "name": e["name"] or e["email"] or ""}
+            for e in con.execute(
+                "SELECT e.*, u.role, u.name, u.email FROM order_events e LEFT JOIN users u ON u.id=e.user_id WHERE e.order_id=? ORDER BY e.created, e.id", (r["id"],)
+            )
+        ]
+    return out
+
+
+def get_order(con, u, oid: int) -> sqlite3.Row:
+    r = con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+    if not r or (u["role"] != "admin" and r["client_id"] != u["id"]):
+        raise HTTPException(404, "Užsakymas nerastas")
+    return r
+
+
+def order_event(con, oid: int, uid, kind: str, body: str = ""):
+    con.execute("INSERT INTO order_events(order_id,user_id,kind,body,created) VALUES(?,?,?,?,?)", (oid, uid, kind, body, time.time()))
+
+
+@app.get("/api/orders")
+def orders_list(req: Request):
+    with db() as con:
+        u = need_user(req, con)
+        if u["role"] == "admin":
+            rows = con.execute("SELECT * FROM orders ORDER BY updated DESC").fetchall()
+        else:
+            rows = con.execute("SELECT * FROM orders WHERE client_id=? ORDER BY updated DESC", (u["id"],)).fetchall()
+        return [order_json(con, r, u) for r in rows]
+
+
+@app.get("/api/orders/{oid}")
+def orders_get(oid: int, req: Request):
+    with _db_lock, db() as con:
+        u = need_user(req, con)
+        r = get_order(con, u, oid)
+        con.execute(f"UPDATE orders SET {'seen_admin' if u['role'] == 'admin' else 'seen_client'}=? WHERE id=?", (time.time(), oid))
+        return order_json(con, r, u, detail=True)
+
+
+@app.post("/api/orders")
+async def orders_create(req: Request):
+    body = await req.json()
+    geometry, area = clean_geometry(body.get("geometry"))
+    due = clean_text(body.get("due"), 10)
+    if not DATE_RE.match(due):
+        raise HTTPException(400, "Neteisinga data")
+    with _db_lock, db() as con:
+        u = need_user(req, con)
+        client_id = u["id"]
+        if u["role"] == "admin":  # administratorius gali užregistruoti užsakymą klientui (pvz. gautą telefonu)
+            client_id = int(body.get("client_id") or 0)
+            if not con.execute("SELECT 1 FROM users WHERE id=? AND role='client'", (client_id,)).fetchone():
+                raise HTTPException(400, "Pasirinkite klientą")
+        elif con.execute("SELECT COUNT(*) FROM orders WHERE client_id=? AND created>?", (u["id"], time.time() - 86400)).fetchone()[0] >= 30:
+            raise HTTPException(429, "Per daug užsakymų per parą")
+        title = clean_text(body.get("title"), 160)
+        if not title:
+            raise HTTPException(400, "Įrašykite pavadinimą")
+        works = clean_works(body.get("works"))
+        if works == "[]":
+            raise HTTPException(400, "Pasirinkite bent vieną darbą")
+        now = time.time()
+        cur = con.execute(
+            "INSERT INTO orders(client_id,title,works,note,geometry,area,address,due,contact,created,updated,seen_client,seen_admin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (client_id, title, works, clean_text(body.get("note"), 5000), geometry, area, clean_text(body.get("address"), 300), due,
+             clean_text(body.get("contact"), 200), now, now, now, now if u["role"] == "admin" else 0),
+        )
+        oid = cur.lastrowid
+        order_event(con, oid, u["id"], "created")
+        audit(con, u["id"], client_ip(req), "order_create", oid)
+        return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
+
+
+CLIENT_FIELDS = ("title", "works", "note", "geometry", "address", "due", "contact")
+ADMIN_FIELDS = CLIENT_FIELDS + ("status", "planned", "price", "admin_note", "items")
+
+
+@app.patch("/api/orders/{oid}")
+async def orders_update(oid: int, req: Request):
+    body = await req.json()
+    with _db_lock, db() as con:
+        u = need_user(req, con)
+        r = get_order(con, u, oid)
+        admin = u["role"] == "admin"
+        sets: dict[str, object] = {}
+        events: list[tuple[str, str]] = []
+        if not admin:
+            if body.get("status") == "cancelled":
+                if r["status"] not in ("new", "accepted"):
+                    raise HTTPException(400, "Vykdomo ar užbaigto užsakymo atšaukti negalima – parašykite žinutę")
+                sets["status"] = "cancelled"
+                events.append(("status", "cancelled"))
+            elif "status" in body:
+                raise HTTPException(403, "Būseną keičia administratorius")
+            if any(k in body for k in CLIENT_FIELDS) and r["status"] != "new":
+                raise HTTPException(400, "Priimto užsakymo keisti negalima – parašykite žinutę")
+        allowed = ADMIN_FIELDS if admin else CLIENT_FIELDS
+        for k in allowed:
+            if k not in body:
+                continue
+            v = body[k]
+            if k == "geometry":
+                sets["geometry"], sets["area"] = clean_geometry(v)
+                events.append(("edited", "geometry"))
+            elif k == "works":
+                sets["works"] = clean_works(v)
+                if sets["works"] == "[]":
+                    raise HTTPException(400, "Pasirinkite bent vieną darbą")
+            elif k == "status":
+                if v not in ORDER_STATUS:
+                    raise HTTPException(400, "Neteisinga būsena")
+                if v != r["status"]:
+                    sets["status"] = v
+                    events.append(("status", v))
+            elif k in ("due", "planned"):
+                d = clean_text(v, 10)
+                if not DATE_RE.match(d):
+                    raise HTTPException(400, "Neteisinga data")
+                if d != r[k]:
+                    sets[k] = d
+                    if k == "planned":
+                        events.append(("planned", d))
+            elif k == "items":
+                ids = [int(x) for x in (v or []) if str(x).isdigit()][:50]
+                ids = [i for i in dict.fromkeys(ids) if con.execute("SELECT 1 FROM items WHERE id=?", (i,)).fetchone()]
+                old = set(json.loads(r["items"] or "[]"))
+                for i in ids:  # rezultatas matomas klientui
+                    con.execute("INSERT OR IGNORE INTO assign(item_id,user_id) VALUES(?,?)", (i, r["client_id"]))
+                if set(ids) - old:
+                    events.append(("results", str(len(set(ids) - old))))
+                sets["items"] = json.dumps(ids)
+            else:
+                n = {"title": 160, "note": 5000, "address": 300, "contact": 200, "price": 100, "admin_note": 5000}[k]
+                val = clean_text(v, n)
+                if k == "title" and not val:
+                    raise HTTPException(400, "Įrašykite pavadinimą")
+                if val != r[k]:
+                    sets[k] = val
+                    if k in ("price", "admin_note"):
+                        events.append((k, val))
+        if not sets:
+            return order_json(con, r, u, detail=True)
+        sets["updated"] = time.time()
+        sets["seen_admin" if admin else "seen_client"] = sets["updated"]
+        con.execute(f"UPDATE orders SET {', '.join(f'{k}=?' for k in sets)} WHERE id=?", (*sets.values(), oid))
+        for kind, b in events or [("edited", "")]:
+            order_event(con, oid, u["id"], kind, b)
+        audit(con, u["id"], client_ip(req), "order_update", f"{oid} {sorted(sets)}")
+        return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
+
+
+@app.post("/api/orders/{oid}/comments")
+async def orders_comment(oid: int, req: Request):
+    body = await req.json()
+    text = clean_text(body.get("body"), 4000)
+    if not text:
+        raise HTTPException(400, "Žinutė tuščia")
+    with _db_lock, db() as con:
+        u = need_user(req, con)
+        get_order(con, u, oid)
+        if u["role"] != "admin" and con.execute(
+            "SELECT COUNT(*) FROM order_events WHERE user_id=? AND kind='comment' AND created>?", (u["id"], time.time() - 3600)
+        ).fetchone()[0] >= 60:
+            raise HTTPException(429, "Per daug žinučių – pabandykite vėliau")
+        now = time.time()
+        order_event(con, oid, u["id"], "comment", text)
+        con.execute(f"UPDATE orders SET updated=?, {'seen_admin' if u['role'] == 'admin' else 'seen_client'}=? WHERE id=?", (now, now, oid))
+        return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
+
+
+@app.delete("/api/orders/{oid}")
+def orders_delete(oid: int, req: Request):
+    with _db_lock, db() as con:
+        a = need_user(req, con, admin=True)
+        get_order(con, a, oid)
+        con.execute("DELETE FROM orders WHERE id=?", (oid,))
+        audit(con, a["id"], client_ip(req), "order_delete", oid)
+        return {"ok": True}
 
 
 @app.get("/api/health")
