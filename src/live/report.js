@@ -5,6 +5,7 @@ import { t, locale } from '../i18n.js';
 import { drawLogo, logoSvg } from '../logo.js';
 import { telemetryLine } from './telemetry-ui.js';
 import { distM, trackGpx } from './telemetry.js';
+import { flightSummary, flightSection, telemetryCsv } from './flight.js';
 
 const FPS = 25;
 const MAX_EVENTS = 150;
@@ -123,6 +124,8 @@ export class AiComposer {
     this.started = Date.now();
     this.t0 = performance.now();
     this.route = []; // drono maršrutas įrašo metu (diab)
+    this.tele = []; // telemetrija kas sekundę (diab): {t, pos, alt, speed, vspeed, heading, battery, rc, wind, state}
+    this.dock = null;
     this.track = []; // {t, counts, pos?, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
     this.events = []; // {t, at, kind:'start'|'episode', group, n (daugiausia), end?, counts, img?:Blob}
     this._g = {}; // grupės būsena: {hits, firstT, firstAt, lastT, ep}
@@ -146,6 +149,22 @@ export class AiComposer {
     (L0?.frame && performance.now() - L0.at < 4000 ? this.frameShot(L0, 0, Date.now(), detector.counts) : this.snapshot()).then((b) => (ev0.img = b));
     ev0.counts = this.reportCounts(ev0.counts);
     this._stopTick = ticker(1000 / FPS, () => this.draw());
+    // Telemetrija – nepriklausomai nuo AI dažnio (ataskaitos skrydžio žemėlapiui ir grafikams)
+    this.sampleTelemetry();
+    this._stopTele = ticker(1000, () => this.sampleTelemetry());
+  }
+
+  sampleTelemetry() {
+    const b = this.meta.telemetry?.();
+    if (!b) return;
+    const d = b.drone || {};
+    const t = Date.now() - this.started;
+    const s = { t, pos: d.pos ? [+d.pos[0].toFixed(7), +d.pos[1].toFixed(7)] : null, alt: d.alt, speed: d.speed, vspeed: d.vspeed, heading: d.heading, battery: d.battery, rc: b.rc, wind: b.wind, state: b.state || null };
+    if (!Object.values(s).some((v, i) => i > 0 && v != null)) return;
+    this.tele.push(s);
+    this.drone = b.name;
+    if (b.dock) this.dock = b.dock;
+    if (s.pos) this.dronePos(t);
   }
 
   /** Vaizdo srautas įrašymui: drobė + originalus garsas (jei yra). */
@@ -341,6 +360,8 @@ export class AiComposer {
   stop() {
     this._stopTick?.();
     this._stopTick = null;
+    this._stopTele?.();
+    this._stopTele = null;
     this.detector.listeners.delete(this._onResult);
     this.ended = Date.now();
     for (const g of Object.values(this._g)) g.ep = null;
@@ -423,6 +444,16 @@ export async function reportZip({ name, video, comp, settings }) {
         ? `${gLabel(e.group)} #${e.id}: ${e.spans.length > 1 ? t('matėsi {k} kartus ({s}), iš viso {d}', { k: e.spans.length, s: spanText(e), d: fmtLen(e.spans.reduce((a, [x, y]) => a + (y - x), 0)) }) : t('matėsi {a}–{b} ({d})', { a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t) })}`
         : t('{g}: matėsi {a}–{b} ({d}), daugiausia {n}', { g: gLabel(e.group), a: fmtDur(e.t), b: fmtDur(e.end), d: fmtLen(e.end - e.t), n: e.n });
 
+  // Skrydis (diab telemetrija): maršrutas su įvykių vietomis, santrauka, grafikai; be telemetrijos – nieko
+  const fs = flightSummary(comp);
+  const flight = await flightSection(
+    fs,
+    evRows.map((e, i) => ({ t: e.t, pos: e.pos, n: i + 1, color: GROUPS[e.group]?.color, label: evText(e) })),
+    comp.started,
+  ).catch(() => ({ html: '', files: {} }));
+  for (const [k, b] of Object.entries(flight.files)) files[k] = new Uint8Array(await b.arrayBuffer());
+  if (fs) files['telemetrija.csv'] = strToU8(telemetryCsv(fs, comp.started));
+
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
   const hasPos = comp.track.some((r) => r.pos);
@@ -432,7 +463,7 @@ export async function reportZip({ name, video, comp, settings }) {
   files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras'), t('platuma'), t('ilguma')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img, e.pos?.[0] ?? '', e.pos?.[1] ?? ''].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, flight: fs ? { dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S } : null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -461,6 +492,12 @@ export async function reportZip({ name, video, comp, settings }) {
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   td img { width: 220px; border-radius: 6px; display: block; }
   a.geo { color: var(--mut); font-size: 12px; }
+  svg.route { width: 100%; height: auto; border-radius: 8px; display: block; background: #2b3236; }
+  svg.route a.t { cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--mut); }
+  .legend .grad { width: 90px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(220,90%,55%), hsl(110,90%,55%), hsl(0,90%,55%)); }
+  .evn { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #1f2326; color: #fff; font-size: 11px; margin-right: 6px; }
+  svg.tchart { margin-top: 6px; }
   a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
   .meta td:first-child { color: var(--mut); width: 220px; }
   footer { text-align: center; color: var(--mut); font-size: 12px; }
@@ -476,10 +513,11 @@ export async function reportZip({ name, video, comp, settings }) {
 ${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span>${comp.unique?.[s.key] ? `<b>${esc(t('{n} skirtingų', { n: comp.unique[s.key] }))}</b><span>${esc(t('daugiausia vienu metu {n}', { n: s.max }))} · ` : `<b>${esc(t('daugiausia {n}', { n: s.max }))}</b><span>`}${esc(t('vidutiniškai {a} · matėsi {p} % laiko', { a: nf(s.avg, 1), p: nf(s.presence * 100) }))}</span></div>`).join('\n')}
 <div class="card"><span>${esc(t('Įvykių'))}</span><b>${evRows.length}</b><span>${esc(t('AI analizių: {n}', { n: comp.track.length }))}</span></div>
 </div></section>
+${flight.html}
 <section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, stR)}</section>
 <section><h2>${esc(t('Įvykiai'))}</h2>
 ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('Data ir laikas'))}</th><th>${esc(t('Įvykis'))}</th><th>${esc(t('Kadras'))}</th></tr>
-${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span>${e.pos ? `<br><a class="geo" href="https://maps.google.com/?q=${e.pos[0]},${e.pos[1]}" target="_blank">${esc(t('Drono vieta'))}: ${e.pos[0].toFixed(6)}, ${e.pos[1].toFixed(6)}${e.pos[2] != null ? ` · ${Math.round(e.pos[2])} m` : ''}</a>` : ''}</td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
+${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${i + 1}</b>` : ''}<a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span>${e.pos ? `<br><a class="geo" href="https://maps.google.com/?q=${e.pos[0]},${e.pos[1]}" target="_blank">${esc(t('Drono vieta'))}: ${e.pos[0].toFixed(6)}, ${e.pos[1].toFixed(6)}${e.pos[2] != null ? ` · ${Math.round(e.pos[2])} m` : ''}</a>` : ''}</td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">
@@ -491,7 +529,7 @@ ${evRows.map((e) => `<tr><td><a class="t" data-t="${Math.max(0, e.t - 1000) / 10
 ${comp.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(comp.drone)}${comp.route.length > 1 ? ` · ${esc(t('maršrutas: marsrutas.gpx'))}` : ''}</td></tr>` : ''}
 <tr><td>${esc(t('AI modelis'))}</td><td>${esc(settings.modelName || t('Standartinis (COCO)'))}</td></tr>
 <tr><td>${esc(t('Jautrumas'))}</td><td>${Math.round((settings.threshold || 0) * 100)} %</td></tr>
-<tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/</td></tr>
+<tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/${fs ? ', telemetrija.csv' : ''}${comp.route.length > 1 ? ', marsrutas.gpx, skrydis/' : ''}</td></tr>
 </table></section>
 <footer>${esc(t('Sukurta su Atea 3D Matuoklis. AI rezultatai yra automatiniai ir gali būti netikslūs.'))}</footer>
 </main>
@@ -499,8 +537,17 @@ ${comp.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(comp.drone)}${comp.rou
   const v = document.getElementById('v');
   const seek = (s) => { v.currentTime = s; v.play(); v.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
   document.querySelectorAll('a.t').forEach((a) => a.onclick = () => seek(+a.dataset.t));
-  const c = document.getElementById('chart');
-  c.onclick = (e) => { const r = c.getBoundingClientRect(), W = +c.dataset.w, P = +c.dataset.p; const x = (e.clientX - r.left) / r.width * W; seek(Math.max(0, (x - P) / (W - P - 10)) * c.dataset.dur / 1000); };
+  document.querySelectorAll('#chart, svg.tchart').forEach((c) => c.onclick = (e) => { const r = c.getBoundingClientRect(), W = +c.dataset.w, P = +c.dataset.p; const x = (e.clientX - r.left) / r.width * W; seek(Math.max(0, (x - P) / (W - P - 10)) * c.dataset.dur / 1000); });
+  // Skrydžio žemėlapyje – drono vieta, atitinkanti vaizdo laiką
+  const route = document.getElementById('route'), now = document.getElementById('route-now');
+  if (route && now && route.dataset.timeline) {
+    const tl = route.dataset.timeline.split(';').map((p) => p.split(',').map(Number));
+    v.addEventListener('timeupdate', () => {
+      const s = v.currentTime; let i = tl.findIndex((p) => p[0] > s); if (i < 0) i = tl.length; const a = tl[Math.max(0, i - 1)], b = tl[Math.min(tl.length - 1, i)];
+      const k = b[0] > a[0] ? Math.min(1, Math.max(0, (s - a[0]) / (b[0] - a[0]))) : 0;
+      now.setAttribute('cx', a[1] + (b[1] - a[1]) * k); now.setAttribute('cy', a[2] + (b[2] - a[2]) * k);
+    });
+  }
 </script>
 </body>
 </html>

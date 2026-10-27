@@ -4,6 +4,7 @@ import { t, locale } from '../i18n.js';
 import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
+import { trackGpx } from './telemetry.js';
 import { AiComposer, drawComposite, reportZip } from './report.js';
 import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
 import { api, uploadFile } from '../portal/api.js';
@@ -597,8 +598,11 @@ export function createLiveUI(app) {
       return it;
     };
     if (video) {
-      await upload('recording', `${stream.name} · ${when}`, cut ? t('Ryšys nutrūko – įrašas gali būti nepilnas') : '', video.blob, `${base}.${video.ext}`);
+      const it = await upload('recording', `${stream.name} · ${when}`, cut ? t('Ryšys nutrūko – įrašas gali būti nepilnas') : '', video.blob, `${base}.${video.ext}`);
       done.push(t('įrašas – „Įrašai“'));
+      // Drono maršrutas (diab) – kartu su įrašu (GPX atsidaro Google Earth, QGIS ir kt.)
+      if (comp?.route?.length > 1)
+        await uploadFile(it.id, new Blob([trackGpx(`${stream.name} – ${comp.drone || ''}`, comp.route)], { type: 'application/gpx+xml' }), `${base}_marsrutas.gpx`).catch(() => {});
     }
     if (comp) {
       app.toast('Ruošiama ataskaita…', 'info', 3000);

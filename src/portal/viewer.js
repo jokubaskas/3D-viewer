@@ -194,6 +194,20 @@ function wireReport(doc) {
   const v = doc?.querySelector('video');
   if (!v) return;
   fixInfinite(v);
+  // Skrydžio žemėlapyje – drono vieta pagal vaizdo laiką (ataskaitos skriptas čia nevykdomas)
+  const route = doc.getElementById('route'), now = doc.getElementById('route-now');
+  if (route && now && route.dataset.timeline) {
+    const tl = route.dataset.timeline.split(';').map((p) => p.split(',').map(Number));
+    v.addEventListener('timeupdate', () => {
+      const s = v.currentTime;
+      let i = tl.findIndex((p) => p[0] > s);
+      if (i < 0) i = tl.length;
+      const a = tl[Math.max(0, i - 1)], b = tl[Math.min(tl.length - 1, i)];
+      const k = b[0] > a[0] ? Math.min(1, Math.max(0, (s - a[0]) / (b[0] - a[0]))) : 0;
+      now.setAttribute('cx', a[1] + (b[1] - a[1]) * k);
+      now.setAttribute('cy', a[2] + (b[2] - a[2]) * k);
+    });
+  }
   const seek = (s) => {
     v.currentTime = s;
     v.play().catch(() => {});
@@ -202,7 +216,7 @@ function wireReport(doc) {
   doc.addEventListener('click', (e) => {
     const a = e.target.closest?.('a.t[data-t]');
     if (a) return seek(+a.dataset.t || 0);
-    const c = e.target.closest?.('#chart');
+    const c = e.target.closest?.('#chart, svg.tchart');
     if (!c) return;
     const r = c.getBoundingClientRect();
     const W = +c.dataset.w;
