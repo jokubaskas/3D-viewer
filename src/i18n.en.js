@@ -1455,4 +1455,8 @@ export const EN = {
   "Failas per didelis vienai užklausai": "File too large for a single request",
   "Įkeliama: {n} ({s} MB)…": "Uploading: {n} ({s} MB)…",
   "Įkeliama: {n} – {p} %": "Uploading: {n} – {p} %",
+  "Šio įrašo naršyklė parodyti negali": "The browser cannot play this recording",
+  "Jei įrašas ką tik įkeltas, serveris jį dar tvarko – pabandykite po minutės. Kitu atveju atsisiųskite jį ir atidarykite kompiuterio grotuvu (pvz. VLC).": "If it was just uploaded, the server is still processing it – try again in a minute. Otherwise download it and open it in a desktop player (e.g. VLC).",
+  "Netinkamas arba nepalaikomas vaizdo formatas": "Invalid or unsupported video format",
+  "Vaizdas neužsikrovė per 15 s.": "The video did not load within 15 s.",
 };

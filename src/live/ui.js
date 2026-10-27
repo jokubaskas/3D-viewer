@@ -483,7 +483,7 @@ export function createLiveUI(app) {
             // Įrašas su AI žymėjimais: vaizdas + rėmeliai + skaičiai + laikas, po to – ataskaita klientui
             const comp = new AiComposer(p, tile.ai, { name: s.name, settings: aiSet, telemetry: () => tm?.boxFor(s.name) });
             try {
-              await p.startRecording({ stream: comp.stream, extra: { comp }, original: true });
+              await p.startRecording({ stream: comp.stream, extra: { comp } });
             } catch (err) {
               comp.stop();
               throw err;
@@ -574,7 +574,8 @@ export function createLiveUI(app) {
   async function saveToPortal(stream, { blob, ext, comp, original }, cut) {
     const when = new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' });
     const base = `${safe(stream.name)}_${stamp()}`;
-    const video = original?.blob?.size ? original : comp ? null : { blob, ext };
+    // „Įrašai“ – toks vaizdas, koks įrašytas: su AI – su rėmeliais, skaičiais ir laiku (kaip ataskaitoje)
+    const video = blob?.size ? { blob, ext } : original;
     const done = [];
     const upload = async (kind, title, note, file, name) => {
       const it = await api('items', { method: 'POST', body: { kind, title, note, clients: [] } });

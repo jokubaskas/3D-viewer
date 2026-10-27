@@ -23,6 +23,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -103,6 +104,7 @@ def init_db():
               status TEXT NOT NULL DEFAULT 'new', planned TEXT NOT NULL DEFAULT '', price TEXT NOT NULL DEFAULT '',
               admin_note TEXT NOT NULL DEFAULT '', items TEXT NOT NULL DEFAULT '[]',
               created REAL NOT NULL, updated REAL NOT NULL, seen_admin REAL NOT NULL DEFAULT 0, seen_client REAL NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS media_ok(file_id INTEGER PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS order_events(
               id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
               user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, kind TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
@@ -624,7 +626,74 @@ async def files_upload(iid: int, name: str, req: Request, upload: str = "", offs
         cur = con.execute("INSERT INTO files(item_id,name,disk,size,created) VALUES(?,?,?,?,?)", (iid, fname, disk, size, time.time()))
         con.execute("UPDATE items SET updated=? WHERE id=?", (time.time(), iid))
         audit(con, a["id"], client_ip(req), "file_upload", f"{iid} {fname} {size}")
-        return {"id": cur.lastrowid, "name": fname, "size": size}
+        fid = cur.lastrowid
+    if VIDEO_EXT.search(fname):
+        threading.Thread(target=normalize_file, args=(fid,), daemon=True).start()
+    return {"id": fid, "name": fname, "size": size}
+
+
+# --------------------------------------------------------------------------- vaizdo įrašų sutvarkymas
+# Naršyklės (MediaRecorder) įrašai: MP4 – fragmentuotas, be trukmės pradžioje; WebM – be trukmės ir rodyklės; gali būti
+# tuščias garso takelis (dronas garso nesiunčia). Kai kurios naršyklės ir grotuvai tokių neparodo ar neprasuka.
+# Po įkėlimo ffmpeg perpakuoja (be perkodavimo): įprastas MP4 su „faststart“ / WebM su trukme, be tuščių takelių.
+VIDEO_EXT = re.compile(r"\.(mp4|m4v|mov|webm|mkv)$", re.I)
+_norm_lock = threading.Lock()
+
+
+def normalize_video(path: Path, name: str) -> int | None:
+    """Perpakuoja vaizdo failą vietoje; grąžina naują dydį arba None (nepavyko / ffmpeg nėra)."""
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        return None
+    try:
+        pr = subprocess.run(
+            ["ffprobe", "-v", "error", "-count_packets", "-show_entries", "stream=index,codec_type,nb_read_packets", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=600, check=True,
+        )
+        streams = json.loads(pr.stdout or "{}").get("streams", [])
+    except Exception:  # noqa: BLE001
+        return None
+    keep = [st["index"] for st in streams if st.get("codec_type") in ("video", "audio") and int(st.get("nb_read_packets") or 0) > 0]
+    if not any(st.get("codec_type") == "video" and st["index"] in keep for st in streams):
+        return None
+    ext = name.rsplit(".", 1)[-1].lower()
+    fmt = ["-f", "webm"] if ext == "webm" else ["-f", "matroska"] if ext == "mkv" else ["-f", "mp4", "-movflags", "+faststart"]
+    tmp = path.with_name(path.name + ".norm")
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(path)]
+    for i in keep:
+        cmd += ["-map", f"0:{i}"]
+    cmd += ["-c", "copy", *fmt, str(tmp)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=1800, check=True)
+        if tmp.stat().st_size < 1000:
+            raise ValueError("per mažas")
+        os.replace(tmp, path)
+        return path.stat().st_size
+    except Exception:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        return None
+
+
+def normalize_file(fid: int):
+    with _norm_lock:  # po vieną – mažiau apkrovos
+        with db() as con:
+            f = con.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+            if not f or con.execute("SELECT 1 FROM media_ok WHERE file_id=?", (fid,)).fetchone():
+                return
+        size = normalize_video(FILES / f["disk"], f["name"])
+        with _db_lock, db() as con:
+            if size is not None:
+                con.execute("UPDATE files SET size=? WHERE id=?", (size, fid))
+            con.execute("INSERT OR IGNORE INTO media_ok(file_id) VALUES(?)", (fid,))
+
+
+def _normalize_existing():
+    """Paleidus – sutvarkomi anksčiau įkelti (dar netvarkyti) vaizdo įrašai."""
+    time.sleep(20)
+    with db() as con:
+        rows = con.execute("SELECT id, name FROM files WHERE id NOT IN (SELECT file_id FROM media_ok)").fetchall()
+    for r in rows:
+        if VIDEO_EXT.search(r["name"]):
+            normalize_file(r["id"])
 
 
 @app.delete("/api/items/{iid}/files/{fid}")
@@ -1033,6 +1102,8 @@ def health():
 
 
 init_db()
+if shutil.which("ffmpeg") and os.environ.get("PORTAL_NO_BG") != "1":
+    threading.Thread(target=_normalize_existing, daemon=True).start()
 
 
 # --------------------------------------------------------------------------- komandinė eilutė
