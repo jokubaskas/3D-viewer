@@ -76,6 +76,9 @@ services:
       # Adresas, kuriuo klientai atidaro programą (kvietimo nuorodoms), pvz. https://3d.jusu-domenas.lt
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8080}
       - MEDIAMTX_API=http://mediamtx:9997
+      # Transliacijų persiuntėjas (VPS, deploy\relay-setup.bat): klientams iš interneto – WebRTC per jį
+      - RELAY_HOST=${RELAY_HOST:-}
+      - RELAY_KEY=${RELAY_KEY:-}
     volumes:
       # Duomenų bazė ir klientų failai (3D modeliai, ataskaitos, įrašai) – išlieka atnaujinus programą
       - portal-data:/data
@@ -106,6 +109,9 @@ services:
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}
+      # Persiuntėjas: nginx perduoda WebRTC ryšio nustatymą į VPS (/live/relay/) su VPS raktu
+      - RELAY_HOST=${RELAY_HOST:-127.0.0.1}
+      - RELAY_AUTH=${RELAY_AUTH:-bm9uZTpub25l}
     ports:
       - "${WEB_PORT:-8080}:80"
 

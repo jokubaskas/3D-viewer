@@ -1043,9 +1043,17 @@ export function createLiveUI(app) {
   });
   /** Priskirta transliacija: serveris paruošia šaltinį, rodoma per serverį (iš interneto – HLS, vietoje – WebRTC). */
   async function openItem(item) {
-    const { path } = await api(`items/${item.id}/play`, { method: 'POST' });
     const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
-    show({ id: `item-${item.id}`, name: item.title, path, preferHls: !local, temp: true, item: item.id });
+    // Iš interneto – paprašoma siųsti į persiuntėją (VPS), jei jis nustatytas; kol žiūrima, prašymas kartojamas
+    const { path, relay } = await api(`items/${item.id}/play${local ? '' : '?relay=1'}`, { method: 'POST' });
+    const id = `item-${item.id}`;
+    show({ id, name: item.title, path, preferHls: !local, relay: !!relay, temp: true, item: item.id });
+    if (relay) {
+      const keep = setInterval(() => {
+        if (!tiles.has(id)) return clearInterval(keep);
+        api(`items/${item.id}/play?relay=1`, { method: 'POST' }).catch(() => {});
+      }, 25000);
+    }
     open();
   }
 

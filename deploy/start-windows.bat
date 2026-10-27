@@ -128,6 +128,9 @@ echo ============================================================
 echo  Paruosta! Programa siame kompiuteryje: http://localhost:%PORT%
 if defined PROFILE if defined PUBLIC echo  Is interneto ^(kitiems kompiuteriams, klientams^): %PUBLIC%
 if defined PROFILE if not defined PUBLIC echo  Prieiga is interneto ijungta - .env faile irasykite PUBLIC_URL=https://jusu-adresas
+set "RELAY="
+for /f "tokens=1,* delims==" %%a in ('findstr /b "RELAY_HOST=" .env 2^>nul') do set "RELAY=%%b"
+if defined RELAY echo  Transliaciju persiuntejas klientams ^(WebRTC^): %RELAY%
 echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
 echo  Transliacija is drono: pulte RTMP adresas rtmp://^<sio-kompiuterio-IP^>:1935/drone
 echo  Sustabdyti: docker compose down  (siame aplanke)

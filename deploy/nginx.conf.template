@@ -149,6 +149,28 @@ server {
     proxy_send_timeout 3600s;
   }
   # HLS: /live/hls/<kelias>/index.m3u8
+  # Persiuntėjas (VPS): WebRTC ryšio nustatymas (WHEP) – per šį serverį (tikrinamos teisės), o pats vaizdas
+  # klientui eina tiesiai iš VPS (UDP 8189). Prie užklausos pridedamas VPS raktas – klientas jo nemato.
+  location /live/relay/ {
+    proxy_hide_header Access-Control-Allow-Origin;
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PATCH, DELETE, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type, If-Match, Authorization" always;
+    add_header Access-Control-Expose-Headers "Location, ETag, Link" always;
+    if ($request_method = OPTIONS) { return 204; }
+    auth_request /_auth;
+    rewrite ^/live/relay/(.*)$ /$1 break;
+    proxy_set_header Authorization "Basic ${RELAY_AUTH}";
+    proxy_set_header Origin "";
+    proxy_set_header Sec-Fetch-Site "";
+    proxy_set_header Host ${RELAY_HOST};
+    proxy_set_header Cookie "";
+    proxy_pass https://${RELAY_HOST}:8889;
+    proxy_http_version 1.1;
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 20s;
+  }
+
   location /live/hls/ {
     proxy_hide_header Access-Control-Allow-Origin;
     add_header Access-Control-Allow-Origin * always;

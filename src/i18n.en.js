@@ -1450,4 +1450,6 @@ export const EN = {
   "Ortofoto žemėlapis: peržiūra": "Orthophoto map: view",
   "Kamera: posvyris {p}°, kryptis {g}° (dronas {y}°)": "Camera: pitch {p}°, heading {g}° (drone {y}°)",
   "židinys nežinomas": "focal length unknown",
+  "WebRTC per persiuntėją": "WebRTC via relay",
+  "Persiuntėjas: {e}": "Relay: {e}",
 };
