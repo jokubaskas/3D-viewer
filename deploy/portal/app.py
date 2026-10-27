@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -41,6 +42,11 @@ DB_PATH = DATA / "portal.db"
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8080").rstrip("/")
 MEDIAMTX_API = os.environ.get("MEDIAMTX_API", "http://mediamtx:9997")
 SESSION_DAYS = float(os.environ.get("SESSION_DAYS", "14"))
+# Transliacijų persiuntėjas (VPS su viešu IP, deploy/relay): klientams iš interneto – WebRTC per jį
+RELAY_HOST = os.environ.get("RELAY_HOST", "").strip()
+RELAY_KEY = os.environ.get("RELAY_KEY", "").strip()
+RELAY_ON = bool(RELAY_HOST and RELAY_KEY and RELAY_HOST not in ("127.0.0.1", "localhost"))
+MEDIAMTX_RTSP = os.environ.get("MEDIAMTX_RTSP", "rtsp://mediamtx:8554")
 INVITE_DAYS = 7
 COOKIE = "atea_sess"
 KINDS = {"model", "stream", "report", "recording", "ortho"}
@@ -322,7 +328,7 @@ async def invite_accept(req: Request):
 
 # --------------------------------------------------------------------------- nginx auth_request
 ADMIN_ONLY = re.compile(r"^/(odm/|live/api/|ext/|ai/train|ai/models/(active|delete))")
-STREAM_PATH = re.compile(r"^/live/(?:webrtc|hls)/([A-Za-z0-9_-]+)(?:/|$)")
+STREAM_PATH = re.compile(r"^/live/(?:webrtc|hls|relay)/([A-Za-z0-9_-]+)(?:/|$)")
 SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~/-]*$")
 
 
@@ -651,9 +657,63 @@ def mtx_delete(name: str):
         pass
 
 
+# --------------------------------------------------------------------------- persiuntimas į VPS
+# Kai klientas iš interneto žiūri transliaciją, iš šio kompiuterio į VPS siunčiamas vienas srautas (RTSPS, šifruota,
+# su raktu) – tik tol, kol kas nors žiūri: programa kas ~25 s pakartoja /play, o nežiūrimas srautas po 60 s sustabdomas.
+# VPS jį išdalina klientams per WebRTC; ryšį nustato nginx (/live/relay/), patikrinęs kliento teises.
+RELAY_IDLE = 60
+_relays: dict[str, dict] = {}
+_relay_lock = threading.Lock()
+
+
+def relay_touch(path: str) -> bool:
+    if not RELAY_ON or not re.fullmatch(r"[A-Za-z0-9_-]+", path):
+        return False
+    with _relay_lock:
+        cur = _relays.get(path)
+        if cur and cur["proc"].poll() is None:
+            cur["seen"] = time.time()
+            return True
+        cmd = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-rtsp_transport", "tcp", "-i", f"{MEDIAMTX_RTSP}/{path}",
+            "-map", "0", "-c", "copy",
+            "-f", "rtsp", "-rtsp_transport", "tcp", f"rtsps://relay:{RELAY_KEY}@{RELAY_HOST}:8322/{path}",
+        ]
+        try:
+            log = open(f"/tmp/relay-{path}.log", "ab")  # noqa: SIM115 – laikomas atidarytas, kol veikia procesas
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log)
+        except OSError:
+            return False
+        _relays[path] = {"proc": proc, "seen": time.time(), "log": log}
+        return True
+
+
+def _relay_reaper():
+    while True:
+        time.sleep(10)
+        now = time.time()
+        with _relay_lock:
+            for path, r in list(_relays.items()):
+                if r["proc"].poll() is not None or now - r["seen"] > RELAY_IDLE:
+                    if r["proc"].poll() is None:
+                        r["proc"].terminate()
+                        try:
+                            r["proc"].wait(5)
+                        except subprocess.TimeoutExpired:
+                            r["proc"].kill()
+                    r["log"].close()
+                    del _relays[path]
+
+
+if RELAY_ON:
+    threading.Thread(target=_relay_reaper, daemon=True).start()
+
+
 @app.post("/api/items/{iid}/play")
-def items_play(iid: int, req: Request):
-    """Paruošia transliaciją serveryje (šaltinis ir jo raktai lieka serveryje – klientas gauna tik kelią)."""
+def items_play(iid: int, req: Request, relay: int = 0):
+    """Paruošia transliaciją serveryje (šaltinis ir jo raktai lieka serveryje – klientas gauna tik kelią).
+    relay=1 (klientas iš interneto) – papildomai siunčiama į persiuntėją (VPS); pakartojama, kol žiūrima."""
     with db() as con:
         u = need_user(req, con)
         r = get_item(con, u, iid)
@@ -661,7 +721,7 @@ def items_play(iid: int, req: Request):
         raise HTTPException(400, "Ne transliacija")
     meta = json.loads(r["meta"] or "{}")
     if meta.get("path"):
-        return {"path": meta["path"]}
+        return {"path": meta["path"], "relay": bool(relay) and relay_touch(meta["path"])}
     src = meta.get("source") or {}
     if not src.get("url"):
         raise HTTPException(400, "Transliacijai nenurodytas šaltinis")
@@ -677,7 +737,7 @@ def items_play(iid: int, req: Request):
             mtx(f"config/paths/replace/{name}", conf, "POST")
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Transliacijų serveris nepasiekiamas: {e}") from e
-    return {"path": name}
+    return {"path": name, "relay": bool(relay) and relay_touch(name)}
 
 
 # --------------------------------------------------------------------------- užsakymai

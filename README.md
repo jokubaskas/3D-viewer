@@ -289,6 +289,28 @@ Drono vaizdas paprastai būna H.264 – jį rodo Chrome, Edge, Firefox ir Safari
 
 Modeliai saugomi Docker tome `ai-models`, todėl išlieka atnaujinus programą. Procesoriumi mokymas trunka valandas, todėl mokykite, pavyzdžiui, per naktį: „Mažas“ modelis yra ~3 kartus greitesnis už „Didelį“. Su NVIDIA GPU (`docker-compose.gpu.yml`) mokymas yra keliasdešimt kartų greitesnis.
 
+### Transliacijos klientams iš interneto per persiuntėją (VPS)
+
+Per Cloudflare Tunnel klientas transliaciją gauna per **HLS** (~2–4 s vėlavimas): WebRTC vaizdas (UDP) tuneliu nepereina, o
+kompiuteris už mobiliojo ryšio (CGNAT) iš interneto nepasiekiamas. Persiuntėjas – nedidelis VPS su viešu IP (pvz. Hetzner
+Cloud CPX02, Helsinkis, Ubuntu 24.04):
+
+```
+Dronas → šis kompiuteris (MediaMTX) ──1 srautas, RTSPS, šifruota──► VPS (MediaMTX) ──WebRTC, ~0,3–0,5 s──► klientai
+                     ffmpeg (portalas), tik kol kas nors žiūri                      ryšio nustatymas – per šį serverį
+```
+
+- **Įdiegimas:** `deploy\relay-setup.bat` → VPS IP → root slaptažodis (iš Hetzner laiško). Skriptas sugeneruoja raktą, įrašo
+  `RELAY_HOST`, `RELAY_KEY`, `RELAY_AUTH` į `deploy\.env` ir per SSH įdiegia MediaMTX (v1.21.2, systemd, ugniasienė: 22, 8322,
+  8889, 8189). Tada – `start-windows.bat`. Pakartotinai paleidus – atnaujina (tas pats raktas).
+- **Kaip veikia:** klientui iš interneto atidarius transliaciją, portalas paleidžia `ffmpeg`, kuris tą patį srautą (be
+  perkodavimo) siunčia į VPS. Programa kas 25 s praneša, kad dar žiūrima; po 60 s be žiūrovų siuntimas sustabdomas. Iš
+  kompiuterio išeina **vienas** srautas, kad ir kiek žiūrovų – svarbu mobiliajam internetui.
+- **Saugumas:** WebRTC ryšio nustatymas eina per šį serverį (`/live/relay/`, nginx tikrina, ar klientui transliacija
+  priskirta) – VPS raktą prideda nginx, klientas jo nemato; vaizdas klientui eina tiesiai iš VPS (UDP 8189). VPS priima
+  tik su raktu ir tik šifruotai (RTSPS / HTTPS); valdymo API, RTMP, HLS išjungti.
+- **Atsarginis kelias:** jei VPS nepasiekiamas – automatiškai HLS kaip anksčiau. Vietiniame tinkle – WebRTC tiesiai.
+
 ## Paskyros, klientai ir prieiga iš interneto
 
 Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia prisijungti. Vaidmenys:

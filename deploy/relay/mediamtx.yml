@@ -1,0 +1,46 @@
+# Atea 3D Matuoklis – transliacijų persiuntėjas (VPS su viešu IP).
+# Jūsų kompiuteris (už mobiliojo ryšio CGNAT) į jį siunčia vieną srautą (RTSPS, šifruota), o VPS jį išdalina
+# klientams per WebRTC (mažas vėlavimas). Klientai prisijungia per jūsų programą (nginx tikrina teises),
+# todėl čia – tik vienas vartotojas „relay“ su slaptu raktu (įrašomas diegiant).
+logLevel: info
+
+# Tik šie prievadai: 8322/tcp (RTSPS iš jūsų kompiuterio), 8889/tcp (WebRTC ryšio nustatymas, HTTPS),
+# 8189/udp ir tcp (WebRTC vaizdas klientams). Valdymo API, RTMP, HLS, SRT, MoQ – išjungti.
+api: false
+metrics: false
+pprof: false
+playback: false
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+rtsp: true
+rtspTransports: [tcp]
+rtspEncryption: "strict"
+rtspsAddress: :8322
+rtspServerKey: /etc/mediamtx/server.key
+rtspServerCert: /etc/mediamtx/server.crt
+
+webrtc: true
+webrtcAddress: :8889
+webrtcEncryption: true
+webrtcServerKey: /etc/mediamtx/server.key
+webrtcServerCert: /etc/mediamtx/server.crt
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: true
+webrtcAdditionalHosts: [RELAY_PUBLIC_IP]
+
+authMethod: internal
+authInternalUsers:
+  - user: relay
+    pass: RELAY_KEY_VALUE
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+
+paths:
+  all_others:

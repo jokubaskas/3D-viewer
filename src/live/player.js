@@ -103,7 +103,11 @@ export class LivePlayer {
   async plan(signal) {
     // Jau serveryje (siunčia dronas / kamera arba priskirta klientui). Iš interneto WebRTC vaizdo srautas per
     // tunelį neina – pirma HLS
-    if (this.stream.path) return this.stream.preferHls ? [['gw-hls'], ['gw-webrtc']] : [['gw-webrtc'], ['gw-hls']];
+    if (this.stream.path) {
+      // Per persiuntėją (VPS) – WebRTC su mažu vėlavimu ir klientams iš interneto; nepavykus – HLS
+      if (this.stream.relay) return [['relay'], ['gw-hls'], ['gw-webrtc']];
+      return this.stream.preferHls ? [['gw-hls'], ['gw-webrtc']] : [['gw-webrtc'], ['gw-hls']];
+    }
     const c = classify(this.stream.url);
     const via = this.stream.via || 'auto';
     if (c.kind === 'invalid') throw new Error(t('Netinkama nuoroda'));
@@ -212,6 +216,24 @@ export class LivePlayer {
   }
 
   async attempt(mode, url, signal) {
+    if (mode === 'relay') {
+      // Srautas į VPS pradedamas siųsti tik dabar – kelias sekundes jo ten gali dar nebūti (404)
+      const whep = new URL(`live/relay/${encodeURIComponent(this.stream.path)}/whep`, location.href).href;
+      const until = Date.now() + 15000;
+      for (;;) {
+        try {
+          return await this.playWebrtc(whep, signal, t('WebRTC per persiuntėją'), false);
+        } catch (e) {
+          if (signal.aborted) throw e;
+          this.teardown();
+          if (e.status === 404 && Date.now() < until) {
+            await sleep(1500, signal);
+            continue;
+          }
+          throw Object.assign(new Error(t('Persiuntėjas: {e}', { e: e.message })), { sourceDown: false });
+        }
+      }
+    }
     if (mode === 'gw-webrtc' || mode === 'gw-hls') {
       const name = this.stream.path || (this.gwSource ? await this.gateway.addSource(this.gwSource.url, this.gwSource.extra) : await this.gateway.addSource(this.srcUrl || this.stream.url));
       this.gwName = name;
@@ -259,6 +281,7 @@ export class LivePlayer {
     this.authHeaders = auth.headers;
     const r = await fetch(whep, { method: 'POST', headers: { 'Content-Type': 'application/sdp', ...auth.headers }, body: pc.localDescription.sdp, signal });
     if (!r.ok) {
+      const fail = (err) => Object.assign(err, { status: r.status });
       let msg = await r.text().catch(() => '');
       try {
         msg = JSON.parse(msg).error || msg;
@@ -266,15 +289,15 @@ export class LivePlayer {
       if (/timed out|no one is publishing|no stream is available/i.test(msg)) {
         const err = new Error(t('Šaltinis neatsako – patikrinkite adresą, slaptažodį ir ar kamera / dronas pasiekiami iš šio kompiuterio'));
         err.sourceDown = true;
-        throw err;
+        throw fail(err);
       }
       if (r.status === 401 || r.status === 403 || /authentication|unauthori[sz]ed|forbidden/i.test(msg)) {
         const err = new Error(t(auth.headers.Authorization ? 'Serveris nepriėmė rakto – patikrinkite jį (raktai dažnai galioja tik ribotą laiką)' : 'Serveris reikalauja prisijungimo – prie transliacijos įveskite raktą (✎ → Raktas)'));
         err.sourceDown = true; // kiti būdai nepadės
-        throw err;
+        throw fail(err);
       }
       if (/codecs? not supported/i.test(msg)) msg = t('naršyklė nepalaiko vaizdo kodeko ({m})', { m: msg.slice(0, 120) });
-      throw new Error(r.status === 404 ? t('Transliacija nerasta (šaltinis nesiunčia vaizdo)') : `WebRTC: ${msg.slice(0, 200) || `HTTP ${r.status}`}`);
+      throw fail(new Error(r.status === 404 ? t('Transliacija nerasta (šaltinis nesiunčia vaizdo)') : `WebRTC: ${msg.slice(0, 200) || `HTTP ${r.status}`}`));
     }
     const loc = r.headers.get('location');
     // Sesijos adresas (uždarymui): MediaMTX grąžina „/<kelias>/whep/<id>“ – per tarpininką jį reikia pridėti prie mūsų adreso

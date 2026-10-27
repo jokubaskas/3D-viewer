@@ -233,3 +233,40 @@ def test_ortho_items_range_and_orders(env):
     assert r.status_code == 206 and r.content == data[100:200]
     assert r.headers["content-type"] == "application/octet-stream"
     assert cb.get(url, headers={"Range": "bytes=0-9"}).status_code == 404
+
+
+def test_relay_push_and_auth(env, monkeypatch):
+    app, client, adm = env
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    b_id, cb = make_client(adm, client, "b@klientas.lt")
+    calls = []
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            calls.append(cmd)
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(app, "RELAY_ON", True)
+    monkeypatch.setattr(app, "RELAY_HOST", "2.29.109.25")
+    monkeypatch.setattr(app, "RELAY_KEY", "slaptas123")
+    monkeypatch.setattr(app.subprocess, "Popen", FakeProc)
+    it = adm.post("/api/items", json={"kind": "stream", "title": "Dronas", "clients": [a_id], "meta": {"path": "drone1"}}, headers=H).json()
+    # Be relay=1 (vietinis žiūrovas) – į VPS nesiunčiama
+    assert ca.post(f"/api/items/{it['id']}/play", headers=H).json() == {"path": "drone1", "relay": False}
+    assert calls == []
+    # Iš interneto – vienas ffmpeg procesas; pakartotinis kvietimas (kas 25 s) naujo nepaleidžia
+    assert ca.post(f"/api/items/{it['id']}/play?relay=1", headers=H).json() == {"path": "drone1", "relay": True}
+    assert ca.post(f"/api/items/{it['id']}/play?relay=1", headers=H).json()["relay"] is True
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[0] == "ffmpeg" and "rtsp://mediamtx:8554/drone1" in cmd and "rtsps://relay:slaptas123@2.29.109.25:8322/drone1" in cmd
+    # Kitas klientas – nei transliacijos, nei persiuntimo
+    assert cb.post(f"/api/items/{it['id']}/play?relay=1", headers=H).status_code == 404
+    # nginx prieigos tikrinimas /live/relay/: tik priskirtam klientui
+    chk = lambda c, uri: c.get("/api/auth/check", headers={"X-Original-URI": uri}).status_code  # noqa: E731
+    assert chk(ca, "/live/relay/drone1/whep") == 204
+    assert chk(cb, "/live/relay/drone1/whep") == 403
+    assert chk(ca, "/live/relay/kitas/whep") == 403
+    assert chk(ca, "/live/relay/../odm/x") == 403
