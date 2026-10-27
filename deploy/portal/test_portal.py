@@ -270,3 +270,36 @@ def test_relay_push_and_auth(env, monkeypatch):
     assert chk(cb, "/live/relay/drone1/whep") == 403
     assert chk(ca, "/live/relay/kitas/whep") == 403
     assert chk(ca, "/live/relay/../odm/x") == 403
+
+
+def test_chunked_upload_resume(env):
+    app, client, adm = env
+    it = adm.post("/api/items", json={"kind": "recording", "title": "Skrydis"}, headers=H).json()
+    data = bytes(range(256)) * 4000  # ~1 MB
+    url = f"/api/items/{it['id']}/files"
+    q = lambda off: {"name": "skrydis.webm", "upload": "ab" * 16, "offset": off, "total": len(data)}  # noqa: E731
+    r = adm.put(url, params=q(0), content=data[:300000], headers=H)
+    assert r.json() == {"have": 300000, "done": False}
+    # Dalis ne iš eilės (pvz. pakartota po nutrūkimo) – serveris praneša, nuo kur tęsti
+    r = adm.put(url, params=q(500000), content=data[500000:600000], headers=H)
+    assert r.status_code == 409 and r.json()["have"] == 300000
+    assert adm.put(url, params=q(300000), content=data[300000:800000], headers=H).json()["have"] == 800000
+    f = adm.put(url, params=q(800000), content=data[800000:], headers=H).json()
+    assert f["name"] == "skrydis.webm" and f["size"] == len(data)
+    items = adm.get("/api/items").json()
+    assert items[0]["files"][0]["size"] == len(data)
+    got = adm.get(f"/api/items/{it['id']}/files/{f['id']}/skrydis.webm?download=1").content
+    assert got == data
+    # Per daug duomenų, neteisingas ID – atmetama
+    assert adm.put(url, params={**q(0), "upload": "../x"}, content=b"x", headers=H).status_code == 400
+    r = adm.put(url, params={**q(0), "upload": "cd" * 16, "total": 3}, content=b"12345", headers=H)
+    assert r.status_code == 400
+    # Nebaigtas įkėlimas pašalinamas kartu su įrašu
+    adm.put(url, params={**q(0), "upload": "ef" * 16}, content=b"123", headers=H)
+    assert list((app.FILES / str(it["id"])).glob(".part-*"))
+    adm.delete(f"/api/items/{it['id']}", headers=H)
+    assert not list((app.FILES / str(it["id"])).glob(".part-*"))
+    # Klientas įkelti negali
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    it2 = adm.post("/api/items", json={"kind": "recording", "title": "x", "clients": [a_id]}, headers=H).json()
+    assert ca.put(f"/api/items/{it2['id']}/files", params={**q(0)}, content=b"1", headers=H).status_code == 403
