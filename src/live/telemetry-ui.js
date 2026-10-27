@@ -338,7 +338,17 @@ export function createTelemetryUI(o) {
     get mapShown() {
       return !!mapEl;
     },
-    /** Dokas pagal transliacijos pavadinimą. */
-    boxFor: (name) => link.match(name),
+    /**
+     * Dokas pagal transliacijos pavadinimą; jei pavadinime jo nėra – vienintelis dokas
+     * arba vienintelis šiuo metu skrendantis dronas.
+     */
+    boxFor: (name) => {
+      const m = link.match(name);
+      if (m) return m;
+      const all = [...link.boxes.values()];
+      if (all.length === 1) return all[0];
+      const fly = all.filter(isAway);
+      return fly.length === 1 ? fly[0] : null;
+    },
   };
 }

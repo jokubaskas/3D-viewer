@@ -1487,4 +1487,8 @@ export const EN = {
   "signalas_proc": "signal_pct",
   "vejas_ms": "wind_ms",
   "busena": "state",
+  "Skrydžio ataskaita": "Flight report",
+  "Spustelėjus grafiką – peršokama į tą vaizdo vietą; žemėlapio žymeklis rodo, kur tuo metu buvo dronas.": "Click a chart to jump to that point in the video; the map marker shows where the drone was at that moment.",
+  "Sukurta su Atea 3D Matuoklis.": "Created with Atea 3D Measure.",
+  "skrydžio ataskaita – „Ataskaitos“": "flight report – “Reports”",
 };

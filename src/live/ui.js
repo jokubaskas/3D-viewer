@@ -5,7 +5,7 @@ import { classify, LiveGateway } from './sources.js';
 import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { trackGpx } from './telemetry.js';
-import { AiComposer, drawComposite, reportZip } from './report.js';
+import { AiComposer, FlightLog, drawComposite, flightReportZip, reportZip } from './report.js';
 import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
 import { api, uploadFile } from '../portal/api.js';
 
@@ -489,7 +489,16 @@ export function createLiveUI(app) {
               comp.stop();
               throw err;
             }
-          } else await p.startRecording();
+          } else {
+            // Be AI – kaupiama tik drono telemetrija (skrydžio ataskaitai), jei ji gaunama
+            const log = new FlightLog(() => tm?.boxFor(s.name));
+            try {
+              await p.startRecording({ extra: { log } });
+            } catch (err) {
+              log.stop();
+              throw err;
+            }
+          }
           el.querySelector('[data-tact=rec]').classList.add('recording');
           el.querySelector('[data-tact=rec]').innerHTML = icon('stop');
           tickRec();
@@ -540,12 +549,15 @@ export function createLiveUI(app) {
   async function saveRecording(stream, { blob, ext, extra, original }, cut) {
     const comp = extra?.comp;
     comp?.stop();
+    const log = extra?.log;
+    log?.stop();
     if (!blob.size) return;
+    const fly = comp || (log?.tele.length ? log : null); // skrydžio duomenys (maršrutas, telemetrija)
     resetRecButton(stream.id);
     // Administratorius (serveryje): originalus vaizdas → „Įrašai“, AI ataskaita → „Ataskaitos“
     if (role === 'admin') {
       try {
-        await saveToPortal(stream, { blob, ext, comp, original }, cut);
+        await saveToPortal(stream, { blob, ext, comp, log, original }, cut);
         return;
       } catch (err) {
         app.toast(t('Į serverį išsaugoti nepavyko ({e}) – atsisiunčiama į kompiuterį', { e: err.message }), 'error', 8000);
@@ -560,6 +572,9 @@ export function createLiveUI(app) {
         download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
         app.toast(t('Ataskaitos sukurti nepavyko: {e}', { e: err.message }), 'error', 8000);
       }
+    } else if (fly) {
+      const zip = await flightReportZip({ name: stream.name, video: { blob, ext }, log: fly }).catch(() => null);
+      download(zip || blob, `${safe(stream.name)}_${stamp()}${zip ? '_skrydis.zip' : `.${ext}`}`);
     } else download(blob, `${safe(stream.name)}_${stamp()}.${ext}`);
     app.toast(cut ? 'Ryšys nutrūko – įrašas išsaugotas' : comp ? 'Įrašas ir AI ataskaita išsaugoti' : 'Įrašas išsaugotas', cut ? 'warn' : 'success', 5000);
   }
@@ -572,7 +587,8 @@ export function createLiveUI(app) {
     tile.el.querySelector('.live-rec').hidden = true;
   }
   /** Įrašas ir ataskaita į portalą (nepriskirti – matomi tik administratoriui, vėliau priskiriami klientams). */
-  async function saveToPortal(stream, { blob, ext, comp, original }, cut) {
+  async function saveToPortal(stream, { blob, ext, comp, log, original }, cut) {
+    const fly = comp || (log?.tele.length ? log : null);
     const when = new Date().toLocaleString(locale(), { dateStyle: 'short', timeStyle: 'short' });
     const base = `${safe(stream.name)}_${stamp()}`;
     // „Įrašai“ – toks vaizdas, koks įrašytas: su AI – su rėmeliais, skaičiais ir laiku (kaip ataskaitoje)
@@ -601,14 +617,21 @@ export function createLiveUI(app) {
       const it = await upload('recording', `${stream.name} · ${when}`, cut ? t('Ryšys nutrūko – įrašas gali būti nepilnas') : '', video.blob, `${base}.${video.ext}`);
       done.push(t('įrašas – „Įrašai“'));
       // Drono maršrutas (diab) – kartu su įrašu (GPX atsidaro Google Earth, QGIS ir kt.)
-      if (comp?.route?.length > 1)
-        await uploadFile(it.id, new Blob([trackGpx(`${stream.name} – ${comp.drone || ''}`, comp.route)], { type: 'application/gpx+xml' }), `${base}_marsrutas.gpx`).catch(() => {});
+      if (fly?.route.length > 1)
+        await uploadFile(it.id, new Blob([trackGpx(`${stream.name} – ${fly.drone || ''}`, fly.route)], { type: 'application/gpx+xml' }), `${base}_marsrutas.gpx`).catch(() => {});
     }
     if (comp) {
       app.toast('Ruošiama ataskaita…', 'info', 3000);
       const zip = await reportZip({ name: stream.name, video: { blob, ext }, comp, settings: { ...aiSet, modelName: aiSet.model ? aiSet.modelName : '' } });
       await upload('report', `${stream.name} · AI ataskaita · ${when}`, t('Atsisiųskite ZIP ir atidarykite ataskaita.html'), zip, `${base}_AI.zip`);
       done.push(t('AI ataskaita – „Ataskaitos“'));
+    } else if (fly && video) {
+      // Be AI, bet su telemetrija – skrydžio ataskaita (maršrutas, santrauka, grafikai)
+      const zip = await flightReportZip({ name: stream.name, video, log: fly }).catch(() => null);
+      if (zip) {
+        await upload('report', `${stream.name} · ${t('Skrydžio ataskaita')} · ${when}`, t('Atsisiųskite ZIP ir atidarykite ataskaita.html'), zip, `${base}_skrydis.zip`);
+        done.push(t('skrydžio ataskaita – „Ataskaitos“'));
+      }
     }
     app.toast(t('Išsaugota serveryje: {l}. Priskirti klientams galite pradžios ekrane.', { l: done.join(', ') }), cut ? 'warn' : 'success', 8000);
   }
