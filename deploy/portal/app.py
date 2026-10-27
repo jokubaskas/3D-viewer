@@ -551,6 +551,8 @@ def items_delete(iid: int, req: Request):
         get_item(con, a, iid)
         for f in con.execute("SELECT disk FROM files WHERE item_id=?", (iid,)).fetchall():
             (FILES / f["disk"]).unlink(missing_ok=True)
+        for part in (FILES / str(iid)).glob(".part-*"):  # nebaigti įkėlimai
+            part.unlink(missing_ok=True)
         con.execute("DELETE FROM items WHERE id=?", (iid,))
         audit(con, a["id"], client_ip(req), "item_delete", iid)
     mtx_delete(f"item-{iid}")
@@ -568,25 +570,49 @@ def safe_name(name: str) -> str:
     return out
 
 
+UPLOAD_ID = re.compile(r"^[a-f0-9]{16,64}$")
+
+
 @app.put("/api/items/{iid}/files")
-async def files_upload(iid: int, name: str, req: Request):
-    """Failas siunčiamas kaip užklausos turinys (be multipart) – tinka ir keliems GB."""
+async def files_upload(iid: int, name: str, req: Request, upload: str = "", offset: int = -1, total: int = -1):
+    """Failas siunčiamas kaip užklausos turinys (be multipart) – tinka ir keliems GB.
+    Dalimis (upload, offset, total): per Cloudflare vienos užklausos dydis ribojamas (nemokamame plane – 100 MB),
+    todėl didelis failas siunčiamas po kelias dešimtis MB; nutrūkus – tęsiama nuo jau gautos vietos."""
     fname = safe_name(name)
     with db() as con:
         a = need_user(req, con, admin=True)
         get_item(con, a, iid)
-    disk = f"{iid}/{secrets.token_hex(12)}"
+    chunked = bool(upload)
+    if chunked and (not UPLOAD_ID.match(upload) or offset < 0 or total < 0 or offset > total):
+        raise HTTPException(400, "Neteisinga įkėlimo dalis")
+    disk = f"{iid}/.part-{upload}" if chunked else f"{iid}/{secrets.token_hex(12)}"
     path = FILES / disk
     path.parent.mkdir(parents=True, exist_ok=True)
+    if chunked:
+        have = path.stat().st_size if path.exists() else 0
+        if offset not in (0, have):
+            # Dalis ne iš eilės (pvz. ankstesnė nutrūko) – klientas tęsia nuo turimo dydžio
+            return JSONResponse({"detail": "Tęskite nuo", "have": have}, status_code=409)
     size = 0
     try:
-        with open(path, "wb") as f:
+        with open(path, "ab" if chunked and offset > 0 else "wb") as f:
             async for chunk in req.stream():
                 f.write(chunk)
                 size += len(chunk)
     except Exception:
-        path.unlink(missing_ok=True)
+        if not chunked:
+            path.unlink(missing_ok=True)
         raise
+    if chunked:
+        have = path.stat().st_size
+        if have > total:
+            path.unlink(missing_ok=True)
+            raise HTTPException(400, "Gauta daugiau, nei nurodyta")
+        if have < total:
+            return {"have": have, "done": False}
+        final = f"{iid}/{secrets.token_hex(12)}"
+        path.rename(FILES / final)
+        disk, path, size = final, FILES / final, have
     with _db_lock, db() as con:
         if not con.execute("SELECT 1 FROM items WHERE id=?", (iid,)).fetchone():  # ištrintas įkeliant
             path.unlink(missing_ok=True)

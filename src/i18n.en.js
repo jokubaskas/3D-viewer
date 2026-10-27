@@ -1452,4 +1452,7 @@ export const EN = {
   "židinys nežinomas": "focal length unknown",
   "WebRTC per persiuntėją": "WebRTC via relay",
   "Persiuntėjas: {e}": "Relay: {e}",
+  "Failas per didelis vienai užklausai": "File too large for a single request",
+  "Įkeliama: {n} ({s} MB)…": "Uploading: {n} ({s} MB)…",
+  "Įkeliama: {n} – {p} %": "Uploading: {n} – {p} %",
 };

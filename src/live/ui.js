@@ -578,8 +578,21 @@ export function createLiveUI(app) {
     const done = [];
     const upload = async (kind, title, note, file, name) => {
       const it = await api('items', { method: 'POST', body: { kind, title, note, clients: [] } });
-      app.toast(t('Įkeliama: {n}…', { n: title }), 'info', 4000);
-      await uploadFile(it.id, file, name);
+      app.toast(t('Įkeliama: {n} ({s} MB)…', { n: title, s: Math.round(file.size / 1e6) }), 'info', 4000);
+      let shown = -1;
+      try {
+        await uploadFile(it.id, file, name, (p) => {
+          const pct = Math.floor(p * 10) * 10;
+          if (file.size > 50e6 && pct > shown && pct < 100) {
+            shown = pct;
+            app.toast(t('Įkeliama: {n} – {p} %', { n: title, p: pct }), 'info', 3000);
+          }
+        });
+      } catch (e) {
+        // Nepavyko – tuščios kortelės nepaliekame (įrašas bus atsisiųstas į kompiuterį)
+        await api(`items/${it.id}`, { method: 'DELETE' }).catch(() => {});
+        throw e;
+      }
       return it;
     };
     if (video) {
