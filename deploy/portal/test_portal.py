@@ -303,3 +303,32 @@ def test_chunked_upload_resume(env):
     a_id, ca = make_client(adm, client, "a@klientas.lt")
     it2 = adm.post("/api/items", json={"kind": "recording", "title": "x", "clients": [a_id]}, headers=H).json()
     assert ca.put(f"/api/items/{it2['id']}/files", params={**q(0)}, content=b"1", headers=H).status_code == 403
+
+
+def test_video_normalized_after_upload(env, tmp_path):
+    import shutil
+    import subprocess
+    import time as _t
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("nėra ffmpeg")
+    app, client, adm = env
+    # Fragmentuotas MP4 – kaip naršyklės MediaRecorder (moov be trukmės, duomenys fragmentais)
+    src = tmp_path / "rec.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=10", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-movflags", "frag_keyframe+empty_moov", str(src)], check=True)
+    it = adm.post("/api/items", json={"kind": "recording", "title": "Skrydis"}, headers=H).json()
+    f = adm.put(f"/api/items/{it['id']}/files", params={"name": "rec.mp4"}, content=src.read_bytes(), headers=H).json()
+    for _ in range(100):
+        with app.db() as con:
+            if con.execute("SELECT 1 FROM media_ok WHERE file_id=?", (f["id"],)).fetchone():
+                break
+        _t.sleep(0.1)
+    out = tmp_path / "back.mp4"
+    out.write_bytes(adm.get(f"/api/items/{it['id']}/files/{f['id']}/rec.mp4?download=1").content)
+    data = out.read_bytes()
+    assert data.find(b"moov") < data.find(b"mdat")  # „faststart“: rodyklė pradžioje
+    assert b"moof" not in data  # nebe fragmentuotas
+    dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout
+    assert abs(float(dur) - 3) < 0.3
+    assert adm.get("/api/items").json()[0]["files"][0]["size"] == len(data)

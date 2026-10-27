@@ -985,3 +985,8 @@ body.portal .portal-card { display: block; }
   .ortho-page .odm-head p { display: none; }
 }
 .ot-note { margin: 8px 0 0; line-height: 1.4; }
+
+.fv-body { position: relative; }
+.fv-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: #e6ebe8; background: rgba(0,0,0,.75); }
+.fv-msg b { font-size: 17px; }
+.fv-msg span { max-width: 520px; line-height: 1.5; color: #c3cac6; }

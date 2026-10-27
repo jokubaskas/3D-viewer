@@ -27,8 +27,14 @@ function fixInfinite(v) {
     const back = () => {
       if (!Number.isFinite(v.duration)) return;
       v.removeEventListener('durationchange', back);
+      clearTimeout(giveUp);
       v.currentTime = 0;
     };
+    // Jei failo prasukti neįmanoma (pvz. fragmentuotas MP4) – grįžtama į pradžią, kad bent grotų
+    const giveUp = setTimeout(() => {
+      v.removeEventListener('durationchange', back);
+      if (v.currentTime > 0 || v.seeking) v.currentTime = 0;
+    }, 3000);
     v.addEventListener('durationchange', back);
     v.currentTime = 1e101;
   };
@@ -45,7 +51,24 @@ export function openVideo(url, title, downloadUrl) {
   fixInfinite(v);
   v.src = url;
   d.querySelector('.fv-body').append(v);
-  d.addEventListener('close', () => v.removeAttribute('src') || v.load());
+  // Jei naršyklė įrašo parodyti negali – paaiškinimas vietoj juodo lango
+  const msg = document.createElement('div');
+  msg.className = 'fv-msg';
+  msg.hidden = true;
+  d.querySelector('.fv-body').append(msg);
+  const explain = (why) => {
+    if (!d.open || (v.readyState >= 2 && !v.error)) return;
+    msg.innerHTML = `<b>${esc(t('Šio įrašo naršyklė parodyti negali'))}</b><span>${esc(why)}</span><span>${esc(t('Jei įrašas ką tik įkeltas, serveris jį dar tvarko – pabandykite po minutės. Kitu atveju atsisiųskite jį ir atidarykite kompiuterio grotuvu (pvz. VLC).'))}</span>`;
+    msg.hidden = false;
+  };
+  v.addEventListener('error', () => explain(v.error?.message || t('Netinkamas arba nepalaikomas vaizdo formatas')));
+  v.addEventListener('playing', () => (msg.hidden = true));
+  const timer = setTimeout(() => explain(t('Vaizdas neužsikrovė per 15 s.')), 15000);
+  d.addEventListener('close', () => {
+    clearTimeout(timer);
+    v.removeAttribute('src');
+    v.load();
+  });
   v.play().catch(() => {});
 }
 
