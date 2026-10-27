@@ -96,6 +96,53 @@ function ticker(ms, fn) {
   };
 }
 
+/**
+ * Drono skrydžio žurnalas įrašo metu (diab telemetrija kas sekundę + maršrutas) – su AI ir be jo.
+ * @param {() => object|null} get dabartinė doko/drono būsena (telemetry.js normalizeBox)
+ */
+export class FlightLog {
+  constructor(get, started = Date.now()) {
+    this.get = get;
+    this.started = started;
+    this.tele = []; // {t, pos, alt, speed, vspeed, heading, battery, rc, wind, state}
+    this.route = []; // {t (laiko žyma), lat, lon, alt}
+    this.dock = null;
+    this.drone = '';
+    this.sample();
+    this._stop = ticker(1000, () => this.sample());
+  }
+
+  sample() {
+    const b = this.get?.();
+    if (!b) return;
+    const d = b.drone || {};
+    const t = Date.now() - this.started;
+    const s = { t, pos: d.pos ? [+d.pos[0].toFixed(7), +d.pos[1].toFixed(7)] : null, alt: d.alt, speed: d.speed, vspeed: d.vspeed, heading: d.heading, battery: d.battery, rc: b.rc, wind: b.wind, state: b.state || null };
+    if (!Object.values(s).some((v, i) => i > 0 && v != null)) return;
+    this.tele.push(s);
+    if (b.dock) this.dock = b.dock;
+    if (s.pos) this.pos(t);
+  }
+
+  /** Drono padėtis dabar: [platuma, ilguma, aukštis|null]; papildo maršrutą. */
+  pos(t1) {
+    const b = this.get?.();
+    const p = b?.drone?.pos;
+    if (!p) return null;
+    const pos = [+p[0].toFixed(7), +p[1].toFixed(7), b.drone.alt ?? null];
+    this.drone = b.name;
+    const last = this.route[this.route.length - 1];
+    if (!last || distM([last.lat, last.lon], p) >= 0.5) this.route.push({ t: this.started + t1, lat: pos[0], lon: pos[1], alt: pos[2] });
+    return pos;
+  }
+
+  stop() {
+    this._stop?.();
+    this._stop = null;
+    this.ended ??= Date.now();
+  }
+}
+
 /** Stabilizuojant – dar neužfiksuota būsena (šalmas) į skaičius ir įvykius nepatenka. */
 const unsure = (x) => x.locked === false && !!stateFamily(x.class);
 
@@ -123,9 +170,6 @@ export class AiComposer {
     for (const k of Object.keys(GROUPS)) delete GROUPS[k]; // naujas įrašas – iš naujo
     this.started = Date.now();
     this.t0 = performance.now();
-    this.route = []; // drono maršrutas įrašo metu (diab)
-    this.tele = []; // telemetrija kas sekundę (diab): {t, pos, alt, speed, vspeed, heading, battery, rc, wind, state}
-    this.dock = null;
     this.track = []; // {t, counts, pos?, dets:[[class, score, x1, y1, x2, y2] (0…1)]}
     this.events = []; // {t, at, kind:'start'|'episode', group, n (daugiausia), end?, counts, img?:Blob}
     this._g = {}; // grupės būsena: {hits, firstT, firstAt, lastT, ep}
@@ -150,21 +194,20 @@ export class AiComposer {
     ev0.counts = this.reportCounts(ev0.counts);
     this._stopTick = ticker(1000 / FPS, () => this.draw());
     // Telemetrija – nepriklausomai nuo AI dažnio (ataskaitos skrydžio žemėlapiui ir grafikams)
-    this.sampleTelemetry();
-    this._stopTele = ticker(1000, () => this.sampleTelemetry());
+    this.flight = new FlightLog(meta.telemetry, this.started);
   }
 
-  sampleTelemetry() {
-    const b = this.meta.telemetry?.();
-    if (!b) return;
-    const d = b.drone || {};
-    const t = Date.now() - this.started;
-    const s = { t, pos: d.pos ? [+d.pos[0].toFixed(7), +d.pos[1].toFixed(7)] : null, alt: d.alt, speed: d.speed, vspeed: d.vspeed, heading: d.heading, battery: d.battery, rc: b.rc, wind: b.wind, state: b.state || null };
-    if (!Object.values(s).some((v, i) => i > 0 && v != null)) return;
-    this.tele.push(s);
-    this.drone = b.name;
-    if (b.dock) this.dock = b.dock;
-    if (s.pos) this.dronePos(t);
+  get tele() {
+    return this.flight.tele;
+  }
+  get route() {
+    return this.flight.route;
+  }
+  get dock() {
+    return this.flight.dock;
+  }
+  get drone() {
+    return this.flight.drone;
   }
 
   /** Vaizdo srautas įrašymui: drobė + originalus garsas (jei yra). */
@@ -189,15 +232,9 @@ export class AiComposer {
 
   /** Drono padėtis dabar (diab): [platuma, ilguma, aukštis|null]; kaupiamas įrašo maršrutas. */
   dronePos(t1) {
-    const b = this.meta.telemetry?.();
-    const p = b?.drone?.pos;
-    if (!p) return null;
-    const pos = [+p[0].toFixed(7), +p[1].toFixed(7), b.drone.alt ?? null];
-    this.drone = b.name;
-    const last = this.route[this.route.length - 1];
-    if (!last || distM([last.lat, last.lon], p) >= 0.5) this.route.push({ t: this.started + t1, lat: pos[0], lon: pos[1], alt: pos[2] });
-    return pos;
+    return this.flight.pos(t1);
   }
+
 
   draw() {
     const el = this.player.el;
@@ -360,13 +397,61 @@ export class AiComposer {
   stop() {
     this._stopTick?.();
     this._stopTick = null;
-    this._stopTele?.();
-    this._stopTele = null;
     this.detector.listeners.delete(this._onResult);
     this.ended = Date.now();
+    this.flight.ended = this.ended;
+    this.flight.stop();
     for (const g of Object.values(this._g)) g.ep = null;
   }
 }
+
+const REPORT_CSS = `  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
+  body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--ink); margin: 0; background: #f4f6f5; }
+  header { background: #1f2326; color: #fff; padding: 18px 28px; border-bottom: 4px solid var(--g); }
+  header .logo { height: 22px; width: auto; display: block; margin-bottom: 10px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; } header p { margin: 0; color: #c3cac6; font-size: 13px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px 20px 40px; }
+  section { background: #fff; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--g); }
+  video { width: 100%; border-radius: 8px; background: #000; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .card { border: 1px solid #e3e7e5; border-radius: 8px; padding: 10px 12px; }
+  .card b { font-size: 20px; display: block; } .card span { color: var(--mut); font-size: 12.5px; }
+  svg { width: 100%; height: auto; font-size: 11px; fill: #555; cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eef1ef; vertical-align: top; }
+  th { color: var(--mut); font-weight: 600; font-size: 12px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  td img { width: 220px; border-radius: 6px; display: block; }
+  a.geo { color: var(--mut); font-size: 12px; }
+  svg.route { width: 100%; height: auto; border-radius: 8px; display: block; background: #2b3236; }
+  svg.route a.t { cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--mut); }
+  .legend .grad { width: 90px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(220,90%,55%), hsl(110,90%,55%), hsl(0,90%,55%)); }
+  .evn { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #1f2326; color: #fff; font-size: 11px; margin-right: 6px; }
+  svg.tchart { margin-top: 6px; }
+  a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .meta td:first-child { color: var(--mut); width: 220px; }
+  footer { text-align: center; color: var(--mut); font-size: 12px; }
+  @media print { video { display: none; } body { background: #fff; } section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; } td img { width: 160px; } }
+`;
+
+// Ataskaitos sąveika (atidarius naršyklėje; programos peržiūroje tą patį daro portal/viewer.js)
+const REPORT_JS = `  const v = document.getElementById('v');
+  const seek = (s) => { v.currentTime = s; v.play(); v.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+  document.querySelectorAll('a.t').forEach((a) => a.onclick = () => seek(+a.dataset.t));
+  document.querySelectorAll('#chart, svg.tchart').forEach((c) => c.onclick = (e) => { const r = c.getBoundingClientRect(), W = +c.dataset.w, P = +c.dataset.p; const x = (e.clientX - r.left) / r.width * W; seek(Math.max(0, (x - P) / (W - P - 10)) * c.dataset.dur / 1000); });
+  // Skrydžio žemėlapyje – drono vieta, atitinkanti vaizdo laiką
+  const route = document.getElementById('route'), now = document.getElementById('route-now');
+  if (route && now && route.dataset.timeline) {
+    const tl = route.dataset.timeline.split(';').map((p) => p.split(',').map(Number));
+    v.addEventListener('timeupdate', () => {
+      const s = v.currentTime; let i = tl.findIndex((p) => p[0] > s); if (i < 0) i = tl.length; const a = tl[Math.max(0, i - 1)], b = tl[Math.min(tl.length - 1, i)];
+      const k = b[0] > a[0] ? Math.min(1, Math.max(0, (s - a[0]) / (b[0] - a[0]))) : 0;
+      now.setAttribute('cx', a[1] + (b[1] - a[1]) * k); now.setAttribute('cy', a[2] + (b[2] - a[2]) * k);
+    });
+  }
+`;
 
 // ------------------------------------------------------------------ ataskaita
 function stats(comp) {
@@ -473,36 +558,7 @@ export async function reportZip({ name, video, comp, settings }) {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(name)} – ${esc(t('AI stebėjimo ataskaita'))}</title>
 <style>
-  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
-  body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: var(--ink); margin: 0; background: #f4f6f5; }
-  header { background: #1f2326; color: #fff; padding: 18px 28px; border-bottom: 4px solid var(--g); }
-  header .logo { height: 22px; width: auto; display: block; margin-bottom: 10px; }
-  header h1 { margin: 0 0 4px; font-size: 22px; } header p { margin: 0; color: #c3cac6; font-size: 13px; }
-  main { max-width: 1000px; margin: 0 auto; padding: 20px 20px 40px; }
-  section { background: #fff; border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-  h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--g); }
-  video { width: 100%; border-radius: 8px; background: #000; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-  .card { border: 1px solid #e3e7e5; border-radius: 8px; padding: 10px 12px; }
-  .card b { font-size: 20px; display: block; } .card span { color: var(--mut); font-size: 12.5px; }
-  svg { width: 100%; height: auto; font-size: 11px; fill: #555; cursor: pointer; }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  td, th { text-align: left; padding: 7px 8px; border-bottom: 1px solid #eef1ef; vertical-align: top; }
-  th { color: var(--mut); font-weight: 600; font-size: 12px; }
-  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
-  td img { width: 220px; border-radius: 6px; display: block; }
-  a.geo { color: var(--mut); font-size: 12px; }
-  svg.route { width: 100%; height: auto; border-radius: 8px; display: block; background: #2b3236; }
-  svg.route a.t { cursor: pointer; }
-  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--mut); }
-  .legend .grad { width: 90px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(220,90%,55%), hsl(110,90%,55%), hsl(0,90%,55%)); }
-  .evn { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #1f2326; color: #fff; font-size: 11px; margin-right: 6px; }
-  svg.tchart { margin-top: 6px; }
-  a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
-  .meta td:first-child { color: var(--mut); width: 220px; }
-  footer { text-align: center; color: var(--mut); font-size: 12px; }
-  @media print { video { display: none; } body { background: #fff; } section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; } td img { width: 160px; } }
-</style>
+${REPORT_CSS}</style>
 </head>
 <body>
 <header>${logoSvg('logo', '#fff')}<h1>${esc(name)}</h1><p>${esc(t('AI stebėjimo ataskaita'))} · ${esc(fmtClock(start))} · ${esc(t('trukmė {d}', { d: fmtDur(dur) }))}</p></header>
@@ -534,21 +590,56 @@ ${comp.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(comp.drone)}${comp.rou
 <footer>${esc(t('Sukurta su Atea 3D Matuoklis. AI rezultatai yra automatiniai ir gali būti netikslūs.'))}</footer>
 </main>
 <script>
-  const v = document.getElementById('v');
-  const seek = (s) => { v.currentTime = s; v.play(); v.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
-  document.querySelectorAll('a.t').forEach((a) => a.onclick = () => seek(+a.dataset.t));
-  document.querySelectorAll('#chart, svg.tchart').forEach((c) => c.onclick = (e) => { const r = c.getBoundingClientRect(), W = +c.dataset.w, P = +c.dataset.p; const x = (e.clientX - r.left) / r.width * W; seek(Math.max(0, (x - P) / (W - P - 10)) * c.dataset.dur / 1000); });
-  // Skrydžio žemėlapyje – drono vieta, atitinkanti vaizdo laiką
-  const route = document.getElementById('route'), now = document.getElementById('route-now');
-  if (route && now && route.dataset.timeline) {
-    const tl = route.dataset.timeline.split(';').map((p) => p.split(',').map(Number));
-    v.addEventListener('timeupdate', () => {
-      const s = v.currentTime; let i = tl.findIndex((p) => p[0] > s); if (i < 0) i = tl.length; const a = tl[Math.max(0, i - 1)], b = tl[Math.min(tl.length - 1, i)];
-      const k = b[0] > a[0] ? Math.min(1, Math.max(0, (s - a[0]) / (b[0] - a[0]))) : 0;
-      now.setAttribute('cx', a[1] + (b[1] - a[1]) * k); now.setAttribute('cy', a[2] + (b[2] - a[2]) * k);
-    });
-  }
-</script>
+${REPORT_JS}</script>
+</body>
+</html>
+`;
+  files['ataskaita.html'] = strToU8(html);
+  return new Blob([zipSync(files, { level: 0 })], { type: 'application/zip' });
+}
+
+/**
+ * Skrydžio ataskaita be AI: vaizdas, maršrutas žemėlapyje, santrauka, telemetrijos grafikai, CSV ir GPX.
+ * @returns {Promise<Blob|null>} null – telemetrijos nebuvo
+ */
+export async function flightReportZip({ name, video, log }) {
+  const fs = flightSummary(log);
+  if (!fs) return null;
+  const { zipSync, strToU8 } = await import('three/examples/jsm/libs/fflate.module.js');
+  const files = {};
+  const videoName = `irasas.${video.ext}`;
+  files[videoName] = new Uint8Array(await video.blob.arrayBuffer());
+  const flight = await flightSection(fs, [], log.started).catch(() => ({ html: '', files: {} }));
+  for (const [k, b] of Object.entries(flight.files)) files[k] = new Uint8Array(await b.arrayBuffer());
+  files['telemetrija.csv'] = strToU8(telemetryCsv(fs, log.started));
+  if (log.route.length > 1) files['marsrutas.gpx'] = strToU8(trackGpx(`${name} – ${log.drone || ''}`, log.route));
+  files['duomenys.json'] = strToU8(JSON.stringify({ name, start: new Date(log.started).toISOString(), durationMs: fs.dur, drone: log.drone, dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S }));
+  const start = new Date(log.started);
+  const html = `<!doctype html>
+<html lang="${locale().slice(0, 2)}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(name)} – ${esc(t('Skrydžio ataskaita'))}</title>
+<style>
+${REPORT_CSS}</style>
+</head>
+<body>
+<header>${logoSvg('logo', '#fff')}<h1>${esc(name)}</h1><p>${esc(t('Skrydžio ataskaita'))} · ${esc(fmtClock(start))} · ${esc(t('trukmė {d}', { d: fmtDur(fs.dur) }))}</p></header>
+<main>
+<section><h2>${esc(t('Vaizdo įrašas'))}</h2><video id="v" src="${videoName}" controls preload="metadata"></video>
+<p style="color:var(--mut);font-size:12.5px">${esc(t('Spustelėjus grafiką – peršokama į tą vaizdo vietą; žemėlapio žymeklis rodo, kur tuo metu buvo dronas.'))}</p></section>
+${flight.html}
+<section><h2>${esc(t('Duomenys'))}</h2><table class="meta">
+<tr><td>${esc(t('Šaltinis'))}</td><td>${esc(name)}</td></tr>
+${log.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(log.drone)}</td></tr>` : ''}
+<tr><td>${esc(t('Pradžia'))}</td><td>${esc(fmtClock(start))}</td></tr>
+<tr><td>${esc(t('Trukmė'))}</td><td>${esc(fmtDur(fs.dur))}</td></tr>
+<tr><td>${esc(t('Failai'))}</td><td>${videoName}, telemetrija.csv, duomenys.json${log.route.length > 1 ? ', marsrutas.gpx, skrydis/' : ''}</td></tr>
+</table></section>
+<footer>${esc(t('Sukurta su Atea 3D Matuoklis.'))}</footer>
+</main>
+<script>
+${REPORT_JS}</script>
 </body>
 </html>
 `;
