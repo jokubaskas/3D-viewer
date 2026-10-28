@@ -208,6 +208,16 @@ function wireReport(doc) {
       now.setAttribute('cy', a[2] + (b[2] - a[2]) * k);
     });
   }
+  // Laiko juostoje – dabartinė vaizdo vieta
+  const tlNow = doc.getElementById('tl-now'), ch = doc.getElementById('chart');
+  if (tlNow && ch)
+    v.addEventListener('timeupdate', () => {
+      const W = +ch.dataset.w, P = +ch.dataset.p;
+      const x = P + (W - P - 10) * Math.min(1, (v.currentTime * 1000) / ch.dataset.dur);
+      tlNow.setAttribute('x1', x);
+      tlNow.setAttribute('x2', x);
+      tlNow.setAttribute('visibility', 'visible');
+    });
   const seek = (s) => {
     v.currentTime = s;
     v.play().catch(() => {});

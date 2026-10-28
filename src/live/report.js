@@ -430,6 +430,7 @@ const REPORT_CSS = `  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
   .legend .grad { width: 90px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, hsl(220,90%,55%), hsl(110,90%,55%), hsl(0,90%,55%)); }
   .evn { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; border-radius: 10px; background: #1f2326; color: #fff; font-size: 11px; margin-right: 6px; }
   svg.tchart { margin-top: 6px; }
+  svg.timeline .tl-l { font-size: 12.5px; fill: #1f2326; font-weight: 600; } svg.timeline .tl-e { font-size: 11px; fill: #9aa39f; } svg.timeline circle { stroke: #fff; stroke-width: 1.2; }
   a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
   .meta td:first-child { color: var(--mut); width: 220px; }
   footer { text-align: center; color: var(--mut); font-size: 12px; }
@@ -441,6 +442,9 @@ const REPORT_JS = `  const v = document.getElementById('v');
   const seek = (s) => { v.currentTime = s; v.play(); v.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
   document.querySelectorAll('a.t').forEach((a) => a.onclick = () => seek(+a.dataset.t));
   document.querySelectorAll('#chart, svg.tchart').forEach((c) => c.onclick = (e) => { const r = c.getBoundingClientRect(), W = +c.dataset.w, P = +c.dataset.p; const x = (e.clientX - r.left) / r.width * W; seek(Math.max(0, (x - P) / (W - P - 10)) * c.dataset.dur / 1000); });
+  // Laiko juostoje – dabartinė vaizdo vieta
+  const tl = document.getElementById('tl-now'), ch = document.getElementById('chart');
+  if (tl && ch) v.addEventListener('timeupdate', () => { const W = +ch.dataset.w, P = +ch.dataset.p, x = P + (W - P - 10) * Math.min(1, v.currentTime * 1000 / ch.dataset.dur); tl.setAttribute('x1', x); tl.setAttribute('x2', x); tl.setAttribute('visibility', 'visible'); });
   // Skrydžio žemėlapyje – drono vieta, atitinkanti vaizdo laiką
   const route = document.getElementById('route'), now = document.getElementById('route-now');
   if (route && now && route.dataset.timeline) {
@@ -471,29 +475,43 @@ function stats(comp) {
   });
 }
 
-/** SVG grafikas: kiekvienos grupės skaičius laike (spustelėjus – peršokama į tą vaizdo vietą). */
+/**
+ * Laiko juosta: kiekvienai grupei – linija per visą įrašą ir jos spalvos taškai, kai objektų buvo užfiksuota
+ * (taško dydis – kiek daugiausia tuo metu). Spustelėjus – peršokama į tą vaizdo vietą; #tl-now – dabartinė vieta.
+ */
 function chartSvg(comp, st) {
-  const W = 900, H = 220, P = 34;
+  const W = 900, P = 150, LANE = 34, top = 8;
   const T = Math.max(1, (comp.ended || Date.now()) - comp.started);
-  const maxV = Math.max(1, ...st.map((s) => s.max));
+  const H = top + Math.max(1, st.length) * LANE + 26;
   const x = (tt) => P + ((W - P - 10) * tt) / T;
-  const top = 32, bottom = H - P + 4; // virš – legenda
-  const y = (v) => bottom - ((bottom - top) * v) / maxV;
-  const lines = st
-    .map((s) => {
-      const rows = comp.track.length ? [...comp.track, { t: T, counts: comp.track[comp.track.length - 1].counts }] : []; // iki įrašo pabaigos
-      const pts = rows.map((r) => `${x(r.t).toFixed(1)},${y(r.counts[s.key] || 0).toFixed(1)}`).join(' ');
-      return `<polyline fill="none" stroke="${GROUPS[s.key]?.color || classColor(s.key)}" stroke-width="2" points="${pts}"/>`;
-    })
-    .join('');
+  const BUCKET = 10; // px – artimi rezultatai sujungiami į vieną tašką
+  const lanes = st.map((s, li) => {
+    const y = top + li * LANE + LANE / 2;
+    const color = GROUPS[s.key]?.color || classColor(s.key);
+    const b = new Map();
+    for (const r of comp.track) {
+      const v = r.counts[s.key] || 0;
+      if (!v) continue;
+      const k = Math.round(x(r.t) / BUCKET);
+      const o = b.get(k);
+      if (!o) b.set(k, { t: r.t, n: v, from: r.t, to: r.t });
+      else {
+        if (v > o.n) Object.assign(o, { n: v, t: r.t });
+        o.to = r.t;
+      }
+    }
+    const dots = [...b.values()]
+      .map((o) => `<circle cx="${x(o.t).toFixed(1)}" cy="${y}" r="${(3.2 + Math.min(2.6, Math.log2(o.n) * 1.3)).toFixed(1)}" fill="${color}"><title>${esc(`${fmtDur(o.from)}${o.to > o.from ? `–${fmtDur(o.to)}` : ''} · ${s.label}: ${o.n}`)}</title></circle>`)
+      .join('');
+    return `<text x="${P - 12}" y="${y + 4}" text-anchor="end" class="tl-l">${esc(s.label)}</text><line x1="${P}" x2="${W - 10}" y1="${y}" y2="${y}" stroke="#dfe4e1" stroke-width="4" stroke-linecap="round"/>${dots || `<text x="${P + 8}" y="${y - 7}" class="tl-e">${esc(t('nepastebėta'))}</text>`}`;
+  });
+  const axisY = top + Math.max(1, st.length) * LANE;
   const ticks = [];
   for (let i = 0; i <= 5; i++) {
     const tt = (T * i) / 5;
-    ticks.push(`<text x="${x(tt)}" y="${H - 10}" text-anchor="middle">${fmtDur(tt).replace(/^00:/, '')}</text>`);
+    ticks.push(`<line x1="${x(tt)}" x2="${x(tt)}" y1="${top}" y2="${axisY}" stroke="#eef1ef"/><text x="${x(tt)}" y="${axisY + 18}" text-anchor="${i === 5 ? 'end' : 'middle'}">${fmtDur(tt).replace(/^00:/, '')}</text>`);
   }
-  const yt = [0, Math.round(maxV / 2), maxV].map((v) => `<text x="${P - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text><line x1="${P}" x2="${W - 10}" y1="${y(v)}" y2="${y(v)}" stroke="#ccd" stroke-dasharray="3 3"/>`);
-  const legend = st.map((s, i) => `<g transform="translate(${P + 10 + i * 190},12)"><rect width="14" height="4" y="4" fill="${GROUPS[s.key]?.color || classColor(s.key)}"/><text x="20" y="10">${esc(s.label)}</text></g>`).join('');
-  return `<svg id="chart" viewBox="0 0 ${W} ${H}" data-dur="${T}" data-p="${P}" data-w="${W}">${yt.join('')}${lines}${ticks.join('')}${legend}</svg>`;
+  return `<svg id="chart" class="timeline" viewBox="0 0 ${W} ${H}" data-dur="${T}" data-p="${P}" data-w="${W}">${ticks.join('')}${lanes.join('')}<line id="tl-now" x1="${P}" x2="${P}" y1="${top - 4}" y2="${axisY}" stroke="#1f2326" stroke-width="1.5" visibility="hidden"/></svg>`;
 }
 
 /**
@@ -570,7 +588,7 @@ ${stR.map((s) => `<div class="card"><span>${esc(s.label)}</span>${comp.unique?.[
 <div class="card"><span>${esc(t('Įvykių'))}</span><b>${evRows.length}</b><span>${esc(t('AI analizių: {n}', { n: comp.track.length }))}</span></div>
 </div></section>
 ${flight.html}
-<section><h2>${esc(t('Skaičius laike'))}</h2>${chartSvg(comp, stR)}</section>
+<section><h2>${esc(t('Laiko juosta'))}</h2>${chartSvg(comp, stR)}<p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Taškas – kada objektų buvo užfiksuota (didesnis – daugiau vienu metu). Spustelėjus – peršokama į tą vaizdo vietą.'))}</p></section>
 <section><h2>${esc(t('Įvykiai'))}</h2>
 ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('Data ir laikas'))}</th><th>${esc(t('Įvykis'))}</th><th>${esc(t('Kadras'))}</th></tr>
 ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${i + 1}</b>` : ''}<a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span>${e.pos ? `<br><a class="geo" href="https://maps.google.com/?q=${e.pos[0]},${e.pos[1]}" target="_blank">${esc(t('Drono vieta'))}: ${e.pos[0].toFixed(6)}, ${e.pos[1].toFixed(6)}${e.pos[2] != null ? ` · ${Math.round(e.pos[2])} m` : ''}</a>` : ''}</td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}

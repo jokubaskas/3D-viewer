@@ -1491,4 +1491,9 @@ export const EN = {
   "Spustelėjus grafiką – peršokama į tą vaizdo vietą; žemėlapio žymeklis rodo, kur tuo metu buvo dronas.": "Click a chart to jump to that point in the video; the map marker shows where the drone was at that moment.",
   "Sukurta su Atea 3D Matuoklis.": "Created with Atea 3D Measure.",
   "skrydžio ataskaita – „Ataskaitos“": "flight report – “Reports”",
+  "Kryptis": "Heading",
+  "Signalas": "Signal",
+  "Laiko juosta": "Timeline",
+  "nepastebėta": "not detected",
+  "Taškas – kada objektų buvo užfiksuota (didesnis – daugiau vienu metu). Spustelėjus – peršokama į tą vaizdo vietą.": "A dot marks when objects were detected (larger – more at once). Click to jump to that point in the video.",
 };

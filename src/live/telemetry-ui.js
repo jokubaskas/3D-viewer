@@ -14,6 +14,42 @@ const COLORS = { ONLINE: '#3cc443', OFFLINE: '#8a9490' };
 /** Ar dronas ne doke (skrenda): pasitraukęs nuo doko > 5 m arba žinomas aukštis > 2 m. */
 export const isAway = (b) => !!b?.drone?.pos && ((b.dock && distM(b.dock, b.drone.pos) > 5) || (b.drone.alt != null && b.drone.alt > 2));
 
+const FRONT = '#ffb020'; // drono priekio (priekinių propelerių) spalva
+const batColor = (p) => (p < 25 ? '#ff6b5e' : p < 50 ? '#ffb627' : '#3cc443');
+
+/** Minimalistinis dronas (vaizdas iš viršaus, priekis – oranžiniai propeleriai ir rodyklė), pasuktas pagal kryptį. */
+export function droneSvg(heading, cls = '') {
+  const r = heading != null ? ` transform="rotate(${Math.round(heading)})"` : '';
+  return `<svg class="tm-drone ${cls}" viewBox="-16 -16 32 32" aria-hidden="true"><g${r}>
+<path d="M-8.5-8.5 8.5 8.5M8.5-8.5-8.5 8.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+<circle cx="-8.5" cy="-8.5" r="3.6" class="f"/><circle cx="8.5" cy="-8.5" r="3.6" class="f"/><circle cx="-8.5" cy="8.5" r="3.6" class="b"/><circle cx="8.5" cy="8.5" r="3.6" class="b"/>
+<rect x="-2.6" y="-3.6" width="5.2" height="7.2" rx="2" fill="currentColor"/>
+<path d="M-2.2-5.2 0-7.6 2.2-5.2z" fill="${FRONT}"/></g></svg>`;
+}
+
+/** Drono būsena žodžiu: skrenda / doke / išjungtas. */
+function droneState(b) {
+  if (b.drone.power === 'OFF') return { text: t('išjungtas'), cls: '' };
+  if (isAway(b)) return { text: t('skrenda'), cls: 'fly' };
+  if (b.drone.pos) return { text: t('doke'), cls: 'ok' };
+  return { text: '', cls: '' };
+}
+
+/** Signalo stulpeliai (0–100 %). */
+const bars = (v) => `<svg class="tm-bars" viewBox="0 0 16 12" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<rect x="${i * 4}" y="${9 - i * 3}" width="3" height="${3 + i * 3}" rx="1" class="${v > i * 25 ? 'on' : ''}"/>`).join('')}</svg>`;
+
+/** Telemetrija transliacijos langelyje (ženkliukai ant vaizdo). */
+export function telemetryChips(b) {
+  if (!b) return '';
+  const d = b.drone, st = droneState(b);
+  const c = [`<span class="tm-c tm-c-name">${droneSvg(d.heading)}${esc(b.name)}${st.text ? `<em class="${st.cls}">${esc(st.text)}</em>` : ''}</span>`];
+  if (d.battery != null) c.push(`<span class="tm-c"><i class="tm-batt"><i style="width:${Math.max(4, Math.min(100, d.battery))}%;background:${batColor(d.battery)}"></i></i>${d.battery} %</span>`);
+  if (d.alt != null) c.push(`<span class="tm-c"><small>${esc(t('ALT'))}</small>${nf(d.alt, 0)} m</span>`);
+  if (d.speed != null) c.push(`<span class="tm-c"><small>${esc(t('GS'))}</small>${nf(d.speed, 1)} m/s</span>`);
+  if (b.rc != null && isAway(b)) c.push(`<span class="tm-c">${bars(b.rc)}${b.rc} %</span>`);
+  return c.join('');
+}
+
 /** Trumpa eilutė transliacijos langeliui ir įrašui. */
 export function telemetryLine(b) {
   if (!b) return '';
@@ -190,23 +226,37 @@ export function createTelemetryUI(o) {
   }
 
   function boxHtml(b) {
-    const d = b.drone, n = (link.tracks.get(b.key) || []).length;
+    const d = b.drone, n = (link.tracks.get(b.key) || []).length, st = droneState(b);
     const warn = [];
     if (b.wind != null && b.wind >= WIND_WARN) warn.push(t('stiprus vėjas'));
     if (b.rain) warn.push(t('lyja'));
     if (d.battery != null && d.battery < 25) warn.push(t('silpna baterija'));
-    const rows = [
-      [t('Dronas'), [b.state, d.power === 'OFF' ? t('išjungtas') : '', d.battery != null ? t('baterija {p} %', { p: d.battery }) : '', b.rc != null ? `RC ${b.rc} %` : '', isAway(b) ? t('skrenda') : d.pos ? t('doke') : ''].filter(Boolean).join(' · ')],
-      [t('Skrydis'), [d.alt != null ? t('aukštis {v} m', { v: nf(d.alt, 0) }) : '', d.speed != null ? `${nf(d.speed, 1)} m/s` : '', d.heading != null ? `${nf(d.heading, 0)}°` : ''].filter(Boolean).join(' · ')],
-      [t('Oras'), [b.wind != null ? t('vėjas {v} m/s', { v: nf(b.wind, 1) }) : '', b.rain != null ? (b.rain ? t('lyja') : t('nelyja')) : '', b.extTemp != null ? t('lauke {v} °C', { v: nf(b.extTemp, 1) }) : ''].filter(Boolean).join(' · ')],
-      [t('Dokas'), [b.temp != null ? t('viduje {v} °C', { v: nf(b.temp, 1) }) : '', b.charger === 'CHARGING' ? t('kraunama') : '', b.pilot ? t('pilotas {p}', { p: b.pilot }) : ''].filter(Boolean).join(' · ')],
-      [t('Maršrutas'), n > 1 ? t('{n} taškų', { n }) : ''],
-    ].filter(([, v]) => v);
-    return `<div class="tm-box" data-box="${esc(b.key)}">
-      <div class="row"><b>${esc(b.name)}</b><span class="chip ${b.status === 'ONLINE' ? 'ok' : ''}">${esc(t(STATUS[b.status] || b.status))}</span></div>
-      ${rows.map(([k, v]) => `<div class="small"><span class="muted">${esc(k)}:</span> ${esc(v)}</div>`).join('')}
-      ${warn.length ? `<div class="small bad">${esc(warn.join(' · '))}</div>` : ''}
-      <div class="pane-actions">${b.dock || d.pos ? `<button class="btn btn-sm btn-ghost" data-tm="show">${icon('target')}${esc(t('Rodyti'))}</button>` : ''}${n > 1 ? `<button class="btn btn-sm btn-ghost" data-tm="gpx">${icon('save')}GPX</button><button class="btn btn-sm btn-ghost" data-tm="clear">${esc(t('Valyti maršrutą'))}</button>` : ''}</div>
+    const m = (label, value, extra = '') => `<div class="tm-m"><span>${esc(label)}</span><b>${value}</b>${extra}</div>`;
+    const metrics = [
+      d.battery != null ? m(t('Baterija'), `${d.battery} %`, `<i class="tm-bar"><i style="width:${Math.max(3, Math.min(100, d.battery))}%;background:${batColor(d.battery)}"></i></i>`) : '',
+      d.alt != null ? m(t('Aukštis'), `${nf(d.alt, 0)} m`) : '',
+      d.speed != null ? m(t('Greitis'), `${nf(d.speed, 1)} m/s`, d.vspeed != null && Math.abs(d.vspeed) >= 0.2 ? `<small>${d.vspeed > 0 ? '↑' : '↓'} ${nf(Math.abs(d.vspeed), 1)} m/s</small>` : '') : '',
+      d.heading != null ? m(t('Kryptis'), `<svg class="tm-arrow" viewBox="-6 -6 12 12" aria-hidden="true"><path transform="rotate(${Math.round(d.heading)})" d="M0-5 3.6 4 0 2.2-3.6 4z"/></svg>${nf(((d.heading % 360) + 360) % 360, 0)}°`) : '',
+      b.rc != null ? m(t('Signalas'), `${bars(b.rc)}${b.rc} %`) : '',
+    ].filter(Boolean);
+    const dock = [
+      b.wind != null ? t('vėjas {v} m/s', { v: nf(b.wind, 1) }) : '',
+      b.rain != null ? (b.rain ? t('lyja') : t('nelyja')) : '',
+      b.extTemp != null ? t('lauke {v} °C', { v: nf(b.extTemp, 1) }) : '',
+      b.temp != null ? t('viduje {v} °C', { v: nf(b.temp, 1) }) : '',
+      b.charger === 'CHARGING' ? t('kraunama') : '',
+      b.pilot ? t('pilotas {p}', { p: b.pilot }) : '',
+    ].filter(Boolean);
+    return `<div class="tm-box ${st.cls === 'fly' ? 'flying' : ''}" data-box="${esc(b.key)}">
+      <div class="tm-head">
+        <span class="tm-avatar ${st.cls}">${droneSvg(d.heading)}</span>
+        <div class="tm-title"><b>${esc(b.name)}</b><span>${esc([st.text, b.state && !/fly|idle|dock|land/i.test(b.state) ? b.state : ''].filter(Boolean).join(' · '))}</span></div>
+        <span class="chip ${b.status === 'ONLINE' ? 'ok' : ''}">${esc(t(STATUS[b.status] || b.status))}</span>
+      </div>
+      ${metrics.length ? `<div class="tm-metrics">${metrics.join('')}</div>` : ''}
+      ${dock.length ? `<div class="tm-dock"><span>${esc(t('Dokas'))}</span>${dock.map((x) => `<i>${esc(x)}</i>`).join('')}</div>` : ''}
+      ${warn.length ? `<div class="tm-warn">${warn.map((x) => `<span class="chip bad">${esc(x)}</span>`).join('')}</div>` : ''}
+      <div class="pane-actions">${b.dock || d.pos ? `<button class="btn btn-sm btn-ghost" data-tm="show">${icon('target')}${esc(t('Rodyti'))}</button>` : ''}${n > 1 ? `<button class="btn btn-sm btn-ghost" data-tm="gpx">${icon('save')}GPX · ${esc(t('{n} taškų', { n }))}</button><button class="btn btn-sm btn-ghost" data-tm="clear">${esc(t('Valyti maršrutą'))}</button>` : ''}</div>
     </div>`;
   }
 
@@ -272,55 +322,53 @@ export function createTelemetryUI(o) {
     g.save();
     g.font = '600 12px Inter, Segoe UI, sans-serif';
     g.textAlign = 'center';
-    const label = (txt, x, y, color = '#fff') => {
-      const w = g.measureText(txt).width + 10;
-      g.fillStyle = 'rgba(20,23,25,.8)';
-      g.fillRect(x - w / 2, y, w, 18);
-      g.fillStyle = color;
-      g.fillText(txt, x, y + 13);
+    const pill = (x, y, w, h, r) => {
+      g.beginPath();
+      if (g.roundRect) g.roundRect(x, y, w, h, r);
+      else g.rect(x, y, w, h);
     };
-    // Maršrutai
+    const label = (txt, x, y, color = '#fff') => {
+      const w = g.measureText(txt).width + 14;
+      g.fillStyle = 'rgba(20,23,25,.82)';
+      pill(x - w / 2, y, w, 20, 10);
+      g.fill();
+      g.fillStyle = color;
+      g.fillText(txt, x, y + 14);
+    };
+    // Maršrutai: tamsus kontūras + šviesi linija
     for (const tr of link.tracks.values()) {
       if (tr.length < 2) continue;
-      g.strokeStyle = 'rgba(79,195,247,.95)';
-      g.lineWidth = 2.5;
-      g.beginPath();
-      tr.forEach((p, i) => {
-        const [x, y] = m.toScreen([p.lon, p.lat]);
-        i ? g.lineTo(x, y) : g.moveTo(x, y);
-      });
-      g.stroke();
+      const pts = tr.map((p) => m.toScreen([p.lon, p.lat]));
+      g.lineJoin = g.lineCap = 'round';
+      for (const [w, c] of [[6, 'rgba(10,20,30,.55)'], [3, 'rgba(79,195,247,.95)']]) {
+        g.strokeStyle = c;
+        g.lineWidth = w;
+        g.beginPath();
+        pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+        g.stroke();
+      }
     }
     for (const b of link.boxes.values()) {
       if (b.dock) {
         const [x, y] = m.toScreen([b.dock[1], b.dock[0]]);
-        g.fillStyle = COLORS[b.status] || COLORS.OFFLINE;
-        g.strokeStyle = '#fff';
-        g.lineWidth = 2;
-        g.fillRect(x - 7, y - 7, 14, 14);
-        g.strokeRect(x - 7, y - 7, 14, 14);
-        label(b.name + (b.status !== 'ONLINE' ? ` · ${t(STATUS[b.status] || b.status)}` : ''), x, y + 10);
+        // Dokas – nusileidimo aikštelė su „H“
+        g.fillStyle = 'rgba(20,23,25,.85)';
+        g.strokeStyle = COLORS[b.status] || COLORS.OFFLINE;
+        g.lineWidth = 2.5;
+        pill(x - 11, y - 11, 22, 22, 6);
+        g.fill();
+        g.stroke();
+        g.fillStyle = '#fff';
+        g.font = '800 12px Inter, Segoe UI, sans-serif';
+        g.fillText('H', x, y + 4.5);
+        g.font = '600 12px Inter, Segoe UI, sans-serif';
+        label(b.name + (b.status !== 'ONLINE' ? ` · ${t(STATUS[b.status] || b.status)}` : ''), x, y + 15);
       }
       const d = b.drone;
       if (d.pos && (isAway(b) || !b.dock)) {
         const [x, y] = m.toScreen([d.pos[1], d.pos[0]]);
-        if (d.heading != null) {
-          const a = (d.heading * Math.PI) / 180;
-          g.fillStyle = '#ffb020';
-          g.beginPath();
-          g.moveTo(x + Math.sin(a) * 18, y - Math.cos(a) * 18);
-          g.lineTo(x + Math.sin(a + 2.6) * 9, y - Math.cos(a + 2.6) * 9);
-          g.lineTo(x + Math.sin(a - 2.6) * 9, y - Math.cos(a - 2.6) * 9);
-          g.fill();
-        }
-        g.fillStyle = '#ffb020';
-        g.strokeStyle = '#111';
-        g.lineWidth = 2;
-        g.beginPath();
-        g.arc(x, y, 7, 0, Math.PI * 2);
-        g.fill();
-        g.stroke();
-        label([b.code || b.name, d.alt != null ? `${nf(d.alt, 0)} m` : '', d.battery != null ? `${d.battery} %` : ''].filter(Boolean).join(' · '), x, y - 32, '#ffcf6e');
+        drawDrone(g, x, y, d.heading);
+        label([b.code || b.name, d.alt != null ? `${nf(d.alt, 0)} m` : '', d.battery != null ? `${d.battery} %` : ''].filter(Boolean).join(' · '), x, y - 44, '#ffcf6e');
       }
     }
     if (!link.boxes.size) {
@@ -351,4 +399,57 @@ export function createTelemetryUI(o) {
       return fly.length === 1 ? fly[0] : null;
     },
   };
+}
+
+/** Dronas žemėlapyje (kaip droneSvg, tik drobėje): šviesus rėmas, oranžiniai priekiniai propeleriai, pasuktas pagal kryptį. */
+function drawDrone(g, x, y, heading) {
+  g.save();
+  g.translate(x, y);
+  // Šešėlis-aureolė, kad matytųsi ir ant palydovinės nuotraukos
+  g.fillStyle = 'rgba(15,18,20,.45)';
+  g.beginPath();
+  g.arc(0, 0, 26, 0, Math.PI * 2);
+  g.fill();
+  if (heading != null) g.rotate((heading * Math.PI) / 180);
+  g.scale(1.45, 1.45);
+  g.lineCap = g.lineJoin = 'round';
+  const A = 8.5, R = 3.6;
+  // Rėmas (tamsus kontūras, kad matytųsi ir ant šviesaus pagrindo)
+  for (const [w, c] of [[3.4, '#111'], [1.7, '#fff']]) {
+    g.strokeStyle = c;
+    g.lineWidth = w;
+    g.beginPath();
+    g.moveTo(-A, -A);
+    g.lineTo(A, A);
+    g.moveTo(A, -A);
+    g.lineTo(-A, A);
+    g.stroke();
+  }
+  // Propeleriai: priekiniai – oranžiniai
+  for (const [px, py, front] of [[-A, -A, 1], [A, -A, 1], [-A, A, 0], [A, A, 0]]) {
+    g.beginPath();
+    g.arc(px, py, R, 0, Math.PI * 2);
+    g.fillStyle = front ? '#6b4a10' : '#2a2f33';
+    g.fill();
+    g.lineWidth = 1.4;
+    g.strokeStyle = front ? FRONT : '#fff';
+    g.stroke();
+  }
+  // Korpusas ir priekio rodyklė
+  g.fillStyle = '#fff';
+  g.strokeStyle = '#111';
+  g.lineWidth = 0.9;
+  g.beginPath();
+  if (g.roundRect) g.roundRect(-2.6, -3.6, 5.2, 7.2, 2);
+  else g.rect(-2.6, -3.6, 5.2, 7.2);
+  g.fill();
+  g.stroke();
+  g.fillStyle = FRONT;
+  g.beginPath();
+  g.moveTo(-2.2, -5.2);
+  g.lineTo(0, -7.6);
+  g.lineTo(2.2, -5.2);
+  g.closePath();
+  g.fill();
+  g.restore();
 }
