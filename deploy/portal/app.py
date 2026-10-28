@@ -109,6 +109,9 @@ def init_db():
               id INTEGER PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
               user_id INTEGER REFERENCES users(id) ON DELETE SET NULL, kind TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
               created REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS docks(
+              id INTEGER PRIMARY KEY, name TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
+              radius REAL NOT NULL, updated REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS orders_client ON orders(client_id);
             CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id);
             """
@@ -931,6 +934,45 @@ def get_order(con, u, oid: int) -> sqlite3.Row:
 
 def order_event(con, oid: int, uid, kind: str, body: str = ""):
     con.execute("INSERT INTO order_events(order_id,user_id,kind,body,created) VALUES(?,?,?,?,?)", (oid, uid, kind, body, time.time()))
+
+
+# --------------------------------------------------------------------------- DBOX vietos ir skrydžio zona
+# Rodoma užsakymų žemėlapyje visiems prisijungusiems (kur dronas gali nuskristi); keičia tik administratorius.
+MAX_DOCKS = 20
+
+
+def dock_json(r) -> dict:
+    return {"id": r["id"], "name": r["name"], "lat": r["lat"], "lon": r["lon"], "radius": r["radius"]}
+
+
+@app.get("/api/docks")
+def docks_list(req: Request):
+    with db() as con:
+        need_user(req, con)
+        return [dock_json(r) for r in con.execute("SELECT * FROM docks ORDER BY id").fetchall()]
+
+
+@app.put("/api/docks")
+async def docks_save(req: Request):
+    body = await req.json()
+    if not isinstance(body, list) or len(body) > MAX_DOCKS:
+        raise HTTPException(400, "Neteisingi duomenys")
+    rows = []
+    for d in body:
+        try:
+            lat, lon, radius = float(d["lat"]), float(d["lon"]), float(d["radius"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "Neteisinga DBOX vieta")
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180 and 100 <= radius <= 100000) or any(map(math.isnan, (lat, lon, radius))):
+            raise HTTPException(400, "Neteisinga DBOX vieta arba spindulys (0,1–100 km)")
+        rows.append((clean_text(d.get("name"), 80) or "DBOX", lat, lon, radius))
+    with _db_lock, db() as con:
+        u = need_user(req, con, admin=True)
+        con.execute("DELETE FROM docks")
+        now = time.time()
+        con.executemany("INSERT INTO docks(name,lat,lon,radius,updated) VALUES(?,?,?,?,?)", [(*r, now) for r in rows])
+        audit(con, u["id"], client_ip(req), "docks_save", len(rows))
+        return [dock_json(r) for r in con.execute("SELECT * FROM docks ORDER BY id").fetchall()]
 
 
 @app.get("/api/orders")

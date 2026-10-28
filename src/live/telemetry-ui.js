@@ -5,6 +5,7 @@ import { PlanMap } from '../plan/map.js';
 import { DiabLink, DIAB_DEFAULT_URL, distM, keyExpiry, trackGpx } from './telemetry.js';
 
 const LS_TM = 'atea3d.live.diab';
+export const LS_DOCKS = 'atea3d.diab.docks'; // dokų vietos ir toliausias matytas skrydis – užsakymų žemėlapio zonai
 const WIND_WARN = 10; // m/s
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -179,6 +180,7 @@ export function createTelemetryUI(o) {
     if (exp && st !== 'off') status += `<div class="muted">${esc(t(exp < Date.now() ? 'Raktas nebegalioja nuo {d}' : 'Raktas galioja iki {d}', { d: new Date(exp).toLocaleString(locale()) }))}</div>`;
     $('#tm-status').innerHTML = status;
     syncBoxes();
+    rememberDocks();
     $('#tm-raw-wrap').hidden = !link.raw;
     if (link.raw && $('#tm-raw-wrap').open) $('#tm-raw').textContent = JSON.stringify(link.other ? { ...link.raw, kitas: link.other } : link.raw, null, 2);
     if (map) {
@@ -194,6 +196,27 @@ export function createTelemetryUI(o) {
     o.onChange();
   }
   $('#tm-raw-wrap').addEventListener('toggle', render);
+
+  /** Dokų vietos ir toliausias drono atstumas nuo doko (šioje naršyklėje) – DBOX zonai užsakymuose. */
+  let docksSaved = '';
+  function rememberDocks() {
+    let known = {};
+    try {
+      known = JSON.parse(localStorage.getItem(LS_DOCKS)) || {};
+    } catch { /* tuščia */ }
+    for (const b of link.boxes.values()) {
+      if (!b.dock) continue;
+      const k = (known[b.key] ||= { maxM: 0 });
+      Object.assign(k, { name: b.name, lat: b.dock[0], lon: b.dock[1] });
+      if (isAway(b)) k.maxM = Math.max(k.maxM || 0, Math.round(distM(b.dock, b.drone.pos)));
+    }
+    const js = JSON.stringify(known);
+    if (js === docksSaved) return;
+    docksSaved = js;
+    try {
+      localStorage.setItem(LS_DOCKS, js);
+    } catch { /* ignoruojame */ }
+  }
 
   /**
    * Dokų kortelės atnaujinamos po vieną, o jų mygtukai paliekami tie patys DOM elementai (pakeičiami tik pasikeitus

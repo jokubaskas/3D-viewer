@@ -332,3 +332,21 @@ def test_video_normalized_after_upload(env, tmp_path):
     dur = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout
     assert abs(float(dur) - 3) < 0.3
     assert adm.get("/api/items").json()[0]["files"][0]["size"] == len(data)
+
+
+def test_docks(env):
+    app, client, adm = env
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    assert ca.get("/api/docks").json() == []
+    assert client().get("/api/docks").status_code == 401
+    d = [{"name": "DBOX Kaunas", "lat": 54.89, "lon": 23.92, "radius": 8000}]
+    # Keisti gali tik administratorius (ir tik su X-Atea)
+    assert ca.put("/api/docks", json=d, headers=H).status_code == 403
+    assert adm.put("/api/docks", json=d).status_code == 403
+    r = adm.put("/api/docks", json=d, headers=H)
+    assert r.status_code == 200 and r.json()[0]["radius"] == 8000
+    assert ca.get("/api/docks").json()[0]["name"] == "DBOX Kaunas"
+    # Neteisingi duomenys
+    for bad in ([{"lat": 95, "lon": 1, "radius": 1000}], [{"lat": 1, "lon": 1, "radius": 5}], [{"lat": "x", "lon": 1, "radius": 1000}], {"a": 1}):
+        assert adm.put("/api/docks", json=bad, headers=H).status_code == 400
+    assert adm.put("/api/docks", json=[], headers=H).json() == []
