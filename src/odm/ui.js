@@ -131,6 +131,7 @@ export function createOdmUI(app) {
                 </div>
                 <span class="muted small" id="odm-preset-desc">${PRESETS.standard.desc}</span>
               </div>
+              <label class="row check" id="odm-mvsmesh-row" title="OpenMVS: tinklas pagal tai, iš kurių nuotraukų matytas kiekvienas taškas, ir patikslintas pagal pačias nuotraukas. Nepavykus – automatiškai įprastas (Poisson)."><input type="checkbox" id="odm-mvsmesh" /> Tikslus 3D tinklas (OpenMVS) – aštresnės briaunos, ilgiau</label>
               <label class="row check"><input type="checkbox" id="odm-dsm" checked /> Paviršiaus modelis (DSM)</label>
               <label class="row check"><input type="checkbox" id="odm-dtm" checked /> Reljefo modelis (DTM, be augmenijos)</label>
               <label class="row check"><input type="checkbox" id="odm-ortho" checked /> Ortofotonuotrauka</label>
@@ -392,6 +393,9 @@ export function createOdmUI(app) {
     if (k === 'orthoOnly') $('#odm-ortho').checked = true;
     page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x.dataset.preset === k));
     $('#odm-preset-desc').textContent = PRESETS[preset].desc;
+    // Tikslus tinklas – numatytai „3D objektams“; „Tik ortofoto“ 3D modelio nekuria
+    $('#odm-mvsmesh-row').hidden = k === 'orthoOnly';
+    $('#odm-mvsmesh').checked = k === 'objects3d';
     updateStartSummary();
   }
   page.querySelectorAll('#odm-preset button').forEach((b) =>
@@ -449,6 +453,8 @@ export function createOdmUI(app) {
     const options = buildOdmOptions(preset, {
       dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked,
       boundary: boundary ? boundaryPath(presetUuid) : null,
+      photos: photos.length,
+      mvsMesh: $('#odm-mvsmesh').checked,
     });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
@@ -617,7 +623,8 @@ export function createOdmUI(app) {
             ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
             <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>`}
             ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
-            <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>` : ''}
+            <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>
+            ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-ghost" data-pact="remesh" title="Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami">${icon('refresh')}Kitas 3D tinklas</button>`}` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
           ${p.status !== 'uploading' ? `<button class="btn btn-sm btn-ghost icon-only danger" data-pact="delete" title="Pašalinti">${icon('trash')}</button>` : ''}
@@ -636,16 +643,18 @@ export function createOdmUI(app) {
     const c = new NodeODM(serverFor(p), server.token);
     try {
       if (act === 'save') {
-        app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid) });
+        app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid) });
         return;
       }
       if (act === 'model' || act === 'points') {
-        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid) }, act);
+        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid) }, act);
         close();
       } else if (act === 'ortho') {
-        if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: c.url(`task/${uuid}/download/orthophoto.tif`) })) close();
+        if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: `${c.filesUrl(uuid)}odm_orthophoto/odm_orthophoto.tif` })) close();
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
+      } else if (act === 'remesh') {
+        await remesh(p, c);
       } else if (act === 'restart') {
         await openRestart(p, c);
       } else if (act === 'delete') {
@@ -681,6 +690,26 @@ export function createOdmUI(app) {
     } catch {
       return null;
     }
+  }
+
+  /** Baigtas projektas: 3D tinklas perdaromas kitu būdu (nuo tinklo etapo – sujungimas ir tankinimas nekartojami). */
+  async function remesh(p, c) {
+    if (!(await c.supports('mesh-method'))) {
+      app.toast(t('Šis apdorojimo serveris tikslaus 3D tinklo (OpenMVS) nepalaiko – atnaujinkite programą ir paleiskite deploy\\start-windows.bat.'), 'error', 9000);
+      return;
+    }
+    const info = await c.taskInfo(p.uuid);
+    const base = (info.options || []).filter((o) => !['rerun-from', 'rerun-all', 'rerun', 'mesh-method'].includes(o.name));
+    const now = (info.options || []).find((o) => o.name === 'mesh-method')?.value || 'poisson';
+    const next = now === 'openmvs' ? 'poisson' : 'openmvs';
+    const label = (m) => t(m === 'openmvs' ? 'tikslus (OpenMVS)' : 'įprastas (Poisson)');
+    if (!confirm(t('Perdaryti „{n}“ 3D tinklą: {a} → {b}?\n\nKartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).', { n: p.name, a: label(now), b: label(next) }))) return;
+    await c.restart(p.uuid, base.concat({ name: 'mesh-method', value: next }, { name: 'rerun-from', value: 'odm_meshing' }));
+    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: t('3D tinklas: {m}', { m: label(next) }) });
+    ls.set(LS_PROJECTS, projects);
+    renderProjects();
+    poll();
+    app.toast(t('3D tinklas perdaromas: {m}', { m: label(next) }), 'info');
   }
 
   /** „Kartoti“: tais pačiais nustatymais, su mažesniu RAM poreikiu, be srities ribos arba viską iš naujo. */

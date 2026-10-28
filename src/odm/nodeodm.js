@@ -169,6 +169,12 @@ export class NodeODM {
     return this.postForm(`task/new/commit/${uuid}`, {});
   }
 
+  /** Ar serveris palaiko ODM parinktį (pvz. „mesh-method“ – tik Atea ODM atvaizde). */
+  async supports(name) {
+    const opts = await this.get('options').catch(() => []);
+    return Array.isArray(opts) && opts.some((o) => o.name === name);
+  }
+
   taskInfo(uuid) {
     return this.get(`task/${uuid}/info`);
   }
@@ -190,6 +196,11 @@ export class NodeODM {
   }
   restart(uuid, options) {
     return this.postEncoded('task/restart', { uuid, options: options ? JSON.stringify(options) : null });
+  }
+
+  /** Atskiri rezultatų failai (tik per šios programos serverį – nginx /odm/files/; kitaip 404 ir naudojamas all.zip). */
+  filesUrl(uuid) {
+    return new URL(`${this.base}files/${uuid}/`, location.href).toString();
   }
 
   downloadUrl(uuid) {

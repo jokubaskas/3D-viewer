@@ -15,7 +15,7 @@ import { createOdmUI } from './odm/ui.js';
 import { createLiveUI } from './live/ui.js';
 import { createPlanUI } from './plan/ui.js';
 import { createOrthoUI } from './ortho/ui.js';
-import { extractFromZipUrl, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
+import { extractFromZipUrl, fetchDirect, DIRECT_MODEL, DIRECT_POINTS, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { AiClient, AI_CLASSES } from './ai/client.js';
 import { findLocalServer } from './local-server.js';
 import { renderTopDown } from './ai/ortho.js';
@@ -1551,7 +1551,7 @@ const ODM_FILES = {
   laz: { path: 'odm_georeferencing/odm_georeferenced_model.laz', label: 'taskai', ext: 'laz' },
 };
 
-/** Atsisiunčia vieną ODM rezultatą (iš all.zip srautu); rastrus pagal pasirinkimą perskaičiuoja į LKS-94. */
+/** Atsisiunčia vieną ODM rezultatą (tiesiai iš serverio, kitaip iš all.zip srautu); rastrus pagal pasirinkimą perskaičiuoja į LKS-94. */
 async function saveOdmResult(project, kind, crs) {
   const safe = project.name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'projektas';
   if (kind === 'all') {
@@ -1579,7 +1579,7 @@ async function saveOdmResult(project, kind, crs) {
       return toast('Failas išsaugotas');
     }
     const def = ODM_FILES[kind];
-    const files = await extractFromZipUrl(project.downloadUrl, (p) => p === def.path, progress, signal);
+    const files = (await fetchDirect(project.filesUrl, [def.path], progress, signal)) || (await extractFromZipUrl(project.downloadUrl, (p) => p === def.path, progress, signal));
     if (!files.length) throw new Error(tr('Šio projekto rezultatuose nėra: {f} (galbūt išjungtas kuriant projektą).', { f: def.path }));
     let blob = files[0];
     let suffix = '_UTM';
@@ -1986,7 +1986,9 @@ const odmUI = createOdmUI({
         $('#loading-bar').style.width = `${Math.round(p * 100)}%`;
         $('#loading-text').textContent = `${tr('Atsisiunčiami rezultatai…')} ${(bytes / 1e6).toFixed(0)} MB`;
       };
-      let files = await extractFromZipUrl(project.downloadUrl, kind === 'points' ? WANT_POINTS : WANT_MODEL_GLB, progress);
+      // Pirmiausia – tik reikalingi failai tiesiai iš serverio (dešimtys MB vietoj kelių GB all.zip)
+      let files = await fetchDirect(project.filesUrl, kind === 'points' ? DIRECT_POINTS : DIRECT_MODEL, progress);
+      if (!files) files = await extractFromZipUrl(project.downloadUrl, kind === 'points' ? WANT_POINTS : WANT_MODEL_GLB, progress);
       if (kind !== 'points' && !files.some((f) => /\.glb$/i.test(f.name))) files = await extractFromZipUrl(project.downloadUrl, WANT_MODEL, progress);
       if (!files.some((f) => /\.(obj|glb|laz|las)$/i.test(f.name))) throw new Error(tr(kind === 'points' ? 'Archyve nerasta taškų debesies' : 'Archyve nerastas 3D modelis'));
       setLoading(false);
