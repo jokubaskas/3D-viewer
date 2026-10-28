@@ -6,7 +6,7 @@ import { LivePlayer } from './player.js';
 import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEMORY, hasStates, LOCK_SCORES, classColor, classLabel } from './ai.js';
 import { trackGpx } from './telemetry.js';
 import { AiComposer, FlightLog, drawComposite, flightReportZip, reportZip } from './report.js';
-import { createTelemetryUI, telemetryLine } from './telemetry-ui.js';
+import { createTelemetryUI, telemetryChips } from './telemetry-ui.js';
 import { api, uploadFile } from '../portal/api.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -362,9 +362,9 @@ export function createLiveUI(app) {
     const tile = tiles.get(sid);
     const el = tile?.el.querySelector('.live-tm');
     if (!el) return;
-    const line = telemetryLine(tm?.boxFor(tile.stream.name));
-    el.hidden = !line;
-    el.textContent = line;
+    const html = telemetryChips(tm?.boxFor(tile.stream.name));
+    el.hidden = !html;
+    if (el._html !== html) el.innerHTML = el._html = html;
   }
 
   function layout() {
