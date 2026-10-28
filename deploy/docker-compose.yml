@@ -110,6 +110,9 @@ services:
       - nodeodm
       - ai
       - portal
+    volumes:
+      # ODM rezultatai (tik skaityti): 3D modelis ir ortofoto atidaromi be viso all.zip atsisiuntimo
+      - nodeodm-data:/odm-data:ro
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}

@@ -449,6 +449,7 @@ export function createOdmUI(app) {
     const options = buildOdmOptions(preset, {
       dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked,
       boundary: boundary ? boundaryPath(presetUuid) : null,
+      photos: photos.length,
     });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
@@ -636,14 +637,14 @@ export function createOdmUI(app) {
     const c = new NodeODM(serverFor(p), server.token);
     try {
       if (act === 'save') {
-        app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid) });
+        app.saveResults({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid) });
         return;
       }
       if (act === 'model' || act === 'points') {
-        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid) }, act);
+        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid) }, act);
         close();
       } else if (act === 'ortho') {
-        if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: c.url(`task/${uuid}/download/orthophoto.tif`) })) close();
+        if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: `${c.filesUrl(uuid)}odm_orthophoto/odm_orthophoto.tif` })) close();
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
       } else if (act === 'restart') {

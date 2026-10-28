@@ -83,6 +83,19 @@ server {
     proxy_set_header Host $host;
   }
 
+  # ODM rezultatai tiesiai iš NodeODM tomo (tik administratoriui – ADMIN_ONLY /odm/): 3D modelis (GLB), ortofoto ir
+  # DEM (COG – skaitomi dalimis, Range), taškų debesis. NodeODM API atiduoda tik visą all.zip (keli GB).
+  location ~ "^/odm/files/(?<odm_task>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/(?<odm_file>odm_texturing/odm_textured_model_geo\.glb|odm_georeferencing/coords\.txt|odm_georeferencing/odm_georeferenced_model\.laz|odm_orthophoto/odm_orthophoto\.tif|odm_dem/dsm\.tif|odm_dem/dtm\.tif)$" {
+    auth_request /_auth;
+    alias /odm-data/$odm_task/$odm_file;
+    default_type application/octet-stream;
+    # add_header bloke panaikina serverio antraštes – kartojamos
+    add_header Cache-Control "private, no-cache" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+  }
+
   # NodeODM API per tą patį adresą (be CORS problemų)
   location /odm/ {
     auth_request /_auth;

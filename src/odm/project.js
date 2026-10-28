@@ -17,7 +17,8 @@ export const PRESETS = {
   fast: {
     label: 'Greitas',
     desc: 'Peržiūrai lauke. Mažesnis taškų tankis, ~2× greičiau.',
-    options: { 'feature-quality': 'medium', 'pc-quality': 'low', 'mesh-size': 150000, 'orthophoto-resolution': 5, 'dem-resolution': 10 },
+    // Be geometrinio gylio žemėlapių tikslinimo (OpenMVS) ir be PDF ataskaitos – tankinimas ~2× greitesnis
+    options: { 'feature-quality': 'medium', 'pc-quality': 'low', 'pc-skip-geometric': true, 'skip-report': true, 'mesh-size': 150000, 'orthophoto-resolution': 5, 'dem-resolution': 10 },
   },
   standard: {
     label: 'Standartinis',
@@ -32,7 +33,9 @@ export const PRESETS = {
   objects3d: {
     label: '3D objektai',
     desc: 'Įstrižoms (pvz. 5 krypčių) nuotraukoms: aštresni pastatai, mašinos, sienos. Ilgiausiai, reikia daugiausia RAM.',
-    options: { 'feature-quality': 'high', 'pc-quality': 'high', 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    // Daugiau požymių – patikimiau susiejamos statmenos ir įstrižos nuotraukos; griežtesnis taškų filtras (σ 3 vietoj 5) –
+    // mažiau „plaukiojančių“ taškų debesėlių, iš kurių tinkle atsiranda gumbai ant pastatų ir mašinų
+    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
   },
 };
 
@@ -247,7 +250,7 @@ export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.g
 /** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
 export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null } = {}) {
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0 } = {}) {
   const o = { ...PRESETS[presetKey].options };
   // Pasirinkta sritis – kelias iki kartu įkeliamo GeoJSON failo (WGS84). ODM apkarpo taškų debesį, DEM ir
   // ortofoto; kitaip – automatinė riba. GeoJSON teksto tiesiogiai perduoti negalima: NodeODM, paleisdamas
@@ -257,6 +260,11 @@ export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = tru
   else o['auto-boundary'] = true;
   // Debesiui pritaikyti GeoTIFF (su peržiūros lygiais) – ortofoto programoje ir portale skaitomas dalimis
   o.cog = true;
+  // NodeODM pagal nutylėjimą kuria ir Entwine taškų plyteles (WebODM peržiūrai) – programa jų nenaudoja, o jos ilgina
+  // apdorojimą ir padidina all.zip. GLB (gltf) palieka – juo atidaromas 3D modelis.
+  o['pc-ept'] = false;
+  // Dideliems rinkiniams – vietinis + periodinis visuminis optimizavimas: nuotraukų sujungimas (OpenSfM) gerokai greitesnis
+  if (photos >= 500) o['use-hybrid-bundle-adjustment'] = true;
   if (dsm) o.dsm = true;
   if (dtm) o.dtm = true;
   if (!ortho) o['skip-orthophoto'] = true;

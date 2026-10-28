@@ -106,7 +106,9 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
 2. **Nustatymai** – kokybė (**tik ortofoto** / greitas / standartinis / aukšta / **3D objektai**), DSM, DTM, ortofoto, aukščių sistema:
    - *Tik ortofoto* – greitas 2D žemėlapis be 3D modelio (`fast-orthophoto`, `skip-3dmodel`): kelis kartus greičiau, RAM – keli GB net dideliems plotams; DSM / DTM tada apytiksliai. Geriausia statmenoms nuotraukoms. Baigus projektų sąraše – mygtukas **Ortofoto**.
    - Visi GeoTIFF rezultatai kuriami debesiui pritaikyti (`cog` – su peržiūros lygiais), todėl ortofoto programoje ir portale skaitomas dalimis.
-   - *3D objektai* – įstrižoms (pvz. 5 krypčių: statmenai + 4 × 45°) nuotraukoms: `pc-quality high`, `mesh-size 2 000 000`, `mesh-octree-depth 13` – aštresni pastatai, mašinos ir sienos (be „pakilusio“ asfalto aplink juos). Parenkama automatiškai, kai ≥ 20 % nuotraukų įstrižos (kamera pakreipta daugiau nei 20° nuo statmens, pagal XMP `GimbalPitchDegree`).
+   - Greičio optimizavimai: NodeODM numatytai kuriamos Entwine taškų plytelės (WebODM peržiūrai) išjungtos (`pc-ept false` – greičiau ir mažesnis `all.zip`); *Greitas* – be geometrinio gylio žemėlapių tikslinimo ir PDF ataskaitos (`pc-skip-geometric`, `skip-report` – tankinimas ~2× greitesnis); nuo 500 nuotraukų – `use-hybrid-bundle-adjustment` (greitesnis sujungimas).
+   - **Rezultatų atidarymas be viso archyvo:** 3D modelis (GLB, Draco), taškų debesis, ortofoto, DSM ir DTM imami tiesiai iš serverio (`/odm/files/<užduotis>/…`, tik administratoriui) – atsisiunčiama dešimtys MB vietoj kelių GB `all.zip`, ortofoto (COG) skaitomas dalimis. Kitam NodeODM serveriui – kaip anksčiau, iš `all.zip`.
+   - *3D objektai* – įstrižoms (pvz. 5 krypčių: statmenai + 4 × 45°) nuotraukoms: `pc-quality high`, `mesh-size 2 000 000`, `mesh-octree-depth 13`, `min-num-features 15000` (patikimiau susiejamos statmenos ir įstrižos nuotraukos), `pc-filter 3` (mažiau triukšmo taškų → mažiau gumbų tinkle) – aštresni pastatai, mašinos ir sienos (be „pakilusio“ asfalto aplink juos). Parenkama automatiškai, kai ≥ 20 % nuotraukų įstrižos (kamera pakreipta daugiau nei 20° nuo statmens, pagal XMP `GimbalPitchDegree`).
    - Rodomas **apytikslis RAM poreikis** (pagal nuotraukų skaičių, raišką ir kokybę) ir kiek RAM skirta serveriui. Jei gali neužtekti – įspėjama ir prieš pradedant paklausiama; pritrūkus programa vis tiek pasiūlys pakartoti su mažesne kokybe.
    - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
    - Galima palikti elipsoidinius ir pataisyti kontroliniais taškais.
@@ -158,7 +160,7 @@ docker compose restart ai
 
 #### Linux serveris
 
-Reikia Linux serverio su Docker. Rekomendacijos: 1000 nuotraukų (48 MP) – 16+ branduolių, **64–128 GB RAM**, 500 GB+ SSD; NVIDIA GPU pagreitina.
+Reikia Linux serverio su Docker. Rekomendacijos: 1000 nuotraukų (48 MP) – 16+ branduolių, **64–128 GB RAM**, 500 GB+ SSD; NVIDIA GPU pagreitina (OpenMVS tankinimas – kelis kartus). Windows: `start-windows.bat` NVIDIA plokštę aptinka pats ir paleidžia GPU versijas (`docker-compose.gpu.yml`: `nodeodm:gpu`, AI su CUDA); jei nepavyksta – paleidžia be GPU; išjungti – `.env` `USE_GPU=0`.
 
 ```bash
 cd deploy

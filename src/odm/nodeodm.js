@@ -192,6 +192,11 @@ export class NodeODM {
     return this.postEncoded('task/restart', { uuid, options: options ? JSON.stringify(options) : null });
   }
 
+  /** Atskiri rezultatų failai (tik per šios programos serverį – nginx /odm/files/; kitaip 404 ir naudojamas all.zip). */
+  filesUrl(uuid) {
+    return new URL(`${this.base}files/${uuid}/`, location.href).toString();
+  }
+
   downloadUrl(uuid) {
     return this.url(`task/${uuid}/download/all.zip`);
   }

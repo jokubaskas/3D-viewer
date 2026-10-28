@@ -31,6 +31,19 @@ for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass
 if not defined PORT set "PORT=8080"
 if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - projektu sarasas narsykleje bus atskiras.
 
+rem NVIDIA GPU (Docker Desktop su WSL2): OpenDroneMap tankinimas (OpenMVS) ir AI keliskart greitesni.
+rem Jei GPU yra - naudojamas automatiskai; isjungti: .env faile USE_GPU=0. Nepavykus paleisti su GPU - paleidziama be jo.
+set "GPU="
+set "USE_GPU="
+for /f "tokens=1,* delims==" %%a in ('findstr /b "USE_GPU=" .env 2^>nul') do set "USE_GPU=%%b"
+if not "%USE_GPU%"=="0" (
+  nvidia-smi -L >nul 2>nul && set "GPU=1"
+)
+if defined GPU (
+  set "COMPOSE_FILE=docker-compose.yml;docker-compose.gpu.yml"
+  for /f "delims=" %%g in ('nvidia-smi --query-gpu^=name --format^=csv^,noheader 2^>nul') do echo Rasta NVIDIA vaizdo plokste: %%g - bus naudojama apdorojimui.
+)
+
 rem Atsarginiu kopiju vieta (.env BACKUP_DIR): vietinis diskas - tiesiai; tinklo / USB diskas - kopijuojama kas valanda
 set "BACKUP_MOUNT="
 set "BACKUP_COPY="
@@ -77,6 +90,13 @@ rem Prieiga is interneto (Cloudflare Tunnel) - tik jei .env faile nustatytas CF_
 set "PROFILE="
 for /f "tokens=1,* delims==" %%a in ('findstr /b "CF_TUNNEL_TOKEN=" .env 2^>nul') do if not "%%b"=="" set "PROFILE=--profile internet"
 docker compose %PROFILE% up -d --build
+if errorlevel 1 if defined GPU (
+  echo.
+  echo [ISPEJIMAS] Nepavyko paleisti su GPU ^(ar Docker Desktop naudoja WSL2 ir NVIDIA tvarkykle nauja?^) - paleidziama be GPU...
+  set "COMPOSE_FILE="
+  set "GPU="
+  docker compose %PROFILE% up -d --build
+)
 if errorlevel 1 (
   echo [KLAIDA] Nepavyko paleisti. Perziurekite klaidas auksciau.
   pause
