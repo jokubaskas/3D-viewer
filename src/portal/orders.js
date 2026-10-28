@@ -71,6 +71,15 @@ function areaM2(P) {
   }
   return Math.abs(s) / 2;
 }
+/** Atstumas metrais tarp [lon, lat] ir [lat, lon] (dokas). */
+const distTo = ([lon, lat], d) => {
+  const k = Math.PI / 180, x = (lon - d.lon) * k * Math.cos(((lat + d.lat) / 2) * k), y = (lat - d.lat) * k;
+  return Math.hypot(x, y) * 6371000;
+};
+const fmtKm = (m) => `${nf(m / 1000, m < 10000 ? 1 : 0)} km`;
+const LS_DIAB_DOCKS = 'atea3d.diab.docks'; // užpildo transliacijų „Dronai (diab)“ (live/telemetry-ui.js)
+/** Ar visa teritorija bent vieno DBOX skrydžio zonoje. */
+const inReach = (P, docks) => !docks.length || docks.some((d) => P.every((p) => distTo(p, d) <= d.radius));
 const centroid = (P) => [P.reduce((s, p) => s + p[0], 0) / P.length, P.reduce((s, p) => s + p[1], 0) / P.length];
 
 /**
@@ -84,6 +93,8 @@ export function createOrdersUI(app) {
   let query = '';
   let view = { mode: 'list' }; // list | detail {id, data} | form {step, id?, poly, ...}
   let poll = 0;
+  let docks = []; // DBOX vietos ir skrydžio spindulys (serveris)
+  let pick = null; // administratorius renkasi DBOX vietą žemėlapyje: (ll) => void
 
   const page = document.createElement('section');
   page.className = 'odm-page orders-page';
@@ -132,6 +143,7 @@ export function createOrdersUI(app) {
       if (view.step === 1) renderFormArea();
     },
     onClick: (ll) => {
+      if (pick) return pick(ll);
       if (view.mode === 'form') return;
       const hit = visible()
         .filter((o) => inside(ll, ring(o)))
@@ -142,7 +154,71 @@ export function createOrdersUI(app) {
   });
   map.editable = false;
 
+  /** DBOX ir jo skrydžio zona (apskritimas). */
+  function drawDocks(g, m) {
+    for (const d of docks) {
+      const [x, y] = m.toScreen([d.lon, d.lat]);
+      const r = (d.radius * m.scale) / (40075016.686 * Math.cos((d.lat * Math.PI) / 180));
+      g.save();
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(60,196,67,.10)';
+      g.fill();
+      g.setLineDash([10, 7]);
+      g.lineWidth = 2;
+      g.strokeStyle = 'rgba(60,196,67,.95)';
+      g.stroke();
+      g.setLineDash([]);
+      // Spindulio žymė – į rytus nuo doko
+      if (r > 60) {
+        g.strokeStyle = 'rgba(60,196,67,.7)';
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + r, y);
+        g.stroke();
+        const txt = fmtKm(d.radius);
+        g.font = '600 12px Inter, Segoe UI, sans-serif';
+        const tw = g.measureText(txt).width + 12;
+        g.fillStyle = 'rgba(16,19,21,.8)';
+        g.beginPath();
+        g.roundRect(x + r / 2 - tw / 2, y - 22, tw, 18, 9);
+        g.fill();
+        g.fillStyle = '#7ee07f';
+        g.textAlign = 'center';
+        g.fillText(txt, x + r / 2, y - 9);
+      }
+      // Dokas – nusileidimo aikštelė „H“
+      g.fillStyle = 'rgba(16,19,21,.88)';
+      g.strokeStyle = '#3cc443';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.roundRect(x - 12, y - 12, 24, 24, 6);
+      g.fill();
+      g.stroke();
+      g.fillStyle = '#fff';
+      g.font = '800 13px Inter, Segoe UI, sans-serif';
+      g.textAlign = 'center';
+      g.fillText('H', x, y + 5);
+      g.font = '600 12px Inter, Segoe UI, sans-serif';
+      const tw = g.measureText(d.name).width + 14;
+      g.fillStyle = 'rgba(16,19,21,.82)';
+      g.beginPath();
+      g.roundRect(x - tw / 2, y + 16, tw, 20, 10);
+      g.fill();
+      g.fillStyle = '#fff';
+      g.fillText(d.name, x, y + 30);
+      g.restore();
+    }
+  }
+  const dockBounds = () =>
+    docks.flatMap((d) => {
+      const dl = d.radius / 110574, dn = d.radius / (111320 * Math.cos((d.lat * Math.PI) / 180));
+      return [[d.lon - dn, d.lat - dl], [d.lon + dn, d.lat + dl]];
+    });
+
   function drawOrders(g, m) {
+    drawDocks(g, m);
     const selId = view.mode === 'detail' ? view.id : view.mode === 'form' ? view.id : null;
     const list = view.mode === 'form' ? orders.filter((o) => o.id !== view.id) : visible();
     const dim = view.mode === 'form';
@@ -193,8 +269,9 @@ export function createOrdersUI(app) {
   }
 
   function fitAll() {
-    const pts = (view.mode === 'form' && view.poly?.length ? view.poly : visible().flatMap(ring));
+    const pts = view.mode === 'form' && view.poly?.length ? view.poly : visible().flatMap(ring);
     if (pts.length) map.fit(pts);
+    else if (docks.length) map.fit(dockBounds());
   }
 
   // ---------------------------------------------------------------- duomenys
@@ -207,6 +284,7 @@ export function createOrdersUI(app) {
   async function load(quiet = false) {
     try {
       orders = await api('orders');
+      docks = await api('docks').catch(() => docks);
       if (admin && !users.length) users = await api('users').catch(() => []);
     } catch (e) {
       if (!quiet) app.toast(e.message, 'error');
@@ -227,11 +305,21 @@ export function createOrdersUI(app) {
         ${orders.length ? `<div class="or-filter seg">${FILTERS.map((f) => `<button data-filter="${f.id}" class="${f.id === filter ? 'active' : ''}">${esc(t(f.label))}<span class="or-n">${counts[f.id]}</span></button>`).join('')}</div>` : ''}
         ${admin && orders.length > 4 ? `<input class="live-input or-find" id="or-find" placeholder="${esc(t('Ieškoti: klientas, pavadinimas, adresas, #nr.'))}" value="${esc(query)}" />` : ''}
       </div>
+      ${docksHtml()}
       <div class="or-list">
         ${list.length ? list.map(cardHtml).join('') : emptyHtml()}
       </div>`;
     map.redraw();
   }
+
+  const docksHtml = () =>
+    docks.length || admin
+      ? `<div class="or-zone">
+          <span class="or-zone-ic">H</span>
+          <span class="small">${docks.length ? `<b>${esc(t('Drono skrydžio zona'))}</b><span class="muted">${esc(docks.map((d) => `${d.name} · ${t('iki {r} nuo DBOX', { r: fmtKm(d.radius) })}`).join('; '))}</span>` : `<b>${esc(t('DBOX zona nenurodyta'))}</b><span class="muted">${esc(t('Nurodykite DBOX vietą ir skrydžio spindulį – klientai matys, kur dronas gali nuskristi.'))}</span>`}</span>
+          ${admin ? `<button class="btn btn-ghost btn-sm" data-or="docks">${icon('edit')}${esc(t('Keisti'))}</button>` : ''}
+        </div>`
+      : '';
 
   const emptyHtml = () =>
     orders.length
@@ -441,6 +529,7 @@ export function createOrdersUI(app) {
         <button class="btn btn-sm btn-outline" data-or="redraw">${icon('area')}${esc(t(ok ? 'Žymėti iš naujo' : 'Žymėti'))}</button>
         <button class="btn btn-sm btn-ghost" data-or="import">${icon('upload')}KML / GeoJSON</button>
       </div>
+      ${ok && !inReach(view.poly, docks) ? `<div class="or-reach">${icon('pin')}<span>${esc(t('Dalis teritorijos už drono skrydžio zonos (žalias apskritimas). Užsakymą pateikti galite – Atea patikslins, ar ir kaip darbą atlikti.'))}</span></div>` : ''}
       ${ok ? `<p class="small muted">${esc(t('Taškus galima tempti; kraštinės vidurio taškas – nauja viršūnė; dešiniu pelės mygtuku – pašalinti.'))}</p>` : ''}
       <div class="or-form-btns"><span></span><button class="btn btn-primary" data-or="step2" ${ok ? '' : 'disabled'}>${esc(t('Toliau'))}<i class="or-fwd">${icon('back')}</i></button></div>`;
   }
@@ -552,6 +641,88 @@ export function createOrdersUI(app) {
     d.showModal();
   }
 
+  /** Administratorius: DBOX vietos ir skrydžio spindulys (vietą galima paimti iš diab ar spustelėti žemėlapyje). */
+  function editDocks(draft = docks.map((x) => ({ name: x.name, lat: x.lat, lon: x.lon, km: x.radius / 1000 }))) {
+    let diab = {};
+    try {
+      diab = JSON.parse(localStorage.getItem(LS_DIAB_DOCKS)) || {};
+    } catch { /* nėra */ }
+    const seen = Object.values(diab).filter((x) => Number.isFinite(x.lat) && Number.isFinite(x.lon));
+    const d = document.createElement('dialog');
+    d.className = 'dialog wide';
+    const row = (x, i) => `<div class="or-dock-row" data-i="${i}">
+        <label class="or-dock-name"><span>${esc(t('Pavadinimas'))}</span><input name="name" class="live-input" maxlength="80" value="${esc(x.name || '')}" placeholder="DBOX" /></label>
+        <label><span>${esc(t('Platuma'))}</span><input name="lat" class="live-input" type="number" step="any" min="-90" max="90" value="${x.lat ?? ''}" required /></label>
+        <label><span>${esc(t('Ilguma'))}</span><input name="lon" class="live-input" type="number" step="any" min="-180" max="180" value="${x.lon ?? ''}" required /></label>
+        <label><span>${esc(t('Spindulys, km'))}</span><input name="km" class="live-input" type="number" step="0.1" min="0.1" max="100" value="${x.km ?? ''}" required /></label>
+        <span class="or-dock-btns"><button type="button" class="btn btn-ghost btn-sm icon-only" data-dk="pick" title="${esc(t('Pažymėti žemėlapyje'))}">${icon('pin')}</button><button type="button" class="btn btn-ghost btn-sm icon-only danger" data-dk="del" title="${esc(t('Pašalinti'))}">${icon('trash')}</button></span>
+      </div>`;
+    d.innerHTML = `<form method="dialog">
+      <h2>${esc(t('DBOX skrydžio zona'))}</h2>
+      <p class="small muted">${esc(t('Užsakymų žemėlapyje visi matys DBOX vietą ir apskritimą – kiek toli dronas gali nuskristi. Klientas įspėjamas, jei pažymėta teritorija už zonos.'))}</p>
+      <div class="or-docks">${draft.map(row).join('') || `<p class="muted small">${esc(t('DBOX dar nepridėtas.'))}</p>`}</div>
+      <div class="pane-actions"><button type="button" class="btn btn-outline btn-sm" data-dk="add">${icon('plus')}${esc(t('Pridėti DBOX'))}</button></div>
+      ${seen.length ? `<h4 class="or-sub">${esc(t('Iš diab telemetrijos (šioje naršyklėje)'))}</h4>
+        ${seen.map((x, i) => `<button type="button" class="or-result" data-dk="diab" data-s="${i}"><i class="or-zone-ic">H</i><span><b>${esc(x.name)}</b><span class="muted small">${x.lat.toFixed(5)}, ${x.lon.toFixed(5)}${x.maxM ? ` · ${esc(t('toliausiai skrista {r}', { r: fmtKm(x.maxM) }))}` : ''}</span></span><i class="or-fwd">${icon('plus')}</i></button>`).join('')}`
+        : `<p class="small muted">${esc(t('Patarimas: prisijungus prie diab (Transliacijos → Dronai (diab)) DBOX vietą bus galima paimti iš ten, o skrendant įsimenamas toliausias atstumas nuo doko.'))}</p>`}
+      <p class="small bad or-form-err" hidden></p>
+      <menu><button class="btn btn-ghost" type="button" data-cancel>${esc(t('Atšaukti'))}</button><button class="btn btn-primary" value="ok">${esc(t('Išsaugoti'))}</button></menu>
+    </form>`;
+    document.body.append(d);
+    const read = () =>
+      [...d.querySelectorAll('.or-dock-row')].map((r) => {
+        const v = (n) => r.querySelector(`[name=${n}]`).value;
+        return { name: v('name').trim(), lat: v('lat') === '' ? null : +v('lat'), lon: v('lon') === '' ? null : +v('lon'), km: v('km') === '' ? null : +v('km') };
+      });
+    const again = (list) => {
+      d.close();
+      editDocks(list);
+    };
+    d.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dk]');
+      if (b?.dataset.dk === undefined) return;
+      const list = read();
+      const i = +b.closest('[data-i]')?.dataset.i;
+      if (b.dataset.dk === 'add') return again([...list, { name: 'DBOX', lat: null, lon: null, km: 5 }]);
+      if (b.dataset.dk === 'del') return again(list.filter((_, k) => k !== i));
+      if (b.dataset.dk === 'diab') {
+        const x = seen[+b.dataset.s];
+        const km = x.maxM > 300 ? Math.ceil(x.maxM / 100) / 10 : null; // toliausias matytas skrydis (suapvalinta į viršų)
+        const k = list.findIndex((r) => r.name === x.name);
+        const nu = { name: x.name, lat: +x.lat.toFixed(6), lon: +x.lon.toFixed(6), km: km ?? list[k]?.km ?? 5 };
+        return again(k >= 0 ? list.map((r, j) => (j === k ? { ...r, ...nu, km: Math.max(r.km || 0, nu.km) } : r)) : [...list, nu]);
+      }
+      if (b.dataset.dk === 'pick') {
+        d.close();
+        const hint = $('#or-maphint');
+        hint.hidden = false;
+        hint.textContent = t('Spustelėkite DBOX vietą žemėlapyje (Esc – atšaukti)');
+        pick = (ll) => {
+          pick = null;
+          syncDrawbar();
+          editDocks(ll ? list.map((r, j) => (j === i ? { ...r, lon: +ll[0].toFixed(6), lat: +ll[1].toFixed(6) } : r)) : list);
+        };
+      }
+    });
+    d.querySelector('[data-cancel]').onclick = () => d.close();
+    d.querySelector('form').addEventListener('submit', async (e) => {
+      if (e.submitter?.value !== 'ok') return;
+      e.preventDefault();
+      try {
+        docks = await api('docks', { method: 'PUT', body: read().map((r) => ({ name: r.name || 'DBOX', lat: r.lat, lon: r.lon, radius: Math.round((r.km || 0) * 1000) })) });
+        d.close();
+        renderList();
+        if (docks.length) map.fit(dockBounds());
+      } catch (ex) {
+        const err = d.querySelector('.or-form-err');
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+    d.addEventListener('close', () => d.remove());
+    d.showModal();
+  }
+
   // ---------------------------------------------------------------- įvykiai
   side.addEventListener('click', async (e) => {
     const card = e.target.closest('[data-open]');
@@ -577,6 +748,7 @@ export function createOrdersUI(app) {
     }
     const act = e.target.closest('[data-or]')?.dataset.or;
     if (!act) return;
+    if (act === 'docks') return editDocks();
     if (act === 'new') {
       if (admin && !users.length) users = await api('users').catch(() => []);
       return openForm();
@@ -773,6 +945,7 @@ export function createOrdersUI(app) {
   page.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Escape' && !document.querySelector('dialog[open]')) {
+      if (pick) return pick(null);
       if (!$('#or-results').hidden) return ($('#or-results').hidden = true);
       if (view.mode === 'form' && map.mode === 'draw' && map.poly.length) return map.undo(), syncDrawbar();
       if (view.mode !== 'list') return renderList();
