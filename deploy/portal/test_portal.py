@@ -350,3 +350,26 @@ def test_docks(env):
     for bad in ([{"lat": 95, "lon": 1, "radius": 1000}], [{"lat": 1, "lon": 1, "radius": 5}], [{"lat": "x", "lon": 1, "radius": 1000}], {"a": 1}):
         assert adm.put("/api/docks", json=bad, headers=H).status_code == 400
     assert adm.put("/api/docks", json=[], headers=H).json() == []
+
+
+def test_backup_and_restore(env, tmp_path, monkeypatch):
+    app, client, adm = env
+    monkeypatch.setattr(app, "BACKUP", tmp_path)
+    a_id, ca = make_client(adm, client, "a@klientas.lt")
+    o = ca.post("/api/orders", json={"title": "Aikštelė", "works": ["ortho"], "geometry": SQUARE, "due": "2026-12-01"}, headers=H).json()
+    ca.post(f"/api/orders/{o['id']}/comments", json={"body": "Labas"}, headers=H)
+    it = adm.post("/api/items", json={"kind": "report", "title": "Ataskaita", "clients": [a_id]}, headers=H).json()
+    f = adm.put(f"/api/items/{it['id']}/files", params={"name": "a.zip"}, content=b"PK" * 500, headers=H).json()
+    first = app.backup("test")
+    assert first and (tmp_path / "files").is_dir()
+    # „Nelaimė“: ištrinti užsakymas ir failas
+    assert adm.delete(f"/api/orders/{o['id']}", headers=H).status_code == 200
+    assert adm.delete(f"/api/items/{it['id']}", headers=H).status_code == 200
+    app.backup("po")
+    assert list((tmp_path / "deleted").rglob("*")), "ištrintas failas perkeltas į deleted/, ne pašalintas"
+    app.restore(first.name.removeprefix("portal-").removesuffix(".db"))
+    # Po atkūrimo – užsakymas su istorija, failas ir prieiga vėl veikia
+    got = ca.get(f"/api/orders/{o['id']}").json()
+    assert got["title"] == "Aikštelė" and any(e.get("body") == "Labas" for e in got["events"])
+    assert ca.get(f"/api/items/{it['id']}/files/{f['id']}/a.zip").content == b"PK" * 500
+    assert any("pries-atkurima" in p.name for p in app.backup_snapshots())

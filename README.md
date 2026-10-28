@@ -376,7 +376,14 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 
 **Pastabos:**
 - Kompiuteris turi būti įjungtas ir neužmigęs: Windows → Maitinimas → Miegas: **Niekada**; Docker Desktop → **Start when you sign in**.
-- Duomenų atsarginės kopijos: `docker run --rm -v deploy_portal-data:/d -v %cd%:/b alpine tar czf /b/portalas.tgz -C /d .`
+- **Duomenys atnaujinant neištrinami:** paskyros, užsakymai ir jų istorija, priskyrimai, DBOX zona ir klientų failai saugomi Docker tome `portal-data`, kuris išlieka atnaujinant (`git pull` + `start-windows.bat`), perkuriant konteinerius ir paleidus `docker compose down`. Jį ištrina tik `docker compose down -v`, `docker volume rm` / `prune` ar Docker Desktop **Clean / Purge data / Reset to factory defaults** – to nedarykite.
+- **Atsarginės kopijos (automatiškai):** portalas kas parą ir `start-windows.bat` – prieš kiekvieną atnaujinimą – padaro kopiją į aplanką kompiuteryje (numatyta – `atea3d-atsargines-kopijos` šalia programos aplanko; kitą vietą nurodykite `deploy\.env` faile, pvz. `BACKUP_DIR=O:\` – disko šaknyje sukuriamas aplankas `Atea3D-atsargines-kopijos`). Vietiniame diske kopijos rašomos tiesiai ten; **tinklo ar USB diske** – daromos vietoje ir kas valandą (bei paleidžiant `start-windows.bat`) nukopijuojamos į jį (Windows užduotis „Atea3D atsargines kopijos“, `robocopy` be trynimo), nes Docker tinklo diskų nemato, o atjungus USB serveris turi veikti toliau. Nukopijuoto kelio nematomi simboliai (pvz. iš Windows ypatybių) pašalinami automatiškai. Ten:
+  - `db/portal-<data>-<priežastis>.db` – visa duomenų bazė (laikomos 30 paskutinių);
+  - `files/` – klientų failų kopija (kopijuojami tik nauji ir pasikeitę);
+  - `deleted/` – ištrinti failai, laikomi dar 30 dienų.
+  Kopija išlieka net ištrynus Docker duomenis ar visą programos aplanką.
+- **Atkūrimas:** `deploy\restore-backup.bat` – parodo kopijas, pasirenkate (Enter – naujausia); prieš atkuriant dabartinė būsena įrašoma kaip kopija `pries-atkurima`, tad atkūrimą galima atšaukti. Jei `start-windows.bat` randa kopiją, bet paskyrų nėra – įspėja ir pasiūlo atkurti. Rankinė kopija: `docker compose exec portal python app.py backup`.
+- Naršyklėje (ne serveryje) saugomi: ODM projektų sąrašas, matavimai, išsaugotos transliacijos ir nustatymai – jie atskiri kiekvienam adresui (`localhost:8080` ≠ `localhost:8081`) ir dingsta išvalius naršyklės duomenis.
 - Iš interneto transliacijos rodomos per HLS (~2–5 s vėlavimas): WebRTC vaizdo srautas per tunelį neina.
 - Įmonių tinkluose HTTPS ryšius dažnai pasirašo įmonės sertifikatas. `start-windows.bat` (`export-certs.ps1`) kiekvieną kartą perduoda Windows patikimus sertifikatus transliacijų serveriui – be jų serveris negalėtų paimti vaizdo iš https / wheps šaltinio, pvz. diab (žurnale – `x509: certificate signed by unknown authority`).
 - Programa, atidaryta iš disko (`release\…html`), su serveriu neprisijungia – serverio funkcijoms atidarykite `http://localhost:8080`.
