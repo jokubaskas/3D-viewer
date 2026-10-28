@@ -82,9 +82,10 @@ services:
     volumes:
       # Duomenų bazė ir klientų failai (3D modeliai, ataskaitos, įrašai) – išlieka atnaujinus programą
       - portal-data:/data
-      # Atsarginės kopijos kompiuterio aplanke (numatyta – šalia programos aplanko): kas parą ir prieš kiekvieną
-      # atnaujinimą (start-windows.bat). Atkurti: deploy\restore-backup.bat
-      - ${BACKUP_DIR:-../../atea3d-atsargines-kopijos}:/backup
+      # Atsarginės kopijos kompiuterio aplanke: kas parą ir prieš kiekvieną atnaujinimą (start-windows.bat).
+      # Vietą nurodo .env BACKUP_DIR; BACKUP_MOUNT nustato backup-target.ps1 (tinklo / USB diskui – vietinis aplankas,
+      # iš kurio kas valandą kopijuojama į tą diską). Atkurti: deploy\restore-backup.bat
+      - ${BACKUP_MOUNT:-../../atea3d-atsargines-kopijos}:/backup
     expose:
       - "8000"
 

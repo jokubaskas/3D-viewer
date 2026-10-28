@@ -3,6 +3,21 @@ rem Atea 3D Matuoklis - duomenu atkurimas is atsargines kopijos (paskyros, uzsak
 setlocal
 cd /d "%~dp0"
 
+rem Ta pati kopiju vieta kaip start-windows.bat
+set "BACKUP_MOUNT="
+set "BACKUP_COPY="
+set "BACKUP_LOCAL="
+for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0backup-target.ps1"`) do (
+  if "%%a"=="DOCKER" set "BACKUP_MOUNT=%%b"
+  if "%%a"=="COPY" set "BACKUP_COPY=%%b"
+  if "%%a"=="LOCAL" set "BACKUP_LOCAL=%%b"
+)
+rem Jei vietiniu kopiju nebera (pvz. naujas kompiuteris), bet jos yra tinklo / USB diske - parsiunciamos is ten
+if defined BACKUP_COPY if not exist "%BACKUP_LOCAL%\db" if exist "%BACKUP_COPY%\db" (
+  echo Kopijos imamos is %BACKUP_COPY%...
+  robocopy "%BACKUP_COPY%" "%BACKUP_LOCAL%" /E /R:1 /W:5 /NP /NFL /NDL /NJH /NJS >nul
+)
+
 echo Atsargines kopijos (naujausia - apacioje):
 docker compose run --rm --no-deps -T portal python app.py list-backups
 if errorlevel 1 (

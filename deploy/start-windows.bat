@@ -31,8 +31,19 @@ for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass
 if not defined PORT set "PORT=8080"
 if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - projektu sarasas narsykleje bus atskiras.
 
+rem Atsarginiu kopiju vieta (.env BACKUP_DIR): vietinis diskas - tiesiai; tinklo / USB diskas - kopijuojama kas valanda
+set "BACKUP_MOUNT="
+set "BACKUP_COPY="
+set "BACKUP_LOCAL="
+for /f "usebackq tokens=1,* delims==" %%a in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0backup-target.ps1"`) do (
+  if "%%a"=="DOCKER" set "BACKUP_MOUNT=%%b"
+  if "%%a"=="COPY" set "BACKUP_COPY=%%b"
+  if "%%a"=="LOCAL" set "BACKUP_LOCAL=%%b"
+)
+
 rem Atsargine duomenu kopija pries atnaujinima (paskyros, uzsakymai ir ju istorija, klientu failai) - jei serveris veikia
 docker compose exec -T portal python app.py backup pries-atnaujinima >nul 2>nul && echo Padaryta atsargine duomenu kopija pries atnaujinima.
+if defined BACKUP_COPY powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0backup-target.ps1" -Sync >nul
 
 rem Vienkartinis perejimas i vidini tinkla "atea3d": seni konteineriai prijungti prie ankstesnio tinklo ir
 rem be perkurimo nepasileidzia ("network deploy_default not found"). Duomenys (projektai, modeliai, paskyros) islieka.
@@ -151,9 +162,11 @@ for /f "tokens=1,* delims==" %%a in ('findstr /b "RELAY_HOST=" .env 2^>nul') do 
 if defined RELAY echo  Transliaciju persiuntejas klientams ^(WebRTC^): %RELAY%
 echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
 echo  Transliacija is drono: pulte RTMP adresas rtmp://^<sio-kompiuterio-IP^>:1935/drone
-set "BKP=%~dp0..\..\atea3d-atsargines-kopijos"
-for /f "tokens=1,* delims==" %%a in ('findstr /b "BACKUP_DIR=" .env 2^>nul') do if not "%%b"=="" set "BKP=%%b"
-echo  Atsargines duomenu kopijos ^(kas para ir pries atnaujinima^): %BKP%
+if defined BACKUP_COPY (
+  echo  Atsargines duomenu kopijos: %BACKUP_COPY% ^(kas valanda is %BACKUP_LOCAL%^)
+) else (
+  echo  Atsargines duomenu kopijos ^(kas para ir pries atnaujinima^): %BACKUP_LOCAL%
+)
 echo  Sustabdyti: docker compose down  (siame aplanke)
 echo ============================================================
 start "" http://localhost:%PORT%
