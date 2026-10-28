@@ -31,6 +31,9 @@ for /f "usebackq delims=" %%p in (`powershell -NoProfile -ExecutionPolicy Bypass
 if not defined PORT set "PORT=8080"
 if not "%PORT%"=="8080" echo [DEMESIO] Naudojamas prievadas %PORT% (ne 8080) - projektu sarasas narsykleje bus atskiras.
 
+rem Atsargine duomenu kopija pries atnaujinima (paskyros, uzsakymai ir ju istorija, klientu failai) - jei serveris veikia
+docker compose exec -T portal python app.py backup pries-atnaujinima >nul 2>nul && echo Padaryta atsargine duomenu kopija pries atnaujinima.
+
 rem Vienkartinis perejimas i vidini tinkla "atea3d": seni konteineriai prijungti prie ankstesnio tinklo ir
 rem be perkurimo nepasileidzia ("network deploy_default not found"). Duomenys (projektai, modeliai, paskyros) islieka.
 set "NETFIX="
@@ -127,6 +130,12 @@ powershell -NoProfile -Command "try{$r=Invoke-RestMethod -TimeoutSec 5 'http://l
 if errorlevel 2 (
   echo [ISPEJIMAS] Portalas ^(paskyros^) neatsako. Perziurekite: docker compose logs --tail 40 portal
 ) else if errorlevel 1 (
+  docker compose exec -T portal python app.py list-backups >nul 2>nul
+  if not errorlevel 1 (
+    echo.
+    echo [DEMESIO] Paskyru nera, bet rasta atsargine duomenu kopija.
+    echo Jei duomenys dingo - uzdarykite si langa ir paleiskite restore-backup.bat ^(atkurs paskyras, uzsakymus ir failus^).
+  )
   echo.
   echo Dar nera administratoriaus paskyros - sukurkite ja dabar.
   call "%~dp0create-admin.bat" nopause
@@ -142,6 +151,9 @@ for /f "tokens=1,* delims==" %%a in ('findstr /b "RELAY_HOST=" .env 2^>nul') do 
 if defined RELAY echo  Transliaciju persiuntejas klientams ^(WebRTC^): %RELAY%
 echo  Programoje "Is nuotrauku": Adresas ./odm/, Rakto laukeli palikite tuscia.
 echo  Transliacija is drono: pulte RTMP adresas rtmp://^<sio-kompiuterio-IP^>:1935/drone
+set "BKP=%~dp0..\..\atea3d-atsargines-kopijos"
+for /f "tokens=1,* delims==" %%a in ('findstr /b "BACKUP_DIR=" .env 2^>nul') do if not "%%b"=="" set "BKP=%%b"
+echo  Atsargines duomenu kopijos ^(kas para ir pries atnaujinima^): %BKP%
 echo  Sustabdyti: docker compose down  (siame aplanke)
 echo ============================================================
 start "" http://localhost:%PORT%

@@ -40,6 +40,11 @@ from fastapi.responses import FileResponse, JSONResponse
 DATA = Path(os.environ.get("PORTAL_DATA", "/data"))
 FILES = DATA / "files"
 DB_PATH = DATA / "portal.db"
+# Atsarginės kopijos – aplankas kompiuteryje (ne Docker tome): išlieka net ištrynus konteinerius, tomus ar programos aplanką
+BACKUP = Path(os.environ.get("PORTAL_BACKUP", "/backup"))
+BACKUP_KEEP = int(os.environ.get("PORTAL_BACKUP_KEEP", "30"))  # kiek duomenų bazės kopijų laikyti
+BACKUP_HOURS = float(os.environ.get("PORTAL_BACKUP_HOURS", "24"))  # kas kiek valandų daryti automatiškai
+TRASH_DAYS = 30  # ištrinti failai kopijoje laikomi dar 30 d.
 PUBLIC_URL = os.environ.get("PUBLIC_URL", "http://localhost:8080").rstrip("/")
 MEDIAMTX_API = os.environ.get("MEDIAMTX_API", "http://mediamtx:9997")
 SESSION_DAYS = float(os.environ.get("SESSION_DAYS", "14"))
@@ -1148,9 +1153,134 @@ if shutil.which("ffmpeg") and os.environ.get("PORTAL_NO_BG") != "1":
     threading.Thread(target=_normalize_existing, daemon=True).start()
 
 
+# --------------------------------------------------------------------------- atsarginės kopijos
+# db/portal-<laikas>-<priežastis>.db – visa duomenų bazė (paskyros, užsakymai ir jų istorija, priskyrimai, DBOX…);
+# files/ – klientų failų veidrodis (kopijuojami tik nauji ir pasikeitę); deleted/<data>/ – ištrinti failai (30 d.).
+_backup_lock = threading.Lock()
+
+
+def backup_snapshots() -> list[Path]:
+    return sorted((BACKUP / "db").glob("portal-*.db"))
+
+
+def backup(reason: str = "auto") -> Path | None:
+    if not BACKUP.is_dir():
+        return None
+    reason = re.sub(r"[^a-z0-9-]", "", reason.lower())[:30] or "auto"
+    with _backup_lock:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dbdir = BACKUP / "db"
+        dbdir.mkdir(parents=True, exist_ok=True)
+        tmp = dbdir / f".portal-{stamp}.tmp"
+        src, dst = sqlite3.connect(DB_PATH), sqlite3.connect(tmp)
+        try:
+            src.backup(dst)  # nuosekli kopija ir veikiant serveriui
+        finally:
+            dst.close()
+            src.close()
+        final = dbdir / f"portal-{stamp}-{reason}.db"
+        tmp.replace(final)
+        # Failai: nauji ir pasikeitę nukopijuojami, ištrinti – perkeliami į deleted/ (ne iškart šalinami)
+        fdir, seen = BACKUP / "files", set()
+        if FILES.is_dir():
+            for p in FILES.rglob("*"):
+                if not p.is_file() or p.name.startswith(".part-"):
+                    continue
+                rel = p.relative_to(FILES)
+                seen.add(rel)
+                q, st = fdir / rel, p.stat()
+                if q.is_file() and q.stat().st_size == st.st_size and int(q.stat().st_mtime) == int(st.st_mtime):
+                    continue
+                q.parent.mkdir(parents=True, exist_ok=True)
+                t = q.with_name(q.name + ".tmp")
+                shutil.copy2(p, t)
+                t.replace(q)
+        if fdir.is_dir():
+            for q in list(fdir.rglob("*")):
+                if q.is_file() and q.relative_to(fdir) not in seen and not q.name.endswith(".tmp"):
+                    gone = BACKUP / "deleted" / stamp[:8] / q.relative_to(fdir)
+                    gone.parent.mkdir(parents=True, exist_ok=True)
+                    q.replace(gone)
+        for old in backup_snapshots()[:-BACKUP_KEEP]:
+            old.unlink(missing_ok=True)
+        for d in (BACKUP / "deleted").glob("*") if (BACKUP / "deleted").is_dir() else []:
+            if d.is_dir() and d.stat().st_mtime < time.time() - TRASH_DAYS * 86400:
+                shutil.rmtree(d, ignore_errors=True)
+        (BACKUP / "PASKUTINE-KOPIJA.txt").write_text(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {final.name}\n", encoding="utf-8")
+        return final
+
+
+def restore(name: str = "") -> Path:
+    """Atkūrimas (serveris turi būti sustabdytas): duomenų bazė iš kopijos + trūkstami / pasikeitę failai."""
+    snaps = backup_snapshots()
+    if not snaps:
+        sys.exit(f"Atsarginių kopijų nerasta ({BACKUP})")
+    snap = next((p for p in snaps if name and name in p.name), None) if name else snaps[-1]
+    if not snap:
+        sys.exit(f"Kopija „{name}“ nerasta")
+    if DB_PATH.exists():
+        backup("pries-atkurima")  # dabartinė būsena – kad atkūrimą būtų galima atšaukti
+    for ext in ("", "-wal", "-shm"):
+        Path(str(DB_PATH) + ext).unlink(missing_ok=True)
+    src, dst = sqlite3.connect(snap), sqlite3.connect(DB_PATH)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    # Failai, kurių reikia atkurtai duomenų bazei: iš veidrodžio, o jei ten nebėra – iš ištrintųjų (naujausi pirma)
+    srcs = [BACKUP / "files"] + sorted((BACKUP / "deleted").glob("*"), reverse=True) if (BACKUP / "deleted").is_dir() else [BACKUP / "files"]
+    n = missing = 0
+    with db() as con:
+        for r in con.execute("SELECT disk, size FROM files").fetchall():
+            p = FILES / r["disk"]
+            if p.is_file() and p.stat().st_size == r["size"]:
+                continue
+            q = next((d / r["disk"] for d in srcs if (d / r["disk"]).is_file()), None)
+            if not q:
+                missing += 1
+                continue
+            p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(q, p)
+            n += 1
+    if missing:
+        print(f"Dėmesio: {missing} failų kopijoje nerasta")
+    print(f"Atkurta iš {snap.name}; failų nukopijuota: {n}")
+    return snap
+
+
+def _backup_loop():
+    while True:
+        time.sleep(300)
+        try:
+            snaps = backup_snapshots() if BACKUP.is_dir() else []
+            if BACKUP.is_dir() and (not snaps or snaps[-1].stat().st_mtime < time.time() - BACKUP_HOURS * 3600):
+                backup("auto")
+        except Exception as e:  # pragma: no cover – kopija nesustabdo serverio
+            print("Atsarginė kopija nepavyko:", e, flush=True)
+
+
+if os.environ.get("PORTAL_NO_BG") != "1":
+    threading.Thread(target=_backup_loop, daemon=True).start()
+
+
 # --------------------------------------------------------------------------- komandinė eilutė
 def cli():
-    if len(sys.argv) >= 3 and sys.argv[1] == "create-admin":
+    if len(sys.argv) >= 2 and sys.argv[1] == "backup":
+        p = backup(sys.argv[2] if len(sys.argv) > 2 else "rankine")
+        if not p:
+            sys.exit(f"Atsarginių kopijų aplankas nepasiekiamas ({BACKUP})")
+        print(f"Atsarginė kopija: {p.name}")
+    elif len(sys.argv) >= 2 and sys.argv[1] == "list-backups":
+        snaps = backup_snapshots() if BACKUP.is_dir() else []
+        for p in snaps:
+            print(f"  {p.stem.removeprefix('portal-')}  ({p.stat().st_size // 1024} KB)")
+        if not snaps:
+            print("  (kopijų nėra)")
+        sys.exit(0 if snaps else 3)
+    elif len(sys.argv) >= 2 and sys.argv[1] == "restore":
+        restore(sys.argv[2] if len(sys.argv) > 2 else "")
+    elif len(sys.argv) >= 3 and sys.argv[1] == "create-admin":
         email = sys.argv[2].strip().lower()
         name = sys.argv[3] if len(sys.argv) > 3 else ""
         if not EMAIL_RE.match(email):
@@ -1166,7 +1296,7 @@ def cli():
             audit(con, None, "cli", "admin_invite", email)
         print(f"\nAdministratorius: {email}\nAtidarykite šią nuorodą ir nusistatykite slaptažodį (galioja {INVITE_DAYS} d.):\n\n  {link}\n")
     else:
-        print('Naudojimas: python app.py create-admin el@pastas.lt "Vardas Pavardė"')
+        print('Naudojimas: python app.py create-admin el@pastas.lt "Vardas Pavardė" | backup | list-backups | restore [kopija]')
 
 
 if __name__ == "__main__":
