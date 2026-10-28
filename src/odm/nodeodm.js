@@ -169,6 +169,12 @@ export class NodeODM {
     return this.postForm(`task/new/commit/${uuid}`, {});
   }
 
+  /** Ar serveris palaiko ODM parinktį (pvz. „mesh-method“ – tik Atea ODM atvaizde). */
+  async supports(name) {
+    const opts = await this.get('options').catch(() => []);
+    return Array.isArray(opts) && opts.some((o) => o.name === name);
+  }
+
   taskInfo(uuid) {
     return this.get(`task/${uuid}/info`);
   }

@@ -1,7 +1,10 @@
 # NVIDIA GPU pagreitinimas (reikia nvidia-container-toolkit)
 services:
   nodeodm:
-    image: opendronemap/nodeodm:gpu
+    build:
+      args:
+        NODEODM_IMAGE: opendronemap/nodeodm:gpu
+    image: atea3d-nodeodm:gpu
     deploy:
       resources:
         reservations:

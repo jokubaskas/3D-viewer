@@ -8,7 +8,12 @@
 
 services:
   nodeodm:
-    image: opendronemap/nodeodm:${NODEODM_TAG:-latest}
+    # Oficialus NodeODM + Atea pakeitimas: tikslesnis 3D tinklas (--mesh-method openmvs), deploy/odm
+    build:
+      context: ./odm
+      args:
+        NODEODM_IMAGE: opendronemap/nodeodm:${NODEODM_TAG:-latest}
+    image: atea3d-nodeodm:${NODEODM_TAG:-latest}
     restart: unless-stopped
     command:
       - --port=3000

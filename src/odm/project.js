@@ -60,6 +60,8 @@ export function estimateRamGB(options, n, mp = 20) {
   if (o['fast-orthophoto']) return 2 + imgs * (mp / 20) * 0.004;
   const dense = 1.5 + imgs * (mp / 20) * (RAM_PER_IMAGE[o['pc-quality'] || 'medium'] ?? 0.022);
   const mesh = RAM_MESH[Number(o['mesh-octree-depth'] || 11)] ?? 2;
+  // OpenMVS tinklas (Delaunay iš viso tankaus debesies + tikslinimas pagal nuotraukas) – daugiau nei tankinimas
+  if (o['mesh-method'] === 'openmvs') return Math.max(dense * 1.4, mesh) + 1;
   return Math.max(dense, mesh) + 1;
 }
 
@@ -250,8 +252,11 @@ export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.g
 /** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
 export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0 } = {}) {
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false } = {}) {
   const o = { ...PRESETS[presetKey].options };
+  // Tikslus 3D tinklas (Atea ODM atvaizdas, deploy/odm): OpenMVS ReconstructMesh + RefineMesh vietoj Poisson –
+  // aštrios briaunos, be „pakilusio“ asfalto. Sename / kitame NodeODM parinktis praleidžiama (lieka Poisson).
+  if (mvsMesh && !o['skip-3dmodel']) o['mesh-method'] = 'openmvs';
   // Pasirinkta sritis – kelias iki kartu įkeliamo GeoJSON failo (WGS84). ODM apkarpo taškų debesį, DEM ir
   // ortofoto; kitaip – automatinė riba. GeoJSON teksto tiesiogiai perduoti negalima: NodeODM, paleisdamas
   // ODM, iš parinkčių reikšmių pašalina visas kabutes (shQuote), ir JSON sugenda. Kelias perduodamas kaip
