@@ -102,16 +102,25 @@ if errorlevel 1 (
 
 echo.
 echo Tikrinama, ar veikia AI paslauga (iki 2 min.)...
-powershell -NoProfile -Command "for($i=0;$i -lt 40;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 'http://localhost:%PORT%/ai/health'; if($r.StatusCode -eq 200){exit 0}}catch{}; Start-Sleep 3}; exit 1"
-if errorlevel 1 (
-  echo.
-  echo [ISPEJIMAS] AI paslauga neatsako. Programa ir OpenDroneMap veiks, bet AI irankiai - ne.
-  echo Konteineriu busena ir paskutiniai AI pranesimai - nusiuskite juos, jei reikia pagalbos:
-  docker compose ps
-  docker compose logs --tail 40 ai
-) else (
-  echo AI paslauga veikia.
-)
+rem Tikrinama paciame AI konteineryje: per nginx /ai/ pasiekiama tik prisijungus (atsakytu 401)
+set /a AI_TRY=0
+:ai_wait
+docker compose exec -T ai python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)" >nul 2>&1
+if not errorlevel 1 goto ai_ok
+set /a AI_TRY+=1
+if %AI_TRY% geq 40 goto ai_fail
+timeout /t 3 /nobreak >nul
+goto ai_wait
+:ai_fail
+echo.
+echo [ISPEJIMAS] AI paslauga neatsako. Programa ir OpenDroneMap veiks, bet AI irankiai - ne.
+echo Konteineriu busena ir paskutiniai AI pranesimai - nusiuskite juos, jei reikia pagalbos:
+docker compose ps
+docker compose logs --tail 40 ai
+goto ai_done
+:ai_ok
+echo AI paslauga veikia.
+:ai_done
 
 rem Pirmas paleidimas: dar nera administratoriaus - sukuriamas kvietimas
 powershell -NoProfile -Command "try{$r=Invoke-RestMethod -TimeoutSec 5 'http://localhost:%PORT%/api/health'; if($r.admins -gt 0){exit 0}else{exit 1}}catch{exit 2}"
