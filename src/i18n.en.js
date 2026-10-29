@@ -1523,4 +1523,10 @@ export const EN = {
   "OpenMVS: tinklas pagal tai, iš kurių nuotraukų matytas kiekvienas taškas, ir patikslintas pagal pačias nuotraukas. Nepavykus – automatiškai įprastas (Poisson).": "OpenMVS: a mesh built from which photos saw each point and refined against the photos themselves. If it fails – the standard one (Poisson) is used automatically.",
   "Kitas 3D tinklas": "Other 3D mesh",
   "Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami": "Rebuild only the 3D mesh and texture with the other method (Poisson ↔ OpenMVS) – image matching and densification are not repeated",
+  "Prisijungimas baigėsi – atnaujinkite puslapį ir prisijunkite iš naujo. Apdorojimas serveryje tęsiasi.": "Your sign-in has expired – reload the page and sign in again. Processing continues on the server.",
+  "Apdorojimo serveris pasiekiamas tik administratoriui.": "The processing server is available to administrators only.",
+  "Ryšys su serveriu laikinai nutrūko (HTTP {s}) – pvz. dingo kompiuterio internetas. Apdorojimas serveryje tęsiasi, būsena atsinaujins pati.": "Connection to the server was lost temporarily (HTTP {s}) – e.g. the computer lost internet. Processing continues on the server; the status will update by itself.",
+  "Adresu {u} atsako ne apdorojimo serveris (gautas HTML puslapis, HTTP {s}). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.": "The address {u} is not answered by the processing server (got an HTML page, HTTP {s}). Start the server (deploy/start-windows.bat or docker compose) and check the address.",
+  "Šis kompiuteris neprisijungęs prie interneto – būsena atsinaujins, kai ryšys grįš.": "This computer is offline – the status will update when the connection is back.",
+  "(paskutinį kartą gauta {d})": "(last received {d})",
 };

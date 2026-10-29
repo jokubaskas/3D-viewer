@@ -29,8 +29,13 @@ export class NodeODM {
     } catch {
       if ([502, 503, 504].includes(res.status))
         throw new Error(t('Apdorojimo serveris (NodeODM) dar paleidžiamas arba neveikia. Palaukite 1–2 min. ir bandykite dar kartą; jei nepadeda – Docker Desktop patikrinkite, ar veikia konteineris „nodeodm“.'));
+      // Atsakė ne NodeODM, o tarpininkas: prisijungimo patikra (nginx) ar Cloudflare (kompiuteris / internetas nepasiekiamas)
+      if (res.status === 401) throw Object.assign(new Error(t('Prisijungimas baigėsi – atnaujinkite puslapį ir prisijunkite iš naujo. Apdorojimas serveryje tęsiasi.')), { temporary: true });
+      if (res.status === 403) throw new Error(t('Apdorojimo serveris pasiekiamas tik administratoriui.'));
+      if (res.status >= 500 || res.status === 408 || res.status === 429)
+        throw Object.assign(new Error(t('Ryšys su serveriu laikinai nutrūko (HTTP {s}) – pvz. dingo kompiuterio internetas. Apdorojimas serveryje tęsiasi, būsena atsinaujins pati.', { s: res.status })), { temporary: true });
       if (/^\s*</.test(text))
-        throw new Error(t('Adresu {u} atsako ne apdorojimo serveris (gautas HTML puslapis). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.', { u: this.base }));
+        throw new Error(t('Adresu {u} atsako ne apdorojimo serveris (gautas HTML puslapis, HTTP {s}). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.', { u: this.base, s: res.status }));
       throw new Error(t('Serveris grąžino netikėtą atsakymą (HTTP {s})', { s: res.status }));
     }
     if (data && data.error) {
@@ -47,6 +52,7 @@ export class NodeODM {
       return await fetch(url, init);
     } catch {
       const local = /localhost|127\.0\.0\.1/.test(this.base) && !this.base.startsWith(location.origin);
+      if (!local && navigator.onLine === false) throw Object.assign(new Error(t('Šis kompiuteris neprisijungęs prie interneto – būsena atsinaujins, kai ryšys grįš.')), { temporary: true });
       throw new Error(
         t('Nepavyko prisijungti prie {u} – ar paleistas apdorojimo serveris (Docker)?', { u: this.base }) +
           (local ? ' ' + t('Jei start-windows.bat parodė kitą adresą (pvz. http://localhost:8081), atidarykite programą tuo adresu arba „Iš nuotraukų“ → „Apdorojimo serveris“ įrašykite jį ir spauskite „Tikrinti ryšį“.') : ''),
