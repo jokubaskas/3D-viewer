@@ -1529,4 +1529,6 @@ export const EN = {
   "Adresu {u} atsako ne apdorojimo serveris (gautas HTML puslapis, HTTP {s}). Paleiskite serverį (deploy/start-windows.bat arba docker compose) ir patikrinkite adresą.": "The address {u} is not answered by the processing server (got an HTML page, HTTP {s}). Start the server (deploy/start-windows.bat or docker compose) and check the address.",
   "Šis kompiuteris neprisijungęs prie interneto – būsena atsinaujins, kai ryšys grįš.": "This computer is offline – the status will update when the connection is back.",
   "(paskutinį kartą gauta {d})": "(last received {d})",
+  "„{n}“: kartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).": "“{n}”: only the stages from the 3D mesh on are repeated (texture, orthophoto, DSM / DTM) – not image matching or densification. The current 3D model will be replaced – to compare, download it first (“Download” → 3D model).",
+  "Paskutinį kartą pasirinkta: {m}. Ar tikslus tinklas pavyko, matyti žurnale (eilutės „Atea:“).": "Last chosen: {m}. Whether the precise mesh succeeded is shown in the log (lines starting with “Atea:”).",
 };

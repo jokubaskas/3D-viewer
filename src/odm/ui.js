@@ -701,9 +701,22 @@ export function createOdmUI(app) {
     const info = await c.taskInfo(p.uuid);
     const base = (info.options || []).filter((o) => !['rerun-from', 'rerun-all', 'rerun', 'mesh-method'].includes(o.name));
     const now = (info.options || []).find((o) => o.name === 'mesh-method')?.value || 'poisson';
-    const next = now === 'openmvs' ? 'poisson' : 'openmvs';
     const label = (m) => t(m === 'openmvs' ? 'tikslus (OpenMVS)' : 'įprastas (Poisson)');
-    if (!confirm(t('Perdaryti „{n}“ 3D tinklą: {a} → {b}?\n\nKartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).', { n: p.name, a: label(now), b: label(next) }))) return;
+    // Pasirinkimas mygtukais (ne „perjungimas“): ankstesnis OpenMVS bandymas galėjo baigtis Poisson atsarginiu keliu
+    const next = await new Promise((resolve) => {
+      const d = document.createElement('dialog');
+      d.className = 'dialog';
+      d.innerHTML = `<form method="dialog">
+        <h2>${esc(t('Kitas 3D tinklas'))}</h2>
+        <p class="small">${esc(t('„{n}“: kartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).', { n: p.name }))}</p>
+        <p class="small muted">${esc(t('Paskutinį kartą pasirinkta: {m}. Ar tikslus tinklas pavyko, matyti žurnale (eilutės „Atea:“).', { m: label(now) }))}</p>
+        <menu><button class="btn btn-ghost" value="">${esc(t('Atšaukti'))}</button><button class="btn btn-outline" value="poisson">${esc(label('poisson'))}</button><button class="btn btn-primary" value="openmvs">${esc(label('openmvs'))}</button></menu>
+      </form>`;
+      document.body.append(d);
+      d.addEventListener('close', () => (resolve(d.returnValue), d.remove()), { once: true });
+      d.showModal();
+    });
+    if (!next) return;
     await c.restart(p.uuid, base.concat({ name: 'mesh-method', value: next }, { name: 'rerun-from', value: 'odm_meshing' }));
     Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: t('3D tinklas: {m}', { m: label(next) }) });
     ls.set(LS_PROJECTS, projects);

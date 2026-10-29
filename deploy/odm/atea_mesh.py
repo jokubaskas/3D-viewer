@@ -89,21 +89,26 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
             shutil.rmtree(work)
         system.mkdir_p(work)
         threads = max(1, int(threads))
-        gpu = "-1" if has_gpu(args) else "-2"
+        # --cuda-device yra tik GPU (CUDA) OpenMVS versijoje – be GPU jo perduoti negalima („unrecognised option“)
+        gpu = has_gpu(args)
+        dev_gpu, dev_cpu = ("--cuda-device -1", "--cuda-device -2") if gpu else ("", "")
 
         # 1) Tinklas iš taškų su matomumu
         log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s" % os.path.basename(scene))
         recon = os.path.join(work, "mesh.mvs")
         def reconstruct(dev):
-            system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s --cuda-device %s '
+            system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
                        '--remove-spurious 20 --close-holes 30 --smooth 1 -v 0' % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev))
         try:
-            reconstruct(gpu)
+            reconstruct(dev_gpu)
         except system.SubprocessException:
-            if gpu == "-2":
+            if not gpu:
                 raise
             log.ODM_WARNING("Atea: ReconstructMesh su GPU nepavyko – kartojama procesoriumi")
-            reconstruct("-2")
+            try:
+                reconstruct(dev_cpu)
+            except system.SubprocessException:
+                reconstruct("")
         mesh_ply = os.path.join(work, "mesh.ply")
         if not io.file_exists(mesh_ply):
             raise Exception("ReconstructMesh nesukūrė tinklo")
@@ -113,17 +118,20 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         refined = os.path.join(work, "mesh_refine.mvs")
         log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh)")
         def refine(dev):
-            system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s --cuda-device %s '
+            system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
                        '--resolution-level %s --min-resolution 640 --max-views 8 --max-face-area 16 --scales 2 -v 0'
                        % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args)))
         try:
             try:
-                refine(gpu)
+                refine(dev_gpu)
             except system.SubprocessException:
-                if gpu == "-2":
+                if not gpu:
                     raise
                 log.ODM_WARNING("Atea: RefineMesh su GPU nepavyko – kartojama procesoriumi")
-                refine("-2")
+                try:
+                    refine(dev_cpu)
+                except system.SubprocessException:
+                    refine("")
             if io.file_exists(os.path.join(work, "mesh_refine.ply")):
                 best = os.path.join(work, "mesh_refine.ply")
         except Exception as e:
