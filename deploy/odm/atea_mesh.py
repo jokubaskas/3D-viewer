@@ -38,9 +38,57 @@ def _scene(tree):
     return None, None
 
 
-def _refine_level(args):
-    # Tikslinimo raiška pagal taškų debesies kokybę (kaip DensifyPointCloud): aukštesnė kokybė – tikslesnės nuotraukos
-    return {"ultra": 0, "high": 1, "medium": 2, "low": 3, "lowest": 3}.get(getattr(args, "pc_quality", "medium"), 2)
+def _refine_level(args, low_mem=False):
+    # Tikslinimo raiška pagal taškų debesies kokybę (kaip DensifyPointCloud): aukštesnė kokybė – tikslesnės nuotraukos;
+    # mažai RAM – viena pakopa mažesnė
+    lvl = {"ultra": 0, "high": 1, "medium": 2, "low": 3, "lowest": 3}.get(getattr(args, "pc_quality", "medium"), 2)
+    return min(3, lvl + (1 if low_mem else 0))
+
+
+# ---------------------------------------------------------------- atmintis
+# ReconstructMesh (Delaunay + grafų pjūvis) RAM poreikis ~ įterptų taškų skaičius. Matyta: 38 mln. taškų įterpiant –
+# ~11 GB, grafų pjūviui – daugiau. Imama atsargiai 500 B taškui ir naudojama tik dalis laisvos RAM, kad Docker
+# (WSL) nepradėtų keisti atminties disku ir „nesustingtų“.
+BYTES_PER_POINT = 500
+MEM_SHARE = 0.55
+BASE_DIST = 2.5  # px – OpenMVS numatytasis --min-point-distance
+
+
+def _mem_available():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        pass
+    return None
+
+
+def _ply_vertices(path):
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096).decode("latin-1")
+        for line in head.split("\n"):
+            if line.startswith("element vertex"):
+                return int(line.split()[2])
+    except Exception:
+        pass
+    return None
+
+
+def _min_point_distance(tree):
+    """(--min-point-distance, ar mažai RAM): taškai retinami tiek, kad tinklas tilptų į laisvą atmintį."""
+    mem = _mem_available()
+    n = _ply_vertices(os.path.join(tree.openmvs, "scene_dense_dense_filtered.ply")) or _ply_vertices(tree.filtered_point_cloud)
+    if not mem or not n:
+        return BASE_DIST, False
+    target = mem * MEM_SHARE / BYTES_PER_POINT
+    log.ODM_INFO("Atea: tankus debesis %s mln. taškų, laisva RAM %.1f GB (telpa ~%s mln.)" % (round(n / 1e6, 1), mem / 1e9, round(target / 1e6, 1)))
+    if n <= target:
+        return BASE_DIST, mem < 24e9
+    # Įterpiamų taškų skaičius mažėja ~ atstumo kvadratu
+    return min(12.0, round(BASE_DIST * math.sqrt(n / target), 1)), True
 
 
 def _crop(mesh_in, mesh_out, filtered_pc):
@@ -93,12 +141,17 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         gpu = has_gpu(args)
         dev_gpu, dev_cpu = ("--cuda-device -1", "--cuda-device -2") if gpu else ("", "")
 
-        # 1) Tinklas iš taškų su matomumu
-        log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s" % os.path.basename(scene))
+        # 1) Tinklas iš taškų su matomumu (taškai retinami pagal laisvą RAM; tinklas iš karto sumažinamas, kad
+        #    tikslinimui reikėtų mažiau atminties)
+        dist, low_mem = _min_point_distance(tree)
+        faces = max(int(max_vertex) * 4, 1000000)
+        log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s, min. atstumas tarp taškų %s px%s"
+                     % (os.path.basename(scene), dist, " (sumažinta dėl RAM)" if dist > BASE_DIST else ""))
         recon = os.path.join(work, "mesh.mvs")
         def reconstruct(dev):
             system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--remove-spurious 20 --close-holes 30 --smooth 1 -v 0' % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev))
+                       '--min-point-distance %s --target-face-num %s --remove-spurious 20 --close-holes 30 --smooth 1 -v 0'
+                       % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, faces))
         try:
             reconstruct(dev_gpu)
         except system.SubprocessException:
@@ -119,8 +172,9 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh)")
         def refine(dev):
             system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--resolution-level %s --min-resolution 640 --max-views 8 --max-face-area 16 --scales 2 -v 0'
-                       % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args)))
+                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --scales 2 -v 0'
+                       % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args, low_mem),
+                          6 if low_mem else 8, 32 if low_mem else 16))
         try:
             try:
                 refine(dev_gpu)
