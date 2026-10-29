@@ -617,7 +617,7 @@ export function createOdmUI(app) {
         ${p.statusCode === STATUS.FAILED && (p.diag || p.error) ? `<div class="small bad">${esc(p.diag?.text || p.error)}</div>${p.diag?.line ? `<div class="small muted odm-errline" title="${esc(p.diag.line)}">${esc(p.diag.line)}</div>` : ''}` : ''}
         ${p.retryNote && p.statusCode !== STATUS.FAILED ? `<div class="small muted">${t('Kartojama: {c}', { c: esc(p.retryNote) })}</div>` : ''}
         ${p.statusCode === STATUS.QUEUED && p.status !== 'uploading' ? `<div class="small muted odm-queue-why">${queueWhy(p)}</div>` : ''}
-        ${p.pollError ? `<div class="small bad">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}</div>` : ''}
+        ${p.pollError ? `<div class="small ${p.pollTemp ? 'warn' : 'bad'}">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}${p.polledAt ? ` <span class="muted">${t('(paskutinį kartą gauta {d})', { d: esc(new Date(p.polledAt).toLocaleString(locale())) })}</span>` : ''}</div>` : ''}
         <div class="odm-proj-actions">
           ${p.statusCode === STATUS.COMPLETED ? `
             ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-primary" data-pact="model" title="Atidaryti tekstūruotą 3D modelį LKS-94">${icon('cube')}3D modelis</button>
@@ -793,9 +793,16 @@ export function createOdmUI(app) {
         }
         if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
         p.pollError = null;
+        p.pollTemp = false;
+        p.polledAt = Date.now();
       } catch (e) {
         if (/not found|Invalid UUID|uuid/i.test(e.message)) p.status = 'missing';
-        else p.pollError = e.message;
+        else {
+          p.pollError = e.message;
+          p.pollTemp = !!e.temporary;
+          // Vykdoma užduotis – tikrinama toliau dažnai, kad ryšiui grįžus būsena atsinaujintų greitai
+          if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
+        }
       }
     }
     // Visa serverio eilė (ir užduotys, kurių nėra šiame sąraše) – kad būtų aišku, kodėl užduotis laukia
