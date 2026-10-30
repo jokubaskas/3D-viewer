@@ -371,6 +371,12 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - **3D modeliai, ortofoto, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus. Ortofoto patogiausia įkelti iš ortofoto peržiūros – **Įkelti į portalą klientui**. Visus juos galima pridėti ir kaip užsakymo rezultatus.
 - **Transliacijos:** transliacijos langelyje mygtukas 👤 **Priskirti klientams**.
 
+**Serverio perkėlimas į kitą kompiuterį:**
+1. **Senajame:** `deploy\perkelti-eksportas.bat` – nurodykite aplanką (geriausia išorinis USB diskas). Išsaugomi `.env` (raktai, Cloudflare tunelis, persiuntėjas), paskyros, užsakymai ir jų istorija, klientų failai, savi AI modeliai ir, jei pasirenkate, ODM projektai. Senasis serveris sustabdomas ir pats nebepasileidžia (kad Cloudflare tunelis neskirstytų užklausų dviem kompiuteriams).
+2. **Naujajame:** įdiekite Docker Desktop ir Git, `git clone https://github.com/jokubaskas/3D-viewer.git C:\3D-viewer`, tada `deploy\perkelti-importas.bat` – atkuria viską ir paleidžia `start-windows.bat` (NVIDIA GPU naudojamas automatiškai).
+3. Patikrinkite: `.env` `LIVE_HOSTS` (naujo kompiuterio IP), drono / pulto RTMP adresas (`rtmp://<naujas-IP>:1935/…`), `BACKUP_DIR` (ar toks diskas yra), `%UserProfile%\.wslconfig` (Docker RAM).
+4. ODM projektų sąrašas laikomas naršyklėje: kitoje naršyklėje projektai matomi skiltyje „Kitos užduotys serveryje“ → **Pridėti visas į sąrašą**.
+
 **Prieiga iš interneto (Cloudflare Tunnel)** – maršrutizatoriuje nieko atidaryti nereikia, HTTPS automatiškai:
 1. Domenas (pvz. `atea3d.lt`, ~10 €/m.) turi būti valdomas Cloudflare (nemokamas planas): Cloudflare → **Add a domain** → pakeiskite domeno registratoriaus vardų serverius (nameservers) į Cloudflare nurodytus.
 2. Cloudflare **Zero Trust** → **Networks** → **Tunnels** → **Create a tunnel** → **Cloudflared** → pavadinimas → nukopijuokite **raktą (token)**. Programos diegti nereikia – ji paleidžiama Docker'yje.

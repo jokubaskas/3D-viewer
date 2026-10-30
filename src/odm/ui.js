@@ -569,6 +569,7 @@ export function createOdmUI(app) {
     box.innerHTML = `
       <h4 class="odm-sub">${t('Kitos užduotys serveryje')}</h4>
       <p class="small muted" style="margin:0 0 6px">${t('Šios užduotys yra serveryje, bet ne šios naršyklės sąraše (pvz. pradėtos kitame kompiuteryje ar kitu adresu). Pridėkite jas į sąrašą arba pašalinkite.')}</p>
+      ${others.length > 1 ? `<button class="btn btn-sm btn-outline" data-sact="adopt-all" style="margin-bottom:6px">${t('Pridėti visas ({n}) į sąrašą', { n: others.length })}</button>` : ''}
       ${others.map((x) => `
         <div class="odm-proj" data-suuid="${esc(x.uuid)}">
           <div class="odm-proj-head"><b>${esc(x.name || x.uuid.slice(0, 8))}</b>${statusChip({ statusCode: x.status?.code, progress: x.progress })}</div>
@@ -579,13 +580,22 @@ export function createOdmUI(app) {
             ${[STATUS.RUNNING, STATUS.QUEUED].includes(x.status?.code) ? `<button class="btn btn-sm btn-ghost danger" data-sact="cancel">${t('Atšaukti')}</button>` : `<button class="btn btn-sm btn-ghost icon-only danger" data-sact="remove" title="${t('Pašalinti iš serverio')}">${icon('trash')}</button>`}
           </div>
         </div>`).join('')}`;
+    // Serverio užduotis → projektų sąrašas (pvz. perkėlus serverį į kitą kompiuterį ar atidarius kitoje naršyklėje)
+    const adopt = (x) => {
+      const opt = (n) => (x.options || []).find((o) => o.name === n)?.value;
+      saveProject({ uuid: x.uuid, name: x.name || x.uuid.slice(0, 8), server: server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset: opt('fast-orthophoto') || opt('skip-3dmodel') ? 'orthoOnly' : '', ortho: !opt('skip-orthophoto'), status: 'server', statusCode: x.status.code, progress: x.progress });
+    };
     box.querySelectorAll('[data-sact]').forEach((b) =>
       b.addEventListener('click', async () => {
+        if (b.dataset.sact === 'adopt-all') {
+          others.forEach(adopt);
+          return poll();
+        }
         const uuid = b.closest('[data-suuid]').dataset.suuid;
         const x = serverTasks.find((y) => y.uuid === uuid);
         try {
           if (b.dataset.sact === 'adopt') {
-            saveProject({ uuid, name: x.name || uuid.slice(0, 8), server: server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset: '', status: 'server', statusCode: x.status.code, progress: x.progress });
+            adopt(x);
           } else if (b.dataset.sact === 'remove') {
             if (confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: x.name || uuid }))) await client.remove(uuid);
           } else if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: x.name || uuid }))) {
@@ -822,7 +832,7 @@ export function createOdmUI(app) {
     if (active || projects.some((p) => p.statusCode === STATUS.QUEUED) || !page.hidden) {
       try {
         const list = await client.list();
-        const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 30).map((x) => client.taskInfo(x.uuid).catch(() => null)));
+        const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 100).map((x) => client.taskInfo(x.uuid).catch(() => null)));
         serverTasks = infos.filter(Boolean);
         serverError = null;
         if (serverTasks.some((x) => x.status?.code === STATUS.RUNNING || x.status?.code === STATUS.QUEUED)) active = true;
