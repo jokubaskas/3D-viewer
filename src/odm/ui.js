@@ -757,6 +757,10 @@ export function createOdmUI(app) {
       choices.push({ id: 'low', title: t('Su mažesniu atminties poreikiu'), desc: `${low.changes.join('; ')}.${diag.stage && diag.stage !== 'dataset' && diag.stage !== 'opensfm' ? ` ${t('Tęsiama nuo etapo „{s}“ – jau atlikti etapai nekartojami.', { s: diag.stageLabel })}` : ''}`, options: low.options });
     if (hasBoundary && diag.kind === 'boundary')
       choices.push({ id: 'nob', title: t('Be pasirinktos srities ribos'), desc: t('Apdorojama visa nuotraukų teritorija.'), options: base.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true }, { name: 'rerun-from', value: 'odm_filterpoints' }) });
+    // GPU skaičiavimas (OpenMVS tankinimas, tikslus tinklas) kartais strigsta ar dirba vienu branduoliu – procesoriumi
+    // tęsiama nuo to paties etapo, jau apskaičiuoti gylio žemėlapiai panaudojami (no-gpu nekeičia kartojamų etapų)
+    if (!base.some((o) => o.name === 'no-gpu'))
+      choices.push({ id: 'cpu', title: t('Be GPU (procesoriumi)'), desc: t('Tęsiama nuo nutrūkusios vietos, bet tankinimas ir 3D tinklas skaičiuojami procesoriumi visais branduoliais. Tinka, jei apdorojimas su GPU užstrigo ar labai sulėtėjo.'), options: base.concat({ name: 'no-gpu', value: true }) });
     choices.push({ id: 'same', title: t('Tais pačiais nustatymais'), desc: t('Tęsiama nuo nutrūkusios vietos. Tinka, jei klaida buvo atsitiktinė (pvz. serveris buvo perkrautas).'), options: inline ? options : undefined });
     choices.push({ id: 'all', title: t('Viską iš naujo'), desc: t('Visi etapai kartojami nuo pradžių (ilgiausia).'), options: base.concat({ name: 'rerun-all', value: true }) });
     const def = diag.kind === 'memory' && low.changes.length ? 'low' : diag.kind === 'boundary' && hasBoundary ? 'nob' : 'same';
@@ -777,7 +781,7 @@ export function createOdmUI(app) {
     await c.restart(p.uuid, ch.options);
     if (inline) app.toast('Užduotis paleista iš naujo be pasirinktos srities ribos (ji buvo perduota netinkamai). Bus apdorota visa nuotraukų teritorija.', 'info', 9000);
     // Kitaip būsena nebebūtų tikrinama ir projektas liktų „Nepavyko“
-    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: ch.id === 'low' ? low.changes.join('; ') : ch.id === 'nob' ? t('be srities ribos') : ch.id === 'all' ? t('viskas iš naujo') : '' });
+    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: ch.id === 'low' ? low.changes.join('; ') : ch.id === 'nob' ? t('be srities ribos') : ch.id === 'all' ? t('viskas iš naujo') : ch.id === 'cpu' ? t('be GPU') : '' });
     ls.set(LS_PROJECTS, projects);
     renderProjects();
     app.toast('Užduotis paleista iš naujo', 'info');
