@@ -1532,4 +1532,6 @@ export const EN = {
   "„{n}“: kartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).": "“{n}”: only the stages from the 3D mesh on are repeated (texture, orthophoto, DSM / DTM) – not image matching or densification. The current 3D model will be replaced – to compare, download it first (“Download” → 3D model).",
   "Paskutinį kartą pasirinkta: {m}. Ar tikslus tinklas pavyko, matyti žurnale (eilutės „Atea:“).": "Last chosen: {m}. Whether the precise mesh succeeded is shown in the log (lines starting with “Atea:”).",
   "Pridėti visas ({n}) į sąrašą": "Add all ({n}) to the list",
+  "Maksimali": "Maximum",
+  "Geriausia, ką gali ODM: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis (ultra), tikslus 3D tinklas. Labai ilgai ir daug RAM – galingam kompiuteriui su GPU.": "The best ODM can do: full-resolution features and textures, the densest point cloud (ultra), precise 3D mesh. Very long and lots of RAM – for a powerful computer with a GPU.",
 };

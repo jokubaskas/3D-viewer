@@ -35,7 +35,15 @@ export const PRESETS = {
     desc: 'Įstrižoms (pvz. 5 krypčių) nuotraukoms: aštresni pastatai, mašinos, sienos. Ilgiausiai, reikia daugiausia RAM.',
     // Daugiau požymių – patikimiau susiejamos statmenos ir įstrižos nuotraukos; griežtesnis taškų filtras (σ 3 vietoj 5) –
     // mažiau „plaukiojančių“ taškų debesėlių, iš kurių tinkle atsiranda gumbai ant pastatų ir mašinų
-    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    // ignore-gsd: ODM tekstūroms ir tankinimui naudoja nuotraukas, sumažintas pagal ortofoto raišką – įstrižose
+    // nuotraukose fasadai nufotografuoti smulkiau, todėl be šios parinkties jų tekstūros neryškios
+    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+  },
+  max: {
+    label: 'Maksimali',
+    desc: 'Geriausia, ką gali ODM: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis (ultra), tikslus 3D tinklas. Labai ilgai ir daug RAM – galingam kompiuteriui su GPU.',
+    // ultra: gylio žemėlapiai ½ nuotraukos raiškos (high – ¼, medium – ⅛); požymiai pilna raiška; 3 mln. viršūnių
+    options: { 'feature-quality': 'ultra', 'min-num-features': 20000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 3000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
   },
 };
 
