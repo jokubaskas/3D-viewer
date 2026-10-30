@@ -145,13 +145,18 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         #    tikslinimui reikėtų mažiau atminties)
         dist, low_mem = _min_point_distance(tree)
         faces = max(int(max_vertex) * 4, 1000000)
-        log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s, min. atstumas tarp taškų %s px%s"
-                     % (os.path.basename(scene), dist, " (sumažinta dėl RAM)" if dist > BASE_DIST else ""))
+        # Laisvos erdvės palaikymas: paviršiai, kuriuose mažai taškų (stiklas, atspindžiai, vienspalvės sienos),
+        # atkuriami pagal tai, kur matymo spinduliai praeina laisvai – mažiau skylių ir „ištirpusių“ fasadų.
+        # Reikia daugiau RAM, todėl tik kai jos pakanka (ne low_mem).
+        fss = 0 if low_mem else 1
+        log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s, min. atstumas tarp taškų %s px%s%s"
+                     % (os.path.basename(scene), dist, " (sumažinta dėl RAM)" if dist > BASE_DIST else "",
+                        ", laisvos erdvės palaikymas" if fss else ""))
         recon = os.path.join(work, "mesh.mvs")
         def reconstruct(dev):
             system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--min-point-distance %s --target-face-num %s --remove-spurious 20 --close-holes 30 --smooth 1 -v 0'
-                       % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, faces))
+                       '--min-point-distance %s --free-space-support %s --target-face-num %s --remove-spurious 20 --close-holes 100 --smooth 1 -v 0'
+                       % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, fss, faces))
         try:
             reconstruct(dev_gpu)
         except system.SubprocessException:

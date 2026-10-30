@@ -395,7 +395,7 @@ export function createOdmUI(app) {
     $('#odm-preset-desc').textContent = PRESETS[preset].desc;
     // Tikslus tinklas – numatytai „3D objektams“; „Tik ortofoto“ 3D modelio nekuria
     $('#odm-mvsmesh-row').hidden = k === 'orthoOnly';
-    $('#odm-mvsmesh').checked = k === 'objects3d';
+    $('#odm-mvsmesh').checked = k === 'objects3d' || k === 'max';
     updateStartSummary();
   }
   page.querySelectorAll('#odm-preset button').forEach((b) =>
@@ -418,7 +418,7 @@ export function createOdmUI(app) {
     const n = photos.length;
     const bytes = photos.reduce((s, m) => s + m.size, 0);
     // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
-    const perImg = { orthoOnly: 2, fast: 4, standard: 8, high: 18, objects3d: 30 }[preset];
+    const perImg = { orthoOnly: 2, fast: 4, standard: 8, high: 18, objects3d: 30, max: 60 }[preset];
     const need = ramNeed(photos);
     const have = serverInfo?.totalMemory ? serverInfo.totalMemory / 2 ** 30 : null;
     const ram = have
