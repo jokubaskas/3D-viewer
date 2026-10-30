@@ -1534,4 +1534,7 @@ export const EN = {
   "Pridėti visas ({n}) į sąrašą": "Add all ({n}) to the list",
   "Maksimali": "Maximum",
   "Geriausia, ką gali ODM: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis (ultra), tikslus 3D tinklas. Labai ilgai ir daug RAM – galingam kompiuteriui su GPU.": "The best ODM can do: full-resolution features and textures, the densest point cloud (ultra), precise 3D mesh. Very long and lots of RAM – for a powerful computer with a GPU.",
+  "Be GPU (procesoriumi)": "Without GPU (on CPU)",
+  "Tęsiama nuo nutrūkusios vietos, bet tankinimas ir 3D tinklas skaičiuojami procesoriumi visais branduoliais. Tinka, jei apdorojimas su GPU užstrigo ar labai sulėtėjo.": "Continues from where it stopped, but densification and the 3D mesh run on the CPU using all cores. Use it if processing on the GPU got stuck or became very slow.",
+  "be GPU": "without GPU",
 };
