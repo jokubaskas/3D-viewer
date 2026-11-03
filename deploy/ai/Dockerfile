@@ -21,7 +21,12 @@ RUN mkdir -p /models \
       || curl -fsSL -o /models/rf-detr-${DETECTOR}.pth https://storage.googleapis.com/rfdetr/${DETECTOR}_coco/checkpoint_best_regular.pth) \
   && curl -fsSL -o /models/mobile_sam.pt https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt
 
-ENV ATEA_AI_MODELS=/models ATEA_AI_DETECTOR=${DETECTOR} HF_HUB_OFFLINE=1
+# C kompiliatorius: mokant GPU, PyTorch (Triton) vietoje kompiliuoja pagalbinius modulius – be jo
+# „RuntimeError: Failed to find C compiler“. Atskiras sluoksnis gale – kad nereikėtų iš naujo siųstis PyTorch.
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+ENV ATEA_AI_MODELS=/models ATEA_AI_DETECTOR=${DETECTOR} HF_HUB_OFFLINE=1 CC=gcc
 WORKDIR /app
 COPY app.py train.py /app/
 EXPOSE 8000
