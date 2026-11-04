@@ -1,90 +1,44 @@
 import './style.css';
 import * as THREE from 'three';
-import { Viewer } from './viewer.js';
 import { loadModelFiles } from './loaders.js';
 import { createDemoModel } from './demo.js';
 import { units } from './units.js';
 import { hydrateIcons, icon } from './icons.js';
-import { logoSvg, drawLogo, LOGO_VIEWBOX } from './logo.js';
+import { logoSvg } from './logo.js';
 import { t as tr, getLang, setLang, onLangChange, startI18n, locale } from './i18n.js';
-import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData, setNextId, checkpointResidual } from './measurements.js';
-import { fitPlaneNormal } from './compute.js';
-import { ProfileChart } from './profile.js';
-import { Gizmo } from './gizmo.js';
+import { TOOLS, BASE_MODES, Measurement, MeasurementVisual, computeMeasurement, describe, quickData } from './measurements.js';
 import { createOdmUI } from './odm/ui.js';
 import { createLiveUI } from './live/ui.js';
 import { createPlanUI } from './plan/ui.js';
 import { createOrthoUI } from './ortho/ui.js';
 import { extractFromZipUrl, fetchDirect, DIRECT_MODEL, DIRECT_POINTS, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
-import { AiClient, AI_CLASSES } from './ai/client.js';
-import { findLocalServer } from './local-server.js';
-import { renderTopDown } from './ai/ortho.js';
-import { Basemap, BASEMAPS } from './geo/basemap.js';
-import { CompareModel, analyzeChange, buildChangeMesh } from './compare.js';
-import { exportObjZip, exportGlb, exportLas } from './export.js';
 import { whoAmI } from './portal/api.js';
 import { showLogin, showInvite, showDown, changePasswordDialog, logout } from './portal/auth.js';
 import { createPortalUI } from './portal/ui.js';
 import { createHome } from './portal/home.js';
 import { createOrdersUI } from './portal/orders.js';
 import { api } from './portal/api.js';
+import { $, $$, settings, saveSettings, viewport, viewer, gizmo, basemap, profile, items, state, app, toast, download, baseName, escapeHtml } from './app/core.js';
+import { screenshot } from './app/screenshot.js';
+import { syncSaveCard, openOdmSaveDialog } from './app/save.js';
+import { aiClient, aiOutline, runDetection, exportDetectionsCsv } from './app/ai-tools.js';
+import { askCheckpoint, level, renderCheckpoints, updateScaleBadge } from './app/checkpoints.js';
+import { clearCompare } from './app/compare-ui.js';
+import { refreshMap, toggleMap } from './app/basemap-ui.js';
+import './app/measure-io.js';
+import './app/report-ui.js';
 
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => [...document.querySelectorAll(s)];
+// main.js funkcijos, kurias kviečia moduliai (src/app/*)
+Object.assign(app, { addMeasurement, recompute, redrawAll, setupClipSliders, updateModelInfo, modelInfoRows, setLoading, isAbort, startCancellable });
 
-// ---------------------------------------------------------------------------
-// Nustatymai
-// ---------------------------------------------------------------------------
-const SETTINGS_KEY = 'atea3d.settings.v1';
-const settings = {
-  aiUrl: '', aiClasses: ['car', 'truck', 'bus', 'motorcycle'], aiThreshold: 0.5, aiOutlineKind: 'volume',
-  coordOrder: 'ne', unit: 'm', precision: 2, snap: false, resolution: 250, density: 1.6, labelSize: 'md', labels: true,
-  background: 'atea', pointSize: 2.5, viewMode: 'texture', grid: false,
-  mapOn: false, mapSource: 'satellite', mapUrl: '', mapOpacity: 1,
-};
-try {
-  Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'));
-} catch { /* privatus režimas */ }
-const saveSettings = () => {
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch { /* ignoruojame */ }
-};
-units.display = settings.unit;
-units.precision = settings.precision;
+
 
 // ---------------------------------------------------------------------------
 // Pagrindiniai objektai
 // ---------------------------------------------------------------------------
 hydrateIcons();
 $('#brand-logo').innerHTML = logoSvg();
-if (!['atea', 'graphite', 'light', 'white'].includes(settings.background)) settings.background = 'atea';
-const viewport = $('#viewport');
-const viewer = new Viewer(viewport);
-const gizmo = new Gizmo($('#gizmo'), viewer);
-const basemap = new Basemap(viewer);
-viewer.basemap = basemap;
-const cmp = new CompareModel(viewer);
-const profile = new ProfileChart($('#profile-chart'), viewer, units);
 
-/** @type {{m: Measurement, visual: MeasurementVisual}[]} */
-const items = [];
-let selectedId = null;
-let modelInfo = null;
-
-// ---------------------------------------------------------------------------
-// Pranešimai
-// ---------------------------------------------------------------------------
-function toast(msg, type = 'info', ms = 3500) {
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = tr(msg);
-  $('#toasts').append(el);
-  setTimeout(() => {
-    el.classList.add('out');
-    setTimeout(() => el.remove(), 300);
-  }, ms);
-}
 
 // ---------------------------------------------------------------------------
 // Įrankių juosta
@@ -117,6 +71,7 @@ TOOL_ORDER.forEach((group, gi) => {
     toolbar.append(b);
   }
 });
+$('#help-version').textContent = `Atea 3D Matuoklis · ${tr('versija')} ${__APP_VERSION__}`;
 $('#help-tools').innerHTML = [...Object.values(TOOLS).filter((t) => t.key), AI_DETECT_BTN].map((t) => `<li><span>${t.label}</span><kbd>${t.key}</kbd></li>`).join('');
 
 // ---------------------------------------------------------------------------
@@ -241,6 +196,7 @@ const tools = {
     addMeasurement(m, true);
   },
 };
+app.tools = tools;
 
 // Pelės įvykiai drobėje
 const canvas = viewer.renderer.domElement;
@@ -310,7 +266,7 @@ function addMeasurement(m, select = false) {
   const visual = new MeasurementVisual(viewer, () => selectMeasurement(m.id));
   const it = { m, visual };
   items.push(it);
-  if (select) selectedId = m.id;
+  if (select) state.selectedId = m.id;
   recompute(it);
   renderList();
   return it;
@@ -344,12 +300,12 @@ async function recompute(it) {
   }
   redrawItem(it);
   renderList();
-  if (m.type === 'profile' && (selectedId === m.id || !profile.current)) profile.show(m);
+  if (m.type === 'profile' && (state.selectedId === m.id || !profile.current)) profile.show(m);
 }
 
 function redrawItem(it) {
   const desc = describe(it.m, viewer, units, settings);
-  it.visual.update(it.m, { selected: it.m.id === selectedId, desc, showName: false });
+  it.visual.update(it.m, { selected: it.m.id === state.selectedId, desc, showName: false });
 }
 
 function redrawAll() {
@@ -360,7 +316,7 @@ function redrawAll() {
 }
 
 function selectMeasurement(id, focus = false) {
-  selectedId = id;
+  state.selectedId = id;
   items.forEach(redrawItem);
   renderList();
   const it = items.find((i) => i.m.id === id);
@@ -378,7 +334,7 @@ function removeMeasurement(id) {
   items[i].visual.dispose();
   if (profile.current?.id === id) profile.hide();
   items.splice(i, 1);
-  if (selectedId === id) selectedId = null;
+  if (state.selectedId === id) state.selectedId = null;
   renderList();
 }
 
@@ -393,7 +349,7 @@ function renderList() {
     const t = TOOLS[m.type];
     const desc = describe(m, viewer, units, settings);
     const el = document.createElement('div');
-    el.className = `m-item${m.id === selectedId ? ' selected' : ''}${m.visible ? '' : ' hidden-m'}`;
+    el.className = `m-item${m.id === state.selectedId ? ' selected' : ''}${m.visible ? '' : ' hidden-m'}`;
     el.dataset.id = m.id;
     el.style.setProperty('--c', t.color);
     const pending = m.status === 'computing' && (m.type === 'volume' || !desc.value);
@@ -504,9 +460,6 @@ function volumeOptions(it) {
   return wrap;
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-}
 
 function clearMeasurements() {
   [...items].forEach((it) => removeMeasurement(it.m.id));
@@ -544,312 +497,6 @@ function calibrate(pts) {
 }
 
 // ---------------------------------------------------------------------------
-// Vietinis dirbtinis intelektas (deploy/ai): išmanus kontūras ir transporto aptikimas
-// ---------------------------------------------------------------------------
-const defaultAiUrl = () => (location.protocol === 'file:' ? 'http://localhost:8080/ai/' : './ai/');
-async function aiClient(recheck = false) {
-  if (settings.aiUrl) return new AiClient(settings.aiUrl);
-  const local = await findLocalServer(recheck);
-  if (local && $('#ai-url').value === defaultAiUrl()) $('#ai-url').value = local + 'ai/';
-  return new AiClient(local ? local + 'ai/' : defaultAiUrl());
-}
-const metersToWorld = (m) => m / units.metersPerUnit;
-
-async function aiOutline(local) {
-  const P = viewer.localToWorld(local);
-  const box = viewer.worldBox;
-  const ext = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
-  let S = Math.min(ext * 1.05, metersToWorld(80));
-  const ac = startCancellable(tr('AI ieško objekto kontūro…'), 0.3);
-  const { signal } = ac;
-  try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      signal.throwIfAborted();
-      const half = S / 2;
-      const img = await renderTopDown(viewer, { minX: P.x - half, maxX: P.x + half, minZ: P.z - half, maxZ: P.z + half, gsd: S / 1024, maxPx: 1024 });
-      const [px, py] = img.toPixel(P.x, P.z);
-      $('#loading-bar').style.width = `${40 + attempt * 20}%`;
-      const res = await (await aiClient()).segment(img.blob, px, py, { signal });
-      signal.throwIfAborted();
-      // Kontūras siekia vaizdo kraštą – objektas didesnis, didiname sritį
-      if (res.touches_border && S < ext && attempt < 2) {
-        S = Math.min(S * 2.2, ext * 1.05);
-        continue;
-      }
-      const pts = res.polygon.map(([x, y]) => {
-        const [wx, wz] = img.toWorld(x, y);
-        let wy = viewer.topHeightAt(wx, wz);
-        if (!isFinite(wy)) wy = P.y;
-        return viewer.worldToLocal(new THREE.Vector3(wx, wy, wz));
-      });
-      if (pts.length < 3) throw new Error(tr('Objekto nepavyko atskirti'));
-      const kind = settings.aiOutlineKind === 'area' ? 'area' : 'volume';
-      const m = new Measurement(kind, pts, `${tr('AI')} ${tr(TOOLS[kind].label).toLowerCase()} ${items.length + 1}`);
-      addMeasurement(m, true);
-      toast(tr('AI kontūras sukurtas ({n} taškų). Jei reikia – spustelėkite kitoje objekto vietoje.', { n: pts.length }));
-      return;
-    }
-  } catch (e) {
-    if (isAbort(e)) toast('AI skaičiavimas atšauktas');
-    else toast(e.message, 'error', 9000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-async function runDetection() {
-  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
-  tools.deactivate();
-  const classes = settings.aiClasses.length ? settings.aiClasses : ['car', 'truck', 'bus'];
-  const box = viewer.worldBox;
-  const ac = startCancellable(tr('Ruošiamas vaizdas iš viršaus…'), 0.1);
-  const { signal } = ac;
-  try {
-    await new Promise((r) => setTimeout(r, 30));
-    signal.throwIfAborted();
-    const img = await renderTopDown(viewer, { minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z, gsd: metersToWorld(0.06), maxPx: 6144 });
-    const gsdM = units.toMeters(img.gsd);
-    $('#loading-text').textContent = tr('AI ieško transporto… ({w}×{h} px, {g} cm/px)', { w: img.width, h: img.height, g: (gsdM * 100).toFixed(1) });
-    $('#loading-bar').style.width = '50%';
-    const res = await (await aiClient()).detect(img.blob, { classes, threshold: settings.aiThreshold, gsd: gsdM, signal });
-    signal.throwIfAborted();
-    const det = res.detections || [];
-    if (!det.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
-    const lift = metersToWorld(0.25);
-    const surfY = (wx, wz) => viewer.topHeightAt(wx, wz);
-    let itemsOut = det.map((d) => {
-      const [x0, y0, x1, y1] = d.box;
-      const px = d.corners || [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-      const pcx = px.reduce((a, p) => a + p[0], 0) / 4, pcy = px.reduce((a, p) => a + p[1], 0) / 4;
-      const [cx, cz] = img.toWorld(pcx, pcy);
-      // Objekto aukštis virš aplinkos: viršus – kontūro viduje, žemė – 1 m už kontūro
-      const inside = [[pcx, pcy], ...px.map(([x, y]) => [pcx + (x - pcx) * 0.4, pcy + (y - pcy) * 0.4])];
-      const top = Math.max(...inside.map(([x, y]) => surfY(...img.toWorld(x, y))).filter(isFinite));
-      const ring = [...px, ...px.map((p, i) => [(p[0] + px[(i + 1) % 4][0]) / 2, (p[1] + px[(i + 1) % 4][1]) / 2])].map(([x, y]) => {
-        const dx = x - pcx, dy = y - pcy, len = Math.hypot(dx, dy) || 1;
-        const k = (len + metersToWorld(1) / img.gsd) / len;
-        return surfY(...img.toWorld(pcx + dx * k, pcy + dy * k));
-      });
-      const ground = Math.min(...ring.filter(isFinite));
-      const height = isFinite(top) && isFinite(ground) ? units.toMeters(top - ground) : null;
-      let cy = surfY(cx, cz);
-      if (!isFinite(cy)) cy = box.min.y;
-      const corners = px.map(([x, y]) => {
-        const [wx, wz] = img.toWorld(x, y);
-        let wy = surfY(wx, wz);
-        if (!isFinite(wy)) wy = cy;
-        return viewer.worldToLocal(new THREE.Vector3(wx, wy + lift, wz)).toArray();
-      });
-      return {
-        cls: d.class, score: d.score,
-        c: viewer.worldToLocal(new THREE.Vector3(cx, cy + lift, cz)).toArray(),
-        // Matmenys – tik kai yra tikslus (pasuktas) kontūras; ašinė dėžutė pasuktam automobiliui per didelė
-        size: d.length != null ? [d.width, d.length] : null,
-        heading: d.heading ?? null,
-        height,
-        corners,
-      };
-    });
-    // Plokšti objektai (kelio ženklinimas, šuliniai, šešėliai) – ne transportas. Filtras taikomas tik
-    // tada, kai modelis turi aiškų reljefą (dauguma objektų iškilę), kitaip – pvz. plokščias ortofoto.
-    const raised = itemsOut.filter((it) => it.height == null || it.height >= 0.5);
-    let flat = 0;
-    if (raised.length >= itemsOut.length / 2) {
-      flat = itemsOut.length - raised.length;
-      itemsOut = raised;
-    }
-    if (!itemsOut.length) return toast(tr('Objektų nerasta. Galite sumažinti patikimumo slenkstį nustatymuose.'), 'info', 7000);
-    const m = new Measurement('detections', itemsOut.map((it) => new THREE.Vector3(...it.c)));
-    m.options.items = itemsOut;
-    m.options.meta = { classes, threshold: settings.aiThreshold, gsd: gsdM, seconds: res.seconds, rejected: (res.rejected || 0) + flat };
-    addMeasurement(m, true);
-    const skipped = (res.rejected || 0) + flat;
-    toast(
-      tr('AI rado objektų: {n} (per {s} s)', { n: itemsOut.length, s: res.seconds }) +
-        (skipped ? ' · ' + tr('atmesta netinkamo dydžio ar plokščių: {n}', { n: skipped }) : ''),
-    );
-    if (gsdM > 0.15) toast(tr('Modelis didelis – vaizdo raiška {g} cm/px, maži objektai gali būti praleisti.', { g: (gsdM * 100).toFixed(0) }), 'info', 8000);
-  } catch (e) {
-    if (isAbort(e)) toast('AI skaičiavimas atšauktas');
-    else toast(e.message, 'error', 9000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-function detectionTable(m) {
-  const names = viewer.coordRows(new THREE.Vector3(...m.options.items[0].c), units, settings.coordOrder).map(([k]) => k.split(' ')[0]);
-  const rows = [[tr('Nr.'), tr('Klasė'), tr('Patikimumas'), ...names.map((n) => `${n} (${units.display})`), tr('Ilgis (m)'), tr('Plotis (m)'), tr('Aukštis (m)'), tr('Kryptis (°)')]];
-  m.options.items.forEach((it, i) => {
-    const cr = viewer.coordRows(new THREE.Vector3(...it.c), units, settings.coordOrder);
-    rows.push([i + 1, tr(AI_CLASSES[it.cls]?.lt || it.cls), units.num(it.score * 100, 0) + ' %', ...cr.map(([, v]) => units.num(v, 3)), ...(it.size ? [units.num(it.size[1], 2), units.num(it.size[0], 2)] : ['', '']), it.height != null ? units.num(it.height, 2) : '', it.heading != null ? units.num(it.heading, 0) : '']);
-  });
-  return rows;
-}
-
-function exportDetectionsCsv(m) {
-  const rows = detectionTable(m);
-  const csv = '\ufeff' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/\u00a0|\u202f/g, ' ')}"`).join(';')).join('\r\n');
-  download(`${baseName()}_ai_objektai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
-}
-
-// AI nustatymai
-function setupAiSettings() {
-  const url = $('#ai-url');
-  url.value = settings.aiUrl || defaultAiUrl();
-  url.addEventListener('change', () => {
-    const v = url.value.trim();
-    settings.aiUrl = v === defaultAiUrl() || /^http:\/\/localhost:80[89]\d\/ai\/?$/.test(v) ? '' : v;
-    saveSettings();
-  });
-  $('#ai-classes').innerHTML = Object.entries(AI_CLASSES)
-    .map(([k, c]) => `<label class="check small"><input type="checkbox" value="${k}" ${settings.aiClasses.includes(k) ? 'checked' : ''}/> <span>${c.many}</span></label>`)
-    .join('');
-  $('#ai-classes').addEventListener('change', () => {
-    settings.aiClasses = [...$('#ai-classes').querySelectorAll('input:checked')].map((i) => i.value);
-    saveSettings();
-  });
-  const thr = $('#ai-threshold');
-  thr.value = Math.round(settings.aiThreshold * 100);
-  const thrLabel = () => ($('#ai-threshold-val').textContent = `${thr.value} %`);
-  thrLabel();
-  thr.addEventListener('input', () => {
-    settings.aiThreshold = +thr.value / 100;
-    thrLabel();
-    saveSettings();
-  });
-  $('#ai-outline-kind').value = settings.aiOutlineKind;
-  $('#ai-outline-kind').addEventListener('change', (e) => {
-    settings.aiOutlineKind = e.target.value;
-    saveSettings();
-  });
-  $('#ai-check').addEventListener('click', async () => {
-    const st = $('#ai-status');
-    st.textContent = tr('Jungiamasi…');
-    st.className = 'small muted';
-    try {
-      const h = await (await aiClient(true)).health();
-      st.textContent = `● ${tr('Prisijungta')} · ${h.device.toUpperCase()}`;
-      st.className = 'small ok';
-    } catch (e) {
-      st.textContent = `● ${e.message}`;
-      st.className = 'small bad';
-    }
-  });
-}
-setupAiSettings();
-
-// ---------------------------------------------------------------------------
-// Kontroliniai taškai (tikslumo patikra ir pataisa)
-// ---------------------------------------------------------------------------
-function askCheckpoint(local) {
-  const dlg = $('#dlg-checkpoint');
-  const rows = viewer.coordRows(local, units, settings.coordOrder);
-  const inputs = ['#cp-a', '#cp-b', '#cp-c'].map((q) => $(q));
-  rows.forEach(([k, v], i) => {
-    $(`#cp-l${i}`).textContent = `${k} (${units.display})`;
-    inputs[i].value = '';
-    inputs[i].placeholder = units.num(v, 3).replace(/\s/g, '');
-  });
-  const n = items.filter((i) => i.m.type === 'checkpoint').length + 1;
-  $('#cp-name').value = `KT${n}`;
-  dlg.returnValue = '';
-  dlg.showModal();
-  setTimeout(() => inputs[0].focus(), 50);
-  dlg.onclose = () => {
-    if (dlg.returnValue !== 'ok') return;
-    const vals = inputs.map((el) => parseFloat(String(el.value).replace(',', '.').replace(/\s/g, '')));
-    if (vals.some((v) => !isFinite(v))) return toast('Įveskite visas tris koordinates', 'error');
-    // Rodomos ašys -> E, N, H
-    const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
-    const [E, N, H] = geo ? [vals[1], vals[0], vals[2]] : vals;
-    const raw = (v) => v / units.lenRaw(1);
-    const m = new Measurement('checkpoint', [local], $('#cp-name').value.trim() || `KT${n}`);
-    m.options.known = { x: raw(E), y: raw(N), z: raw(H) };
-    addMeasurement(m, true);
-    renderCheckpoints();
-  };
-}
-
-function checkpointStats() {
-  const cps = items.filter((i) => i.m.type === 'checkpoint' && i.m.options.known).map((i) => checkpointResidual(i.m, viewer, units));
-  if (!cps.length) return null;
-  const mean = (f) => cps.reduce((a, r) => a + f(r), 0) / cps.length;
-  const rms = (f) => Math.sqrt(mean((r) => f(r) ** 2));
-  return {
-    n: cps.length,
-    mean: { x: mean((r) => r.dx), y: mean((r) => r.dy), z: mean((r) => r.dz) },
-    rmsXY: rms((r) => Math.hypot(r.dx, r.dy)),
-    rmsZ: rms((r) => r.dz),
-  };
-}
-
-function renderCheckpoints() {
-  const el = $('#cp-summary');
-  if (!el) return;
-  const st = viewer.hasModel ? checkpointStats() : null;
-  const shifted = viewer.datumShift.lengthSq() > 0;
-  const p3 = Math.max(units.precision, 3);
-  const f = (v) => `${v > 0 ? '+' : ''}${units.num(v, p3)} ${units.display}`;
-  const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
-  el.innerHTML = st
-    ? `<dl class="kv">
-        <dt>Taškų</dt><dd>${st.n}</dd>
-        <dt>RMS plokštumoje</dt><dd>${units.fmtDisp(st.rmsXY, p3)}</dd>
-        <dt>RMS aukščio</dt><dd>${units.fmtDisp(st.rmsZ, p3)}</dd>
-        <dt>Vid. ${geo ? 'ΔX (š.)' : 'ΔX'}</dt><dd>${f(geo ? st.mean.y : st.mean.x)}</dd>
-        <dt>Vid. ${geo ? 'ΔY (r.)' : 'ΔY'}</dt><dd>${f(geo ? st.mean.x : st.mean.y)}</dd>
-        <dt>Vid. ΔH</dt><dd>${f(st.mean.z)}</dd>
-      </dl>
-      <div class="pane-actions" style="margin-top:10px">
-        <button class="btn btn-sm btn-primary" data-cp="h">Taikyti ΔH pataisą</button>
-        <button class="btn btn-sm btn-outline" data-cp="xyz">Taikyti X, Y, H</button>
-      </div>`
-    : '<p class="muted small">Pažymėkite modelyje geodeziškai išmatuotus taškus įrankiu <b>Kontrolinis taškas</b> <kbd>C</kbd> – pamatysite tikslumą ir galėsite pritaikyti aukščio pataisą (pvz. geoido N).</p>';
-  if (shifted) el.insertAdjacentHTML('beforeend', `<p class="small muted">Pritaikyta pataisa. <button class="btn btn-sm btn-ghost" data-cp="reset">Atstatyti</button></p>`);
-  el.querySelectorAll('[data-cp]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (b.dataset.cp === 'reset') viewer.datumShift.set(0, 0, 0);
-      else {
-        const k = 1 / units.lenRaw(1);
-        viewer.datumShift.z -= st.mean.z * k;
-        if (b.dataset.cp === 'xyz') {
-          viewer.datumShift.x -= st.mean.x * k;
-          viewer.datumShift.y -= st.mean.y * k;
-        }
-        toast('Pataisa pritaikyta – visos koordinatės ir aukščiai perskaičiuoti');
-      }
-      basemap.syncDatum();
-      redrawAll();
-      updateModelInfo();
-      renderCheckpoints();
-    }),
-  );
-}
-
-function updateScaleBadge() {
-  const b = $('#scale-badge');
-  b.hidden = Math.abs(units.calibration - 1) < 1e-9;
-  b.textContent = `${tr('Mastelis')} ×${units.num(units.calibration, 4)}`;
-}
-
-function level(pts) {
-  const W = pts.map((p) => viewer.localToWorld(p));
-  const n = fitPlaneNormal(W);
-  viewer.applyLeveling(n);
-  toast('Modelis išlygintas pagal pažymėtą plokštumą');
-}
-
-viewer.addEventListener('orientation', () => {
-  // Pasikeitus orientacijai vertikalūs dydžiai keičiasi – perskaičiuojame
-  items.forEach((it) => recompute(it));
-  setupClipSliders();
-  // Pakeitus aukščio ašį žemėlapis kuriamas iš naujo (arba paslepiamas, jei Z nebe aukštyn)
-  if (settings.mapOn && viewer.hasModel && basemap.source?.axis !== viewer.upAxis) refreshMap(true);
-  clearChangeLayer();
-});
-
-// ---------------------------------------------------------------------------
 // Modelio įkėlimas
 // ---------------------------------------------------------------------------
 let loadingAbort = null; // atšaukiamo veiksmo valdiklis (žr. startCancellable)
@@ -874,7 +521,9 @@ function startCancellable(text, p) {
   $('#loading-cancel').hidden = false;
   return ac;
 }
-const isAbort = (e) => e?.name === 'AbortError';
+function isAbort(e) {
+  return e?.name === 'AbortError';
+}
 $('#loading-cancel').addEventListener('click', () => loadingAbort?.abort());
 
 function guessUp(object, suggested) {
@@ -894,7 +543,7 @@ async function openFiles(fileList, opts = {}) {
     return;
   }
   tools.deactivate();
-  odmProject = null;
+  state.odmProject = null;
   setLoading(true, 'Įkeliama…', 0);
   try {
     const res = await loadModelFiles(files, {
@@ -923,7 +572,7 @@ async function showModel(object, offset, up, name, format, { crs = null, heightS
   await viewer.setModel(object, offset, up, (t) => ($('#loading-text').textContent = t), { crs, heightSystem });
   renderCheckpoints();
   viewer.setViewMode(settings.viewMode);
-  modelInfo = { name, format };
+  state.modelInfo = { name, format };
   $('#file-name').textContent = name;
   $('#file-name').title = name;
   $('#empty-state').hidden = true;
@@ -955,8 +604,8 @@ function modelInfoRows(translate = false) {
   const s = viewer.stats;
   const size = viewer.worldBox.getSize(new THREE.Vector3());
   const rows = [
-    ['Failas', modelInfo?.name || '—'],
-    ['Formatas', modelInfo?.format || '—'],
+    ['Failas', state.modelInfo?.name || '—'],
+    ['Formatas', state.modelInfo?.format || '—'],
   ];
   if (s.triangles) rows.push(['Trikampiai', fmtInt(s.triangles)], ['Viršūnės', fmtInt(s.vertices)]);
   if (s.points) rows.push(['Taškai', fmtInt(s.points)]);
@@ -1232,704 +881,13 @@ const toggleOrtho = () => {
 orthoBtn.addEventListener('click', toggleOrtho);
 
 // ---------------------------------------------------------------------------
-// Palyginimas su kita data
-// ---------------------------------------------------------------------------
-/** Paskutinio palyginimo rezultatas (naudojamas ir PDF ataskaitoje). */
-let compareState = null;
-const changeLayer = new THREE.Group();
-changeLayer.name = 'change';
-viewer.scene.add(changeLayer);
-
-function clearChangeLayer() {
-  changeLayer.children.forEach((m) => {
-    m.geometry.dispose();
-    m.material.dispose();
-  });
-  changeLayer.clear();
-  if (compareState) compareState.result = null;
-  $('#cmp-result').hidden = true;
-  viewer.requestRender();
-}
-
-function clearCompare() {
-  clearChangeLayer();
-  cmp.clear();
-  compareState = null;
-  viewer.content.visible = true;
-  $('#cmp-body').hidden = true;
-  $('#cmp-empty').hidden = false;
-}
-
-async function openCompareFiles(files) {
-  if (!files?.length) return;
-  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
-  tools.deactivate();
-  setLoading(true, tr('Įkeliamas palyginimo modelis…'), 0);
-  try {
-    const res = await loadModelFiles(files, {
-      onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
-      onStatus: (t) => ($('#loading-text').textContent = t),
-    });
-    const a = viewer.crs?.id || null, b = res.crs?.id || null;
-    if (a && b && a !== b) throw new Error(tr('Modelių koordinačių sistemos skiriasi ({a} ir {b}).', { a: viewer.crs.name, b: res.crs.name }));
-    clearChangeLayer();
-    await cmp.set(res, res.name, (i, n) => ($('#loading-text').textContent = tr('Ruošiamas greitas matavimas ({i}/{n})…', { i: i + 1, n })));
-    const ov = overlapXZ();
-    if (!ov) {
-      clearCompare();
-      throw new Error(tr('Modeliai nepersidengia – patikrinkite, ar abu turi tas pačias koordinates.'));
-    }
-    compareState = { name: res.name, result: null };
-    if (!a || !b) toast('Bent vienas modelis neturi koordinačių sistemos – lyginama pagal failų koordinates.', 'info', 7000);
-    res.warnings.forEach((w) => toast(w, 'info', 6000));
-    $('#cmp-empty').hidden = true;
-    $('#cmp-body').hidden = false;
-    $('#cmp-show-cmp').checked = false;
-    cmp.visible = false;
-    renderCompareInfo();
-    fillCompareRegions();
-    toast(tr('Palyginimo modelis įkeltas: {n}. Spauskite „Skaičiuoti pokyčius“.', { n: res.name }), 'info', 6000);
-  } catch (e) {
-    console.error(e);
-    toast(e.message || String(e), 'error', 8000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-/** Abiejų modelių persidengimas XZ plokštumoje (pasaulio koordinatėmis). */
-function overlapXZ() {
-  const A = viewer.worldBox, B = cmp.box;
-  const o = { minX: Math.max(A.min.x, B.min.x), maxX: Math.min(A.max.x, B.max.x), minZ: Math.max(A.min.z, B.min.z), maxZ: Math.min(A.max.z, B.max.z) };
-  return o.maxX > o.minX && o.maxZ > o.minZ ? o : null;
-}
-
-function renderCompareInfo() {
-  const ov = overlapXZ();
-  const rows = [
-    [tr('Failas'), compareState.name],
-    [tr('Persidengimas'), ov ? units.fmtArea((ov.maxX - ov.minX) * (ov.maxZ - ov.minZ)) + ' ' + tr('(stačiakampis)') : '—'],
-  ];
-  $('#cmp-info').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
-}
-
-function fillCompareRegions() {
-  const sel = $('#cmp-region');
-  const prev = sel.value;
-  const polys = items.filter((i) => ['area', 'volume'].includes(i.m.type) && i.m.points.length >= 3);
-  sel.innerHTML =
-    `<option value="">${tr('Visa persidengianti sritis')}</option>` +
-    polys.map((i) => `<option value="${i.m.id}">${escapeHtml(i.m.name || tr(TOOLS[i.m.type].label))}</option>`).join('');
-  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-}
-
-async function runCompare() {
-  if (!cmp.loaded) return;
-  const ov = overlapXZ();
-  if (!ov) return toast('Modeliai nepersidengia – patikrinkite, ar abu turi tas pačias koordinates.', 'error');
-  const regionId = $('#cmp-region').value;
-  const region = regionId ? items.find((i) => String(i.m.id) === regionId)?.m : null;
-  const poly = region ? region.points.map((p) => viewer.localToWorld(p)) : null;
-  const bounds = poly
-    ? { minX: Math.min(...poly.map((p) => p.x)), maxX: Math.max(...poly.map((p) => p.x)), minZ: Math.min(...poly.map((p) => p.z)), maxZ: Math.max(...poly.map((p) => p.z)) }
-    : ov;
-  const ext = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ);
-  const cell = Math.max(ext / Math.max(200, settings.resolution * 2), metersToWorld(0.05));
-  const threshold = metersToWorld(Math.max(0, +$('#cmp-threshold').value || 0));
-  const mainAt = (x, z) => viewer.topHeightAt(x, z);
-  const cmpAt = (x, z) => cmp.heightAt(x, z);
-  const cmpIsOld = $('#cmp-order').value === 'old';
-  clearChangeLayer();
-  const ac = startCancellable(tr('Skaičiuojami pokyčiai…'), 0);
-  try {
-    const res = await analyzeChange(cmpIsOld ? cmpAt : mainAt, cmpIsOld ? mainAt : cmpAt, bounds, {
-      cell, poly, threshold, signal: ac.signal,
-      onProgress: (p) => ($('#loading-bar').style.width = `${Math.round(p * 100)}%`),
-    });
-    if (!res.area) throw new Error(tr('Pasirinktoje srityje modeliai nepersidengia.'));
-    const mesh = buildChangeMesh(res, metersToWorld(0.03));
-    changeLayer.add(mesh);
-    changeLayer.visible = $('#cmp-show-map').checked;
-    compareState.result = { ...res, region: region ? region.name || tr(TOOLS[region.type].label) : tr('Visa persidengianti sritis'), cmpIsOld, range: mesh.userData.range, density: settings.density };
-    renderCompareResult();
-    viewer.requestRender();
-  } catch (e) {
-    if (isAbort(e)) toast('Skaičiavimas atšauktas');
-    else toast(e.message || String(e), 'error', 8000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-/** Pokyčių eilutės (UI ir PDF ataskaitai). */
-function compareRows(r = compareState?.result) {
-  if (!r) return [];
-  const m3 = (v) => units.toCubicMeters(v);
-  const rows = [
-    [tr('Sritis'), r.region],
-    [tr('Palyginta sritis'), units.fmtArea(r.area)],
-    [tr('Pridėta (pylimas)'), units.fmtVol(r.fill)],
-    [tr('Pašalinta (iškasa)'), units.fmtVol(r.cut)],
-    [tr('Grynasis pokytis'), (r.net > 0 ? '+' : '') + units.fmtVol(r.net)],
-  ];
-  if (r.density > 0) {
-    rows.push([tr('Pridėta masė ({d} t/m³)', { d: units.num(r.density, 2) }), `${units.num(m3(r.fill) * r.density, 1)} t`]);
-    rows.push([tr('Pašalinta masė ({d} t/m³)', { d: units.num(r.density, 2) }), `${units.num(m3(r.cut) * r.density, 1)} t`]);
-  }
-  rows.push(
-    [tr('Plotas, kur pridėta'), units.fmtArea(r.fillArea)],
-    [tr('Plotas, kur pašalinta'), units.fmtArea(r.cutArea)],
-    [tr('Didžiausias pakilimas'), units.fmtLen(r.maxUp)],
-    [tr('Didžiausias nusileidimas'), units.fmtLen(r.maxDown)],
-    [tr('Nejautrumo riba'), '±' + units.fmtLen(r.threshold)],
-    [tr('Tinklelio žingsnis'), units.fmtLen(r.grid.cell)],
-  );
-  return rows;
-}
-
-function renderCompareResult() {
-  const r = compareState?.result;
-  $('#cmp-result').hidden = !r;
-  if (!r) return;
-  $('#cmp-leg-min').textContent = '−' + units.fmtLen(r.range);
-  $('#cmp-leg-max').textContent = '+' + units.fmtLen(r.range);
-  $('#cmp-values').innerHTML = compareRows().map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
-}
-
-$('#cmp-open').addEventListener('click', () => $('#cmp-input').click());
-$('#cmp-open-folder').addEventListener('click', () => $('#cmp-folder-input').click());
-for (const id of ['#cmp-input', '#cmp-folder-input'])
-  $(id).addEventListener('change', (e) => {
-    openCompareFiles([...e.target.files]);
-    e.target.value = '';
-  });
-$('#cmp-run').addEventListener('click', runCompare);
-$('#cmp-remove').addEventListener('click', clearCompare);
-$('#cmp-region').addEventListener('focus', fillCompareRegions);
-$('#cmp-region').addEventListener('mousedown', fillCompareRegions);
-$('#cmp-show-main').addEventListener('change', (e) => {
-  viewer.content.visible = e.target.checked;
-  viewer.requestRender();
-});
-$('#cmp-show-cmp').addEventListener('change', (e) => (cmp.visible = e.target.checked));
-$('#cmp-show-map').addEventListener('change', (e) => {
-  changeLayer.visible = e.target.checked;
-  viewer.requestRender();
-});
-cmp.visible = false;
-
-// ---------------------------------------------------------------------------
-// Žemėlapis po modeliu
-// ---------------------------------------------------------------------------
-const mapSource = () =>
-  settings.mapSource === 'custom' ? { url: settings.mapUrl.trim(), maxZoom: 20, attribution: '' } : BASEMAPS[settings.mapSource] || BASEMAPS.satellite;
-let mapBusy = null;
-
-/** Parodo / paslepia žemėlapį pagal settings.mapOn. quiet – be klaidų pranešimų (pvz. įkeliant modelį). */
-async function refreshMap(quiet = false) {
-  syncMapUi();
-  if (!settings.mapOn) return basemap.hide();
-  if (!viewer.hasModel) return;
-  const why = basemap.reason;
-  if (why) {
-    basemap.hide();
-    if (!quiet) toast(why, 'info', 7000);
-    return;
-  }
-  const src = mapSource();
-  if (!src.url || !/\{z\}/.test(src.url) || !/\{x\}/.test(src.url) || !/\{y\}/.test(src.url)) {
-    basemap.hide();
-    return toast(tr('Įveskite žemėlapio adresą su {z}, {x} ir {y}.'), 'error', 7000);
-  }
-  const run = (mapBusy = basemap.show({ ...src, axis: viewer.upAxis }));
-  try {
-    const r = await run;
-    if (r && r.failed) toast(tr('Dalies žemėlapio plytelių nepavyko atsisiųsti ({n}).', { n: r.failed }), 'info', 6000);
-  } catch (e) {
-    if (mapBusy === run) toast(e.message, 'error', 8000);
-  }
-}
-
-function syncMapUi() {
-  $('#btn-map').classList.toggle('active', settings.mapOn);
-  $('#map-on').checked = settings.mapOn;
-  $('#map-source').value = settings.mapSource;
-  $('#row-map-url').hidden = settings.mapSource !== 'custom';
-  const a = $('#map-attrib');
-  a.hidden = !settings.mapOn || !viewer.hasModel;
-  a.textContent = mapSource().attribution || '';
-}
-
-function toggleMap(on = !settings.mapOn) {
-  settings.mapOn = on;
-  saveSettings();
-  refreshMap();
-}
-
-$('#btn-map').addEventListener('click', () => toggleMap());
-$('#map-on').addEventListener('change', (e) => toggleMap(e.target.checked));
-$('#map-source').addEventListener('change', (e) => {
-  settings.mapSource = e.target.value;
-  saveSettings();
-  syncMapUi();
-  if (settings.mapOn && (settings.mapSource !== 'custom' || settings.mapUrl)) refreshMap();
-});
-$('#map-url').value = settings.mapUrl;
-$('#map-url').addEventListener('change', (e) => {
-  settings.mapUrl = e.target.value.trim();
-  saveSettings();
-  if (settings.mapOn) refreshMap();
-});
-$('#map-opacity').value = settings.mapOpacity;
-basemap.setOpacity(settings.mapOpacity);
-$('#map-opacity').addEventListener('input', (e) => {
-  settings.mapOpacity = +e.target.value;
-  basemap.setOpacity(settings.mapOpacity);
-  saveSettings();
-});
-syncMapUi();
-
-// ---------------------------------------------------------------------------
 // Eksportas / importas
 // ---------------------------------------------------------------------------
-function download(name, data, type) {
-  const blob = data instanceof Blob ? data : new Blob([data], { type });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-}
-const baseName = () => (modelInfo?.name || 'modelis').replace(/\.[^.]+$/, '');
-const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-
-// ---------------------------------------------------------------------------
-// Išsaugojimas kompiuteryje: 3D modelis (OBJ / GLB / LAS) ir ODM rezultatai (ortofoto, DSM, DTM…)
-// ---------------------------------------------------------------------------
-let odmProject = null; // projektas, iš kurio atidarytas dabartinis modelis
-
-function syncSaveCard() {
-  const has = viewer.hasModel;
-  $$('#save-card [data-save]').forEach((b) => (b.disabled = !has));
-  $('#save-card [data-save=las]').hidden = !viewer.pointClouds.length;
-  $('#save-card [data-save=obj]').hidden = !viewer.meshes.length && viewer.pointClouds.length > 0;
-  $('#save-odm').hidden = !odmProject;
-  if (odmProject) $('#save-odm-name').textContent = odmProject.name;
-}
-
-async function saveModel(kind) {
-  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
-  const name = baseName().replace(/[\\/:*?"<>|\s]+/g, '_') || 'modelis';
-  const crsTag = viewer.crs?.id === 'LKS94' ? '_LKS94' : viewer.crs?.id ? `_${viewer.crs.id}` : '';
-  setLoading(true, tr('Ruošiamas failas…'), 0.1);
-  await new Promise((r) => setTimeout(r, 30));
-  try {
-    if (kind === 'obj') {
-      const blob = await exportObjZip(viewer, units, name, (p) => ($('#loading-bar').style.width = `${Math.round(10 + p * 80)}%`));
-      download(`${name}${crsTag}_obj.zip`, blob);
-    } else if (kind === 'glb') {
-      const { blob, offset } = await exportGlb(viewer, units);
-      download(`${name}.glb`, blob);
-      if (viewer.crs) toast(tr('GLB koordinatės santykinės (centras ties 0). Poslinkis: X {x}, Y {y}, Z {z} – tikslioms koordinatėms naudokite OBJ.', { x: units.num(offset.x, 3), y: units.num(offset.y, 3), z: units.num(offset.z, 3) }), 'info', 9000);
-    } else if (kind === 'las') {
-      download(`${name}${crsTag}.las`, exportLas(viewer, units));
-    }
-    toast('Failas išsaugotas');
-  } catch (e) {
-    console.error(e);
-    toast(tr('Nepavyko išsaugoti: {e}', { e: e.message || e }), 'error', 8000);
-  } finally {
-    setLoading(false);
-  }
-}
-$$('#save-card [data-save]').forEach((b) => b.addEventListener('click', () => saveModel(b.dataset.save)));
-
-const ODM_FILES = {
-  ortho: { path: 'odm_orthophoto/odm_orthophoto.tif', label: 'ortofoto', raster: true },
-  dsm: { path: 'odm_dem/dsm.tif', label: 'DSM', raster: true },
-  dtm: { path: 'odm_dem/dtm.tif', label: 'DTM', raster: true },
-  laz: { path: 'odm_georeferencing/odm_georeferenced_model.laz', label: 'taskai', ext: 'laz' },
-};
-
-/** Atsisiunčia vieną ODM rezultatą (tiesiai iš serverio, kitaip iš all.zip srautu); rastrus pagal pasirinkimą perskaičiuoja į LKS-94. */
-async function saveOdmResult(project, kind, crs) {
-  const safe = project.name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'projektas';
-  if (kind === 'all') {
-    const a = document.createElement('a');
-    a.href = project.downloadUrl;
-    a.download = `${safe}_all.zip`;
-    a.click();
-    return;
-  }
-  const ac = startCancellable(tr('Atsisiunčiami rezultatai…'), 0);
-  const { signal } = ac;
-  const progress = (p, bytes) => {
-    $('#loading-bar').style.width = `${Math.round(p * (crs === 'lks' ? 60 : 100))}%`;
-    $('#loading-text').textContent = `${tr('Atsisiunčiami rezultatai…')} ${(bytes / 1e6).toFixed(0)} MB`;
-  };
-  try {
-    if (kind === 'model') {
-      const want = (p) => WANT_MODEL(p) || WANT_MODEL_GLB(p);
-      const files = await extractFromZipUrl(project.downloadUrl, want, progress, signal);
-      if (!files.some((f) => /\.(obj|glb)$/i.test(f.name))) throw new Error(tr('Archyve nerastas 3D modelis'));
-      const entries = {};
-      for (const f of files) entries[f.name] = [new Uint8Array(await f.arrayBuffer()), { level: /\.(png|jpe?g|glb)$/i.test(f.name) ? 0 : 6 }];
-      const { zipSync } = await import('three/examples/jsm/libs/fflate.module.js');
-      download(`${safe}_3d_modelis_ODM.zip`, new Blob([zipSync(entries)], { type: 'application/zip' }));
-      return toast('Failas išsaugotas');
-    }
-    const def = ODM_FILES[kind];
-    const files = (await fetchDirect(project.filesUrl, [def.path], progress, signal)) || (await extractFromZipUrl(project.downloadUrl, (p) => p === def.path, progress, signal));
-    if (!files.length) throw new Error(tr('Šio projekto rezultatuose nėra: {f} (galbūt išjungtas kuriant projektą).', { f: def.path }));
-    let blob = files[0];
-    let suffix = '_UTM';
-    if (def.raster && crs === 'lks') {
-      $('#loading-text').textContent = tr('Perskaičiuojama į LKS-94…');
-      $('#loading-bar').style.width = '70%';
-      blob = await (await aiClient()).toLks94(files[0], `${safe}_${def.label}`, { signal });
-      suffix = '_LKS94';
-    }
-    signal.throwIfAborted();
-    download(`${safe}_${def.label}${suffix}.${def.ext || 'tif'}`, blob);
-    toast('Failas išsaugotas');
-  } catch (e) {
-    if (isAbort(e)) toast('Atsisiuntimas atšauktas');
-    else toast(tr('Nepavyko: {e}', { e: e.message || e }), 'error', 9000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-function bindOdmButtons(root, getProject) {
-  root.querySelectorAll('[data-odm]').forEach((b) =>
-    b.addEventListener('click', (e) => {
-      e.preventDefault();
-      const p = getProject();
-      if (!p) return;
-      const crs = root.querySelector('.save-crs')?.value || 'lks';
-      settings.saveCrs = crs;
-      saveSettings();
-      saveOdmResult(p, b.dataset.odm, crs);
-    }),
-  );
-  const sel = root.querySelector('.save-crs');
-  if (sel && settings.saveCrs) sel.value = settings.saveCrs;
-}
-bindOdmButtons($('#save-odm'), () => odmProject);
-let dialogProject = null;
-bindOdmButtons($('#dlg-odm-save'), () => {
-  $('#dlg-odm-save').close();
-  return dialogProject;
-});
-syncSaveCard();
-function openOdmSaveDialog(project) {
-  dialogProject = project;
-  $('#dlg-odm-save-name').textContent = project.name;
-  if (settings.saveCrs) $('#dlg-odm-save .save-crs').value = settings.saveCrs;
-  $('#dlg-odm-save').showModal();
-}
-
-// ---------------------------------------------------------------------------
-// PDF ataskaita
-// ---------------------------------------------------------------------------
-const REPORT_SKIP = new Set(['checkpoint', 'detections']); // turi atskirus skyrius
-
-function reportAvailability() {
-  const ms = items.filter((i) => i.m.visible !== false);
-  return {
-    view: true,
-    top: true,
-    measurements: ms.some((i) => !REPORT_SKIP.has(i.m.type)),
-    change: !!compareState?.result,
-    checkpoints: !!checkpointStats(),
-    ai: ms.some((i) => i.m.type === 'detections' && i.m.options.items?.length),
-  };
-}
-
-function openReportDialog() {
-  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
-  tools.deactivate();
-  const dlg = $('#dlg-report');
-  $('#rep-title').value ||= tr('Matavimų ataskaita');
-  $('#rep-object').value = baseName();
-  $('#rep-author').value = settings.reportAuthor || '';
-  const av = reportAvailability();
-  dlg.querySelectorAll('#rep-sections input').forEach((cb) => {
-    const ok = av[cb.value];
-    cb.disabled = !ok;
-    cb.checked = ok && settings.reportSections?.[cb.value] !== false;
-    cb.closest('label').classList.toggle('disabled', !ok);
-  });
-  dlg.returnValue = '';
-  dlg.showModal();
-}
-
-$('#dlg-report').addEventListener('close', () => {
-  const dlg = $('#dlg-report');
-  if (dlg.returnValue !== 'ok') return;
-  const sections = {};
-  dlg.querySelectorAll('#rep-sections input').forEach((cb) => (sections[cb.value] = cb.checked && !cb.disabled));
-  settings.reportAuthor = $('#rep-author').value.trim();
-  settings.reportSections = Object.fromEntries([...dlg.querySelectorAll('#rep-sections input')].filter((cb) => !cb.disabled).map((cb) => [cb.value, cb.checked]));
-  saveSettings();
-  makeReport({
-    title: $('#rep-title').value.trim() || tr('Matavimų ataskaita'),
-    object: $('#rep-object').value.trim() || baseName(),
-    author: settings.reportAuthor,
-    notes: $('#rep-notes').value.trim(),
-    sections,
-  });
-});
-
-function reportContext({ title, object, author, notes, sections }) {
-  const visible = items.filter((i) => i.m.visible !== false).map((i) => i.m);
-  const labels = [];
-  const measurements = [];
-  for (const m of visible) {
-    const desc = describe(m, viewer, units, settings);
-    const color = TOOLS[m.type]?.color;
-    if (settings.labels) desc.labels.forEach((l) => labels.push({ world: viewer.localToWorld(l.pos), text: l.text, sub: l.sub, color: l.color || color }));
-    if (REPORT_SKIP.has(m.type)) continue;
-    const rows = m.points.map((p) => viewer.coordRows(p, units, settings.coordOrder));
-    measurements.push({
-      name: m.name,
-      type: tr(TOOLS[m.type]?.label || m.type),
-      value: desc.value || '—',
-      details: desc.details.map(([k, v]) => [tr(k), String(v)]),
-      coordNames: rows[0]?.map(([k]) => tr(k)) || [],
-      points: m.type === 'scale' ? [] : rows.map((r) => r.map(([, v]) => units.num(v, Math.max(3, units.precision)))),
-    });
-  }
-
-  let change = null;
-  const r = compareState?.result;
-  if (r) {
-    const g = r.grid;
-    change = {
-      rows: compareRows(r),
-      range: r.range,
-      fmtLen: (v) => units.fmtLen(v),
-      oldName: r.cmpIsOld ? compareState.name : modelInfo?.name,
-      newName: r.cmpIsOld ? modelInfo?.name : compareState.name,
-      bounds: { minX: g.minX, maxX: g.minX + (g.nx - 1) * g.cell, minZ: g.minZ, maxZ: g.minZ + (g.nz - 1) * g.cell },
-    };
-  }
-
-  let checkpoints = null;
-  const st = checkpointStats();
-  if (st) {
-    const p3 = Math.max(units.precision, 3);
-    const geo = viewer.crs?.geodetic && settings.coordOrder === 'ne';
-    const f = (v) => `${v > 0 ? '+' : ''}${units.num(v, p3)}`;
-    const cps = items.filter((i) => i.m.type === 'checkpoint' && i.m.options.known);
-    checkpoints = {
-      summary: [
-        [tr('Taškų'), String(st.n)],
-        [tr('RMS plokštumoje'), units.fmtDisp(st.rmsXY, p3)],
-        [tr('RMS aukščio'), units.fmtDisp(st.rmsZ, p3)],
-        [tr('Vid. ΔH'), `${f(st.mean.z)} ${units.display}`],
-      ],
-      cols: [tr('Taškas'), `${geo ? 'ΔX (š.)' : 'ΔX'} (${units.display})`, `${geo ? 'ΔY (r.)' : 'ΔY'} (${units.display})`, `ΔH (${units.display})`, `${tr('Δ plokštumoje')} (${units.display})`],
-      rows: cps.map((i) => {
-        const c = checkpointResidual(i.m, viewer, units);
-        return [i.m.name, f(geo ? c.dy : c.dx), f(geo ? c.dx : c.dy), f(c.dz), units.num(Math.hypot(c.dx, c.dy), p3)];
-      }),
-    };
-  }
-
-  const detections = visible
-    .filter((m) => m.type === 'detections' && m.options.items?.length)
-    .map((m) => {
-      const [head, ...rows] = detectionTable(m);
-      const counts = {};
-      m.options.items.forEach((it) => (counts[it.cls] = (counts[it.cls] || 0) + 1));
-      return {
-        name: m.name,
-        summary: [
-          ...Object.entries(counts).map(([c, n]) => [tr(AI_CLASSES[c]?.many || c), String(n)]),
-          [tr('Vidutinis patikimumas'), units.fmtPercent((m.options.items.reduce((a, it) => a + it.score, 0) / m.options.items.length) * 100)],
-        ],
-        cols: head.map(String),
-        rows: rows.slice(0, 500).map((r) => r.map(String)),
-      };
-    });
-
-  const date = new Date().toLocaleString(locale(), { dateStyle: 'long', timeStyle: 'short' });
-  return {
-    viewer, units, t: tr, changeLayer,
-    meta: { title, object, author, notes, date },
-    sections, labels, measurements, change, checkpoints, detections,
-    modelRows: modelInfoRows(true),
-  };
-}
-
-async function makeReport(opts) {
-  setLoading(true, tr('Kuriama PDF ataskaita…'), 0.05);
-  try {
-    const { createReport } = await import('./report/report.js');
-    const blob = await createReport(reportContext(opts), (t) => ($('#loading-text').textContent = t));
-    const safe = opts.object.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'ataskaita';
-    download(`${safe}_ataskaita_${stamp()}.pdf`, blob);
-    toast('PDF ataskaita sukurta');
-  } catch (e) {
-    console.error(e);
-    toast(tr('Nepavyko sukurti ataskaitos: {e}', { e: e.message || e }), 'error', 9000);
-  } finally {
-    setLoading(false);
-  }
-}
-
-$('#btn-report').addEventListener('click', openReportDialog);
-
-$('#btn-export-csv').addEventListener('click', () => {
-  if (!items.length) return toast('Nėra matavimų eksportui');
-  const axisNames = viewer.hasModel && items.length ? viewer.coordRows(items[0].m.points[0], units, settings.coordOrder).map(([k]) => k.split(' ')[0]).join(' ') : 'X Y Z';
-  const rows = [[tr('Nr.'), tr('Pavadinimas'), tr('Tipas'), tr('Reikšmė'), tr('Detalės'), `${tr('Taškai')} (${axisNames}${viewer.crs ? ', ' + tr(viewer.crs.name) : ''})`]];
-  items.forEach(({ m }, i) => {
-    const d = describe(m, viewer, units, settings);
-    const pts = m.points.map((p) => {
-      return viewer.coordRows(p, units, settings.coordOrder).map(([, v]) => units.num(v, 3)).join(' ');
-    });
-    rows.push([i + 1, m.name, tr(TOOLS[m.type].label), d.value, d.details.map(([k, v]) => `${k}: ${v}`).join(' | '), pts.join(' ; ')]);
-  });
-  const csv = '﻿' + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""').replace(/ | /g, ' ')}"`).join(';')).join('\r\n');
-  download(`${baseName()}_matavimai_${stamp()}.csv`, csv, 'text/csv;charset=utf-8');
-});
-
-$('#btn-export-json').addEventListener('click', () => {
-  if (!items.length) return toast('Nėra matavimų išsaugojimui');
-  const data = {
-    app: 'Atea 3D Matuoklis', version: 1, model: modelInfo?.name, created: new Date().toISOString(),
-    calibration: units.calibration, modelUnit: units.modelUnit, upAxis: viewer.upAxis,
-    level: viewer.levelQuat.toArray(),
-    crs: viewer.crs?.id || null,
-    datumShift: viewer.datumShift.toArray(),
-    measurements: items.map(({ m }) => ({
-      type: m.type, name: m.name, visible: m.visible, options: m.options,
-      points: m.points.map((p) => viewer.localToOriginal(p).toArray()),
-    })),
-  };
-  download(`${baseName()}_matavimai.json`, JSON.stringify(data, null, 2), 'application/json');
-});
-
-$('#btn-import-json').addEventListener('click', () => {
-  if (!viewer.hasModel) return toast('Pirmiausia atidarykite modelį', 'error');
-  $('#json-input').click();
-});
-$('#json-input').addEventListener('change', async (e) => {
-  const f = e.target.files[0];
-  e.target.value = '';
-  if (!f) return;
-  try {
-    const data = JSON.parse(await f.text());
-    if (!Array.isArray(data.measurements)) throw new Error('netinkamas failas');
-    if (data.upAxis && data.upAxis !== viewer.upAxis) {
-      viewer.setUpAxis(data.upAxis, false);
-      $$('#up-axis button').forEach((b) => b.classList.toggle('active', b.dataset.up === viewer.upAxis));
-    }
-    if (Array.isArray(data.datumShift)) viewer.datumShift.fromArray(data.datumShift);
-    if (Array.isArray(data.level)) {
-      viewer.levelQuat.fromArray(data.level);
-      viewer._applyOrientation();
-    }
-    if (data.calibration) {
-      units.calibration = data.calibration;
-      units.modelUnit = data.modelUnit || 'm';
-      $('#opt-scale').value = units.calibration;
-      $('#opt-model-unit').value = units.modelUnit;
-      updateScaleBadge();
-    }
-    let n = 0;
-    for (const r of data.measurements) {
-      if (!TOOLS[r.type]) continue;
-      const pts = r.points.map((a) => new THREE.Vector3().fromArray(a).sub(viewer.center));
-      const m = new Measurement(r.type, pts, r.name);
-      m.visible = r.visible !== false;
-      if (r.options) m.options = { ...m.options, ...r.options };
-      addMeasurement(m);
-      n++;
-    }
-    setNextId(items.length + 1);
-    if (modelInfo?.name && data.model && data.model !== modelInfo.name) toast(tr('Dėmesio: matavimai buvo atlikti modeliui „{m}“', { m: data.model }), 'error', 6000);
-    toast(tr('Įkelta matavimų: {n}', { n }));
-  } catch (err) {
-    toast(tr('Nepavyko įkelti: {e}', { e: err.message }), 'error');
-  }
-});
 
 $('#btn-clear').addEventListener('click', () => {
   if (!items.length) return;
   if (confirm(tr('Ištrinti visus matavimus ({n})?', { n: items.length }))) clearMeasurements();
 });
-
-// Ekrano kopija su etiketėmis ir Atea žyma
-async function screenshot() {
-  if (!viewer.hasModel) return toast('Nėra ką fotografuoti');
-  const src = viewer.snapshot();
-  const w = src.width, h = src.height;
-  const pr = w / viewer.width;
-  const out = document.createElement('canvas');
-  out.width = w;
-  out.height = h;
-  const g = out.getContext('2d');
-  const bgs = { atea: ['#1d4629', '#102d21', '#1f2326'], graphite: ['#30363a', '#1f2326', '#141719'], light: ['#f4f7f6', '#d9e2df', '#c6d2ce'], white: ['#ffffff', '#ffffff', '#ffffff'] };
-  const [c0, c1, c2] = bgs[settings.background] || bgs.atea;
-  const grad = g.createRadialGradient(w * 0.3, h * 0.4, 0, w * 0.3, h * 0.4, Math.max(w, h) * 0.85);
-  grad.addColorStop(0, c0);
-  grad.addColorStop(0.6, c1);
-  grad.addColorStop(1, c2);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, w, h);
-  g.drawImage(src, 0, 0);
-  // Etiketės
-  if (settings.labels) {
-    const vr = viewport.getBoundingClientRect();
-    document.querySelectorAll('.label-layer .m-label').forEach((el) => {
-      if (el.style.display === 'none' || el.closest('[style*="display: none"]')) return;
-      const r = el.getBoundingClientRect();
-      if (!r.width) return;
-      const cs = getComputedStyle(el);
-      const x = (r.left - vr.left) * pr, y = (r.top - vr.top) * pr, bw = r.width * pr, bh = r.height * pr;
-      g.fillStyle = cs.backgroundColor;
-      roundRect(g, x, y, bw, bh, 6 * pr);
-      g.fill();
-      g.fillStyle = cs.getPropertyValue('--c') || '#fff';
-      g.fillRect(x, y + 2 * pr, 3 * pr, bh - 4 * pr);
-      g.fillStyle = '#fff';
-      g.font = `${cs.fontWeight} ${parseFloat(cs.fontSize) * pr}px ${cs.fontFamily}`;
-      g.textBaseline = 'middle';
-      const lines = el.innerText.split('\n');
-      lines.forEach((t, i) => g.fillText(t, x + parseFloat(cs.paddingLeft) * pr + 2 * pr, y + (bh / lines.length) * (i + 0.5)));
-    });
-  }
-  // Žyma: ATEA logotipas + failas ir data
-  const pad = 14 * pr, bh = 40 * pr;
-  g.font = `600 ${12 * pr}px Inter, Segoe UI, Arial, sans-serif`;
-  const caption = `${modelInfo?.name || ''}  •  ${new Date().toLocaleString(locale())}`;
-  const logoW = (LOGO_VIEWBOX[0] / LOGO_VIEWBOX[1]) * 16 * pr;
-  const boxW = 14 * pr + logoW + 14 * pr + g.measureText(caption).width + 14 * pr;
-  g.fillStyle = 'rgba(31,35,38,0.92)';
-  roundRect(g, pad, h - pad - bh, boxW, bh, 4 * pr);
-  g.fill();
-  g.fillStyle = '#008b01';
-  g.fillRect(pad, h - pad - bh, 4 * pr, bh);
-  drawLogo(g, pad + 14 * pr, h - pad - bh / 2 - 8 * pr, 16 * pr, '#ffffff');
-  g.fillStyle = '#c3cac6';
-  g.textBaseline = 'middle';
-  g.fillText(caption, pad + 28 * pr + logoW, h - pad - bh / 2);
-  out.toBlob((blob) => download(`${baseName()}_${stamp()}.png`, blob));
-  toast('Ekrano kopija išsaugota');
-}
-function roundRect(g, x, y, w, h, r) {
-  g.beginPath();
-  g.moveTo(x + r, y);
-  g.arcTo(x + w, y, x + w, y + h, r);
-  g.arcTo(x + w, y + h, x, y + h, r);
-  g.arcTo(x, y + h, x, y, r);
-  g.arcTo(x, y, x + w, y, r);
-  g.closePath();
-}
-$('#btn-screenshot').addEventListener('click', screenshot);
 
 // Profilis
 $('#profile-close').addEventListener('click', () => profile.hide());
@@ -1994,7 +952,7 @@ const odmUI = createOdmUI({
       setLoading(false);
       await openFiles(files, { heightSystem: project.heightSystem, name: project.name });
       if (viewer.hasModel) {
-        odmProject = project;
+        state.odmProject = project;
         syncSaveCard();
       }
     } catch (e) {
@@ -2139,6 +1097,12 @@ const closePages = () => {
     },
   });
   const goHome = () => (closePages(), homeUI.open());
+  // Nuoroda iš laiško: #order=N – iškart atidaromas užsakymas
+  const orderLink = /#order=(\d+)/.exec(location.hash)?.[1];
+  if (orderLink) {
+    history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(() => (closePages(), ordersUI.open(+orderLink)));
+  }
   $('#btn-portal').addEventListener('click', goHome);
   // Puslapių „×“ → „← Pradžia“ (puslapio kairėje, kaip pradžios ekrano navigacija)
   document.querySelectorAll('.odm-page .odm-head').forEach((head) => {
@@ -2160,15 +1124,24 @@ const closePages = () => {
     const m = document.createElement('div');
     m.className = 'user-menu';
     m.innerHTML = `<div class="small"><b>${escapeHtml(user.name || user.email)}</b><div class="muted">${escapeHtml(user.email)} · ${escapeHtml(tr(user.role === 'admin' ? 'administratorius' : 'klientas'))}</div></div>
+      <button class="btn btn-ghost btn-sm" data-um="notify" aria-pressed="${user.notify !== false}">${icon(user.notify !== false ? 'check' : 'close')}${escapeHtml(tr(user.notify !== false ? 'Pranešimai el. paštu: įjungti' : 'Pranešimai el. paštu: išjungti'))}</button>
       <button class="btn btn-ghost btn-sm" data-um="pw">${icon('edit')}${escapeHtml(tr('Keisti slaptažodį'))}</button>
-      <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>`;
+      <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>
+      <div class="small muted" style="padding:2px 4px">${escapeHtml(tr('versija'))} ${escapeHtml(__APP_VERSION__)}</div>`;
     document.body.append(m);
     const r = e.currentTarget.getBoundingClientRect();
     m.style.top = `${r.bottom + 6}px`;
     m.style.right = `${Math.max(8, innerWidth - r.right)}px`;
     m.addEventListener('click', (ev) => {
       const a = ev.target.closest('[data-um]')?.dataset.um;
-      if (a === 'pw') changePasswordDialog(toast);
+      if (a === 'notify')
+        api('me', { method: 'PATCH', body: { notify: user.notify === false } })
+          .then((u) => {
+            user.notify = u.notify;
+            toast(tr(u.notify ? 'Pranešimai el. paštu įjungti' : 'Pranešimai el. paštu išjungti'));
+          })
+          .catch((ex) => toast(ex.message, 'error'));
+      else if (a === 'pw') changePasswordDialog(toast);
       else if (a === 'out') logout();
       m.remove();
     });
@@ -2249,7 +1222,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'backspace') {
     e.preventDefault();
     tools.undo();
-  } else if (k === 'delete' && selectedId != null) removeMeasurement(selectedId);
+  } else if (k === 'delete' && state.selectedId != null) removeMeasurement(state.selectedId);
   else if (k === 'f') viewer.fitView();
   else if (k === 'o') toggleOrtho();
   else if (k === 'p') screenshot();

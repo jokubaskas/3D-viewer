@@ -151,7 +151,7 @@ export class Viewer extends EventTarget {
     this._onResize = () => this.resize();
     new ResizeObserver(this._onResize).observe(container);
     this.resize();
-    this._clock = new THREE.Clock();
+    this._clock = new THREE.Timer();
     this.renderer.setAnimationLoop(() => this._tick());
   }
 
@@ -159,6 +159,7 @@ export class Viewer extends EventTarget {
   // Pagrindinis ciklas
   // -------------------------------------------------------------------------
   _tick() {
+    this._clock.update();
     const dt = this._clock.getDelta();
     if (this._anim) this._stepAnim(dt);
     if (this.controls.update()) this.dirty = true;
@@ -265,7 +266,7 @@ export class Viewer extends EventTarget {
     for (let i = 0; i < toIndex.length; i++) {
       onStatus?.(t('Ruošiamas greitas matavimas ({i}/{n})…', { i: i + 1, n: toIndex.length }));
       await new Promise((r) => setTimeout(r, 0));
-      toIndex[i].computeBoundsTree({ maxLeafTris: 10 });
+      toIndex[i].computeBoundsTree({ targetLeafSize: 10 });
     }
     this.stats = { triangles: Math.round(tris), vertices: verts, points, textures: textures.size, meshes: this.meshes.length };
     this.setUpAxis(upAxis, false);

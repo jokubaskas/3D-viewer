@@ -111,6 +111,7 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
    - *3D objektai* – įstrižoms (pvz. 5 krypčių: statmenai + 4 × 45°) nuotraukoms: `pc-quality high`, `mesh-size 2 000 000`, `mesh-octree-depth 13`, `min-num-features 15000` (patikimiau susiejamos statmenos ir įstrižos nuotraukos), `pc-filter 3` (mažiau triukšmo taškų → mažiau gumbų tinkle) – aštresni pastatai, mašinos ir sienos (be „pakilusio“ asfalto aplink juos). Parenkama automatiškai, kai ≥ 20 % nuotraukų įstrižos (kamera pakreipta daugiau nei 20° nuo statmens, pagal XMP `GimbalPitchDegree`).
    - *Maksimali* – geriausia, ką gali ODM (galingam kompiuteriui su GPU): `feature-quality ultra`, `pc-quality ultra` (gylio žemėlapiai ½ nuotraukos raiškos; *high* – ¼, *medium* – ⅛), `min-num-features 20000`, `mesh-size 3 000 000`, `ignore-gsd` ir tikslus 3D tinklas. *3D objektai* ir *Maksimali* naudoja `ignore-gsd`: ODM kitaip tekstūroms ir tankinimui naudoja nuotraukas, sumažintas pagal ortofoto raišką, todėl įstrižose nuotraukose fasadų tekstūros būna neryškios. 3D detalumą labiausiai lemia taškų debesies kokybė (`pc-quality`), o „Tikslus 3D tinklas“ – kaip iš jų pastatomas paviršius (briaunos).
    - **Tikslus 3D tinklas (OpenMVS)** – varnelė nustatymuose (numatytai įjungta *3D objektams*). ODM pats 3D tinklą kuria Poisson metodu su užkoduotais parametrais – briaunos suapvalinamos, aplink mašinas ir pastatus „pakyla“ žemė. Programos ODM atvaizdas (`deploy/odm`: oficialus `opendronemap/nodeodm` + nedidelis pakeitimas) prideda parinktį `--mesh-method openmvs`: tinklas kuriamas OpenMVS `ReconstructMesh` (pagal tai, iš kurių nuotraukų matytas kiekvienas taškas) ir patikslinamas `RefineMesh` pagal pačias nuotraukas, kai RAM pakanka – su laisvos erdvės palaikymu (`--free-space-support`: stiklas, atspindžiai, vienspalvės sienos atkuriami pagal tai, kur matymo spinduliai praeina laisvai), tada apkarpomas pagal ODM išfiltruotą taškų debesį (riba, triukšmas) ir sumažinamas iki `mesh-size`. Ilgiau ir reikia daugiau RAM; kad Docker nepritrūktų atminties (ir „nesustingtų“), taškai tinklui retinami pagal laisvą RAM (`--min-point-distance`), tinklas prieš tikslinimą sumažinamas, o mažai RAM turinčiame kompiuteryje tikslinama mažesne raiška – žurnale „Atea: … laisva RAM … GB“. Jei kas nepavyksta (pvz. pritrūksta RAM) – automatiškai naudojamas įprastas Poisson, apdorojimas nenutrūksta; jei naujoje ODM versijoje pakeitimas nebetinka – atvaizdas sukuriamas be jo (įprastas ODM).
+   - **Stiklas ir atspindžiai** (visiems 3D modeliams, be atskiro nustatymo): tankinant taškas priimamas tik tada, kai jį patvirtina bent 3 nuotraukos (ODM – 2), todėl atspindžių „taškai“ atmetami; sukūrus tinklą randamos didelės vertikalios plokštumos (fasadai, ≥ 30 m²) ir į fasadą atsuktos viršūnės, esančios iki 0,6 m nuo jo, priglaudžiamos prie plokštumos – banguoti stikliniai fasadai išlyginami, o žemė, balkonų viršus / apačia, mašinos ir gilesni išsikišimai lieka nepaliesti (žurnale „Atea: fasadai išlyginti – N plokštumų“). Stiklo fotogrametrija vis tiek neatkuria tobulai – geriausia fotografuoti apsiniaukus, ratu aplink pastatą.
    - Baigtame projekte **Kitas 3D tinklas** – perdaro tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS), nuo tinklo etapo: nuotraukų sujungimas ir tankinimas nekartojami. Dabartinis modelis pakeičiamas – norėdami palyginti, pirma jį atsisiųskite.
    - Rodomas **apytikslis RAM poreikis** (pagal nuotraukų skaičių, raišką ir kokybę) ir kiek RAM skirta serveriui. Jei gali neužtekti – įspėjama ir prieš pradedant paklausiama; pritrūkus programa vis tiek pasiūlys pakartoti su mažesne kokybe.
    - *Elipsoidiniai* (RTK numatytasis) → normaliniai LAS07: `H = h − N`, kur N – kvazigeoido aukštis (vienas skaičius objektui arba LIT15G tinklelio failas `.gtx` / Gravsoft `.gri` / `platuma ilguma N`).
@@ -140,6 +141,10 @@ Prielaidos ir tikslumas:
    Jis sukurs `.env` su slaptu raktu, paleis serverį ir atidarys `http://localhost:8080`.
    Programa visada paleidžiama tuo pačiu adresu **http://localhost:8080**: jei ji jau veikia, naudojamas jos prievadas; po sustabdymo palaukiama, kol Docker atlaisvins 8080. Kitas prievadas (8081…) parenkamas tik tada, kai 8080 tikrai užimtas kitos programos – tada parodoma, kuri programa jį užima. Pastovus adresas svarbus: naršyklė projektų sąrašą ir nustatymus saugo atskirai kiekvienam adresui. Paleidęs failas patikrina, ar programa atsidaro; jei ne – parodo konteinerių būseną ir `web` pranešimus.
 4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
+
+**Atnaujinimas vienu paspaudimu – `deploy\update.bat`:** parodo, kas naujo, patikrina, ar serveris neapdoroja 3D projekto ar nemoko AI (jei taip – siūlo palaukti), parsiunčia naują versiją (`git pull`) ir paleidžia `start-windows.bat` (prieš perkuriant serverį – atsarginė duomenų kopija). Paskyros, užsakymai, failai ir ODM projektai išlieka. Dabartinė versija (data ir žymė) matoma programoje: **?** (Pagalba) apačioje ir vartotojo meniu.
+
+OpenDroneMap versija užfiksuota (`ODM_VERSION`, dabar 3.6.2) – Atea pakeitimai (`deploy/odm/patch.py`) automatiškai patikrinami su ja kiekvienam pakeitimui (GitHub Actions), todėl atnaujinimas netikėtai ODM nepakeičia.
 
 Kai naudojate vieno failo versiją (`release/…html`), programa pati suranda vietinį serverį prievaduose 8080–8099 (pvz. `http://localhost:8081/odm/` ir `/ai/`). Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
 Docker Desktop pagal nutylėjimą WSL2 skiria tik dalį RAM. Dideliems projektams sukurkite `%UserProfile%\.wslconfig`:
@@ -372,6 +377,13 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - **3D modeliai, ortofoto, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus. Ortofoto patogiausia įkelti iš ortofoto peržiūros – **Įkelti į portalą klientui**. Visus juos galima pridėti ir kaip užsakymo rezultatus.
 - **Transliacijos:** transliacijos langelyje mygtukas 👤 **Priskirti klientams**.
 
+**El. laiškai (nebūtina):** `deploy\.env` užpildžius `SMTP_*` (pvz. Microsoft 365: `SMTP_HOST=smtp.office365.com`, `SMTP_PORT=587`, `SMTP_USER` / `SMTP_FROM` – pašto dėžutė su įjungtu „Authenticated SMTP“, `SMTP_PASS` – jos slaptažodis) ir paleidus `start-windows.bat`:
+- kvietimas klientui išsiunčiamas automatiškai (nuoroda vis tiek parodoma);
+- prisijungimo lange veikia **Pamiršote slaptažodį?** – nuoroda naujam slaptažodžiui (galioja 7 dienas, prašymai ribojami, neatskleidžiama, ar paskyra yra);
+- administratorius gauna laišką apie naują kliento užsakymą ir žinutes; klientas – apie būsenos, datos, kainos pakeitimus, naujus rezultatus, žinutes ir jam priskirtus 3D modelius, ataskaitas, įrašus, transliacijas. Laiško mygtukas atidaro tą užsakymą;
+- kiekvienas vartotojas pranešimus gali išjungti: viršuje paspaudus savo vardą → **Pranešimai el. paštu**;
+- patikrinti: `docker compose exec portal python app.py test-email jusu@adresas.lt`. Neišsiųsti laiškai kartojami 3 kartus, klaidos – `docker compose logs portal`.
+
 **Serverio perkėlimas į kitą kompiuterį:**
 1. **Senajame:** `deploy\perkelti-eksportas.bat` – nurodykite aplanką (geriausia išorinis USB diskas). Išsaugomi `.env` (raktai, Cloudflare tunelis, persiuntėjas), paskyros, užsakymai ir jų istorija, klientų failai, savi AI modeliai ir, jei pasirenkate, ODM projektai. Senasis serveris sustabdomas ir pats nebepasileidžia (kad Cloudflare tunelis neskirstytų užklausų dviem kompiuteriams).
 2. **Naujajame:** įdiekite Docker Desktop ir Git, `git clone https://github.com/jokubaskas/3D-viewer.git C:\3D-viewer`, tada `deploy\perkelti-importas.bat` – atkuria viską ir paleidžia `start-windows.bat` (NVIDIA GPU naudojamas automatiškai).
@@ -387,7 +399,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 
 **Pastabos:**
 - Kompiuteris turi būti įjungtas ir neužmigęs: Windows → Maitinimas → Miegas: **Niekada**; Docker Desktop → **Start when you sign in**.
-- **Duomenys atnaujinant neištrinami:** paskyros, užsakymai ir jų istorija, priskyrimai, DBOX zona ir klientų failai saugomi Docker tome `portal-data`, kuris išlieka atnaujinant (`git pull` + `start-windows.bat`), perkuriant konteinerius ir paleidus `docker compose down`. Jį ištrina tik `docker compose down -v`, `docker volume rm` / `prune` ar Docker Desktop **Clean / Purge data / Reset to factory defaults** – to nedarykite.
+- **Duomenys atnaujinant neištrinami:** paskyros, užsakymai ir jų istorija, priskyrimai, DBOX zona ir klientų failai saugomi Docker tome `portal-data`, kuris išlieka atnaujinant (`update.bat` arba `git pull` + `start-windows.bat`), perkuriant konteinerius ir paleidus `docker compose down`. Jį ištrina tik `docker compose down -v`, `docker volume rm` / `prune` ar Docker Desktop **Clean / Purge data / Reset to factory defaults** – to nedarykite.
 - **Atsarginės kopijos (automatiškai):** portalas kas parą ir `start-windows.bat` – prieš kiekvieną atnaujinimą – padaro kopiją į aplanką kompiuteryje (numatyta – `atea3d-atsargines-kopijos` šalia programos aplanko; kitą vietą nurodykite `deploy\.env` faile, pvz. `BACKUP_DIR=O:\` – disko šaknyje sukuriamas aplankas `Atea3D-atsargines-kopijos`). Vietiniame diske kopijos rašomos tiesiai ten; **tinklo ar USB diske** – daromos vietoje ir kas valandą (bei paleidžiant `start-windows.bat`) nukopijuojamos į jį (Windows užduotis „Atea3D atsargines kopijos“, `robocopy` be trynimo), nes Docker tinklo diskų nemato, o atjungus USB serveris turi veikti toliau. Nukopijuoto kelio nematomi simboliai (pvz. iš Windows ypatybių) pašalinami automatiškai. Ten:
   - `db/portal-<data>-<priežastis>.db` – visa duomenų bazė (laikomos 30 paskutinių);
   - `files/` – klientų failų kopija (kopijuojami tik nauji ir pasikeitę);
@@ -406,7 +418,12 @@ npm install
 npm run dev          # kūrimo serveris
 npm run build        # statinis build'as į dist/ (talpinti bet kuriame serveryje)
 npm run build:single # vienas HTML failas į dist-single/
+npm test             # skaičiavimų ir importų testai (node --test)
+npm run lint         # ESLint: neapibrėžti / nenaudojami kintamieji
+npm run check:i18n   # ar visi tekstai turi EN vertimą
 ```
+
+Python testai: `PORTAL_NO_BG=1 pytest deploy/portal` (portalas, el. laiškai) ir `pytest deploy/odm` (ODM pakeitimai; reikia `numpy scipy trimesh`). Visa tai automatiškai paleidžiama GitHub Actions kiekvienam pakeitimui (`.github/workflows/ci.yml`), kartu – `patch.py` patikra su užfiksuota ODM versija.
 
 Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) (greitas spindulių sekimas dideliems modeliams), Vite.
 
@@ -416,7 +433,8 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/loaders.js` – failų įkėlimas (įskaitant LAS ir XYZ skaitytuvus, ZIP)
 - `src/measurements.js` – matavimų tipai, skaičiavimai ir jų atvaizdavimas
 - `src/compute.js` – geometrija: plotai, plokštumos, tūrio ir paviršiaus skaičiavimas tinkleliu, profiliai
-- `src/main.js` – sąsaja, įrankių valdymas, eksportas
+- `src/main.js` – sąsajos „klijai“: įrankių valdymas, matavimų sąrašas, modelio įkėlimas, skydeliai, portalas, klaviatūra
+- `src/app/` – programos dalys: `core.js` (bendri objektai – nustatymai, 3D peržiūra, matavimai, pranešimai), `report-ui.js` (PDF ataskaita), `measure-io.js` (CSV / JSON), `save.js` (išsaugojimas kompiuteryje, ODM rezultatai), `screenshot.js`, `compare-ui.js` (palyginimas su kita data), `checkpoints.js` (kontroliniai taškai, mastelis, išlyginimas), `ai-tools.js` (AI kontūras ir transporto aptikimas), `basemap-ui.js` (žemėlapis po modeliu)
 - `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
 - `src/logo.js` – ATEA logotipas (vektorinis kontūras)
 - `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)

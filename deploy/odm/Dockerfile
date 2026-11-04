@@ -1,7 +1,7 @@
 # Atea 3D Matuoklis – NodeODM su tikslesniu 3D tinklu (--mesh-method openmvs, žr. atea_mesh.py).
 # Pagrindas – oficialus OpenDroneMap atvaizdas; pakeičiamas tik 3D tinklo etapas (patch.py). Jei naujoje ODM
 # versijoje pakeitimo vietos pasikeitė – atvaizdas vis tiek sukuriamas, tik be naujos parinkties (Poisson).
-ARG NODEODM_IMAGE=opendronemap/nodeodm:latest
+ARG NODEODM_IMAGE=opendronemap/nodeodm:3.6.2
 FROM ${NODEODM_IMAGE}
 # Visada kaip root (kaip oficialus procesoriaus NodeODM). GPU atvaizdas pagal nutylėjimą veikia kaip „odm“, todėl
 # perėjus iš procesoriaus versijos jis negali rašyti į anksčiau sukurtą duomenų tomą (/var/www/data, savininkas

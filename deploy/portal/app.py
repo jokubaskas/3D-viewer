@@ -17,8 +17,12 @@ Paleidimas: uvicorn app:app;  administratoriaus kvietimas: python app.py create-
 from __future__ import annotations
 
 import hashlib
+import html
 import hmac
 import json
+import queue
+import smtplib
+import ssl
 import math
 import os
 import re
@@ -32,6 +36,8 @@ import time
 import unicodedata
 import urllib.request
 from contextlib import contextmanager
+from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -54,6 +60,16 @@ RELAY_KEY = os.environ.get("RELAY_KEY", "").strip()
 RELAY_ON = bool(RELAY_HOST and RELAY_KEY and RELAY_HOST not in ("127.0.0.1", "localhost"))
 MEDIAMTX_RTSP = os.environ.get("MEDIAMTX_RTSP", "rtsp://mediamtx:8554")
 INVITE_DAYS = 7
+# El. laiškai (SMTP, .env): kvietimai, slaptažodžio keitimas, užsakymų ir naujų duomenų pranešimai. Be SMTP_HOST –
+# laiškai nesiunčiami (nuorodas administratorius perduoda pats, kaip anksčiau).
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "0") or 0) or 587
+SMTP_USER = os.environ.get("SMTP_USER", "").strip()
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "").strip() or SMTP_USER
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "Atea 3D Matuoklis").strip()
+SMTP_SECURITY = (os.environ.get("SMTP_SECURITY", "").strip().lower() or ("ssl" if SMTP_PORT == 465 else "starttls"))
+MAIL_ON = bool(SMTP_HOST and SMTP_FROM)
 COOKIE = "atea_sess"
 KINDS = {"model", "stream", "report", "recording", "ortho"}
 MIN_PW = 10
@@ -121,6 +137,10 @@ def init_db():
             CREATE INDEX IF NOT EXISTS order_events_order ON order_events(order_id);
             """
         )
+        # Senesnės duomenų bazės papildymas: pranešimai el. paštu (numatytai – įjungti)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(users)").fetchall()}
+        if "notify" not in cols:
+            con.execute("ALTER TABLE users ADD COLUMN notify INTEGER NOT NULL DEFAULT 1")
 
 
 def audit(con, user_id, ip, action, detail=""):
@@ -165,6 +185,97 @@ def new_invite(con, user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     con.execute("UPDATE users SET invite_hash=?, invite_exp=? WHERE id=?", (sha(token), time.time() + INVITE_DAYS * 86400, user_id))
     return f"{PUBLIC_URL}/#invite={token}"
+
+
+# --------------------------------------------------------------------------- el. laiškai
+_mail_q: "queue.Queue[EmailMessage]" = queue.Queue()
+_mail_started = False
+
+
+def _deliver(msg: EmailMessage):
+    """Vienas laiškas per SMTP (testuose pakeičiama)."""
+    ctx = ssl.create_default_context()
+    if SMTP_SECURITY == "ssl":
+        srv = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30, context=ctx)
+    else:
+        srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+    with srv:
+        if SMTP_SECURITY == "starttls":
+            srv.starttls(context=ctx)
+        if SMTP_USER:
+            srv.login(SMTP_USER, SMTP_PASS)
+        srv.send_message(msg)
+
+
+def _mail_worker():
+    while True:
+        msg = _mail_q.get()
+        for attempt in range(3):
+            try:
+                _deliver(msg)
+                break
+            except Exception as e:  # pragma: no cover – tinklo klaidos
+                print(f"Laiško „{msg['Subject']}“ išsiųsti nepavyko ({attempt + 1}/3): {e}", flush=True)
+                time.sleep(10 * (attempt + 1))
+
+
+def mail_html(title: str, paragraphs: list[str], button: tuple[str, str] | None = None) -> str:
+    esc = html.escape
+    body = "".join(f'<p style="margin:0 0 14px;line-height:1.55">{esc(p)}</p>' for p in paragraphs)
+    btn = (f'<p style="margin:22px 0"><a href="{esc(button[1])}" style="background:#008b01;color:#fff;text-decoration:none;'
+           f'font-weight:600;padding:11px 20px;border-radius:6px;display:inline-block">{esc(button[0])}</a></p>') if button else ""
+    return (f'<!doctype html><html><body style="margin:0;background:#f3f7f4;font-family:Segoe UI,Arial,sans-serif;color:#1f2326">'
+            f'<div style="max-width:560px;margin:0 auto;padding:28px 18px"><div style="background:#fff;border-radius:10px;'
+            f'border-top:4px solid #008b01;padding:28px 26px"><div style="font-weight:700;letter-spacing:.12em;color:#50575b;'
+            f'font-size:13px">ATEA · 3D MATUOKLIS</div><h1 style="font-size:20px;margin:16px 0 14px">{esc(title)}</h1>{body}{btn}'
+            f'</div><p style="color:#6d7773;font-size:12px;margin:14px 4px;line-height:1.5">Šis laiškas išsiųstas automatiškai. '
+            f'Pranešimus galite išjungti programoje: vardas viršuje dešinėje → „Pranešimai el. paštu“.</p></div></body></html>')
+
+
+def send_mail(to: str, subject: str, title: str, paragraphs: list[str], button: tuple[str, str] | None = None) -> bool:
+    """Laiškas į eilę (siunčiamas fone, kad užklausa nelauktų SMTP). False – laiškai neįjungti."""
+    global _mail_started
+    if not MAIL_ON or not to:
+        return False
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
+    msg["To"] = to
+    msg["Message-ID"] = make_msgid(domain=SMTP_FROM.split("@")[-1] or "atea3d")
+    text = title + "\n\n" + "\n\n".join(paragraphs) + (f"\n\n{button[0]}: {button[1]}" if button else "")
+    msg.set_content(text)
+    msg.add_alternative(mail_html(title, paragraphs, button), subtype="html")
+    if os.environ.get("PORTAL_NO_BG") == "1":
+        _deliver(msg)  # testai – iš karto
+        return True
+    if not _mail_started:
+        _mail_started = True
+        threading.Thread(target=_mail_worker, daemon=True).start()
+    _mail_q.put(msg)
+    return True
+
+
+def notify_users(con, ids, subject: str, title: str, paragraphs: list[str], button: tuple[str, str] | None = None):
+    """Pranešimas naudotojams, kurie neišjungė pranešimų."""
+    for uid in set(ids):
+        u = con.execute("SELECT email, notify, disabled FROM users WHERE id=?", (uid,)).fetchone()
+        if u and u["notify"] and not u["disabled"]:
+            send_mail(u["email"], subject, title, paragraphs, button)
+
+
+def admin_ids(con) -> list[int]:
+    return [r[0] for r in con.execute("SELECT id FROM users WHERE role='admin' AND disabled=0")]
+
+
+def mail_invite(email: str, name: str, link: str, reset: bool = False) -> bool:
+    if reset:
+        return send_mail(email, "Slaptažodžio keitimas – Atea 3D Matuoklis", "Slaptažodžio keitimas",
+                         [f"Sveiki{', ' + name if name else ''},", "gavome prašymą pakeisti jūsų slaptažodį. Paspauskite mygtuką ir nusistatykite naują. Nuoroda galioja "
+                          f"{INVITE_DAYS} d. ir tik vieną kartą.", "Jei slaptažodžio keisti neprašėte – šį laišką tiesiog ignoruokite."], ("Nustatyti naują slaptažodį", link))
+    return send_mail(email, "Kvietimas į Atea 3D Matuoklį", "Jums sukurta paskyra",
+                     [f"Sveiki{', ' + name if name else ''},", "Atea sukūrė jums paskyrą 3D Matuoklyje: čia matysite savo 3D modelius, ortofoto žemėlapius, "
+                      "ataskaitas, įrašus ir gyvas transliacijas, galėsite užsakyti darbus.", f"Paspauskite mygtuką ir nusistatykite slaptažodį. Nuoroda galioja {INVITE_DAYS} d. ir tik vieną kartą."],
+                     ("Nustatyti slaptažodį", link))
 
 
 # --------------------------------------------------------------------------- užklausos
@@ -213,7 +324,7 @@ async def csrf_and_headers(req: Request, call_next):
 
 
 def user_json(u) -> dict:
-    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"]}
+    return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"], "notify": bool(u["notify"]) if "notify" in u.keys() else True}
 
 
 # --------------------------------------------------------------------------- prisijungimas
@@ -231,7 +342,7 @@ def fail(con, keys: list[str]):
         r = con.execute("SELECT * FROM fails WHERE key=?", (k,)).fetchone()
         c = (r["count"] if r and r["until"] > now - 3600 else 0) + 1
         # 5 nesėkmės – 1 min., toliau dvigubinama (iki 1 val.); IP – švelniau
-        lim = 20 if k.startswith("ip:") else 5
+        lim = 20 if k.startswith(("ip:", "forgot-ip:")) else 5
         until = now + min(3600, 60 * 2 ** (c - lim)) if c >= lim else now
         con.execute("INSERT OR REPLACE INTO fails(key,count,until) VALUES(?,?,?)", (k, c, until))
 
@@ -283,6 +394,16 @@ def me(req: Request):
         return user_json(need_user(req, con))
 
 
+@app.patch("/api/me")
+async def me_update(req: Request):
+    body = await req.json()
+    with _db_lock, db() as con:
+        u = need_user(req, con)
+        if "notify" in body:
+            con.execute("UPDATE users SET notify=? WHERE id=?", (int(bool(body["notify"])), u["id"]))
+        return user_json(con.execute("SELECT * FROM users WHERE id=?", (u["id"],)).fetchone())
+
+
 @app.post("/api/me/password")
 async def change_pw(req: Request):
     body = await req.json()
@@ -315,7 +436,7 @@ def invite_info(token: str, req: Request):
         if not u:
             fail(con, [f"ip:{client_ip(req)}"])
             raise HTTPException(404, "Nuoroda negalioja arba pasibaigė – paprašykite naujos")
-        return {"email": u["email"], "name": u["name"]}
+        return {"email": u["email"], "name": u["name"], "reset": bool(u["pw"])}
 
 
 @app.post("/api/auth/invite")
@@ -334,6 +455,23 @@ async def invite_accept(req: Request):
         start_session(con, req, res, u["id"])
         audit(con, u["id"], client_ip(req), "invite_accepted")
         return res
+
+
+@app.post("/api/auth/forgot")
+async def forgot(req: Request):
+    """Slaptažodžio keitimo nuoroda el. paštu. Atsakymas visada tas pats – iš jo nesužinoma, ar paskyra yra."""
+    body = await req.json()
+    email = str(body.get("email", "")).strip().lower()[:200]
+    ip = client_ip(req)
+    with _db_lock, db() as con:
+        keys = [f"forgot:{email}", f"forgot-ip:{ip}"]
+        throttle(con, keys)
+        fail(con, keys)  # kiekvienas prašymas skaičiuojamas – ribojamas dažnis
+        u = con.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        if MAIL_ON and u and not u["disabled"]:
+            mail_invite(u["email"], u["name"], new_invite(con, u["id"]), reset=bool(u["pw"]))
+            audit(con, u["id"], ip, "password_forgot")
+        return {"ok": True, "mail": MAIL_ON}
 
 
 # --------------------------------------------------------------------------- nginx auth_request
@@ -415,7 +553,8 @@ async def users_create(req: Request):
         cur = con.execute("INSERT INTO users(email,name,role,created) VALUES(?,?,?,?)", (email, str(body.get("name", "")).strip()[:120], role, time.time()))
         link = new_invite(con, cur.lastrowid)
         audit(con, a["id"], client_ip(req), "user_create", f"{email} {role}")
-        return {"id": cur.lastrowid, "invite": link}
+        mailed = mail_invite(email, str(body.get("name", "")).strip()[:120], link)
+        return {"id": cur.lastrowid, "invite": link, "mailed": mailed}
 
 
 @app.patch("/api/users/{uid}")
@@ -444,11 +583,12 @@ async def users_update(uid: int, req: Request):
 def users_reinvite(uid: int, req: Request):
     with _db_lock, db() as con:
         a = need_user(req, con, admin=True)
-        if not con.execute("SELECT 1 FROM users WHERE id=?", (uid,)).fetchone():
+        u = con.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not u:
             raise HTTPException(404, "Nėra")
         link = new_invite(con, uid)
         audit(con, a["id"], client_ip(req), "user_invite", uid)
-        return {"invite": link}
+        return {"invite": link, "mailed": mail_invite(u["email"], u["name"], link, reset=bool(u["pw"]))}
 
 
 @app.delete("/api/users/{uid}")
@@ -531,11 +671,22 @@ async def items_create(req: Request):
         return item_json(con, con.execute("SELECT * FROM items WHERE id=?", (iid,)).fetchone(), True)
 
 
+KIND_LT = {"model": "3D modelis", "ortho": "Ortofoto žemėlapis", "report": "Ataskaita", "recording": "Įrašas", "stream": "Gyva transliacija"}
+
+
 def set_clients(con, iid: int, ids):
+    old = {r[0] for r in con.execute("SELECT user_id FROM assign WHERE item_id=?", (iid,))}
     con.execute("DELETE FROM assign WHERE item_id=?", (iid,))
+    new = set()
     for uid in {int(x) for x in ids}:
         if con.execute("SELECT 1 FROM users WHERE id=? AND role='client'", (uid,)).fetchone():
             con.execute("INSERT INTO assign(item_id,user_id) VALUES(?,?)", (iid, uid))
+            new.add(uid)
+    if new - old:
+        it = con.execute("SELECT kind, title FROM items WHERE id=?", (iid,)).fetchone()
+        kind = KIND_LT.get(it["kind"], "Duomenys")
+        notify_users(con, new - old, f"Nauji duomenys: {it['title']}", "Jums pasiekiami nauji duomenys",
+                     [f"{kind}: {it['title']}", "Juos rasite savo paskyroje Atea 3D Matuoklyje."], ("Atidaryti", PUBLIC_URL + "/"))
 
 
 @app.patch("/api/items/{iid}")
@@ -1031,11 +1182,51 @@ async def orders_create(req: Request):
         oid = cur.lastrowid
         order_event(con, oid, u["id"], "created")
         audit(con, u["id"], client_ip(req), "order_create", oid)
+        link = (f"Atidaryti užsakymą #{oid}", f"{PUBLIC_URL}/#order={oid}")
+        if u["role"] == "admin":
+            notify_users(con, [client_id], f"Užregistruotas užsakymas #{oid}: {title}", "Užregistravome jūsų užsakymą",
+                         [f"#{oid} {title}", "Užsakymo eigą, kainą ir rezultatus matysite savo paskyroje."], link)
+        else:
+            notify_users(con, admin_ids(con), f"Naujas užsakymas #{oid}: {title}", "Naujas užsakymas",
+                         [f"Klientas: {u['name'] or u['email']}", f"#{oid} {title}", f"Plotas: {area / 10000:.2f} ha · pageidaujama data: {due or '—'}"], link)
         return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
 
 
 CLIENT_FIELDS = ("title", "works", "note", "geometry", "address", "due", "contact")
 ADMIN_FIELDS = CLIENT_FIELDS + ("status", "planned", "price", "admin_note", "items")
+
+
+ORDER_STATUS_LT = {"new": "naujas", "accepted": "priimtas", "in_progress": "vykdomas", "done": "atliktas", "cancelled": "atšauktas", "rejected": "atmestas"}
+
+
+def notify_order(con, r, author, events):
+    """Užsakymo pasikeitimas – kitai pusei (klientui arba administratoriams)."""
+    lines = []
+    for kind, b in events:
+        if kind == "status":
+            lines.append(f"Būsena: {ORDER_STATUS_LT.get(b, b)}")
+        elif kind == "planned":
+            lines.append(f"Suplanuota data: {b}")
+        elif kind == "price":
+            lines.append(f"Kaina: {b}")
+        elif kind == "admin_note":
+            lines.append(f"Pastaba: {b}")
+        elif kind == "results":
+            lines.append(f"Pridėta rezultatų: {b}")
+        elif kind == "comment":
+            lines.append(f"Žinutė: {b}")
+        elif kind == "edited":
+            lines.append("Užsakymas pakeistas")
+    if not lines:
+        return
+    oid, title = r["id"], r["title"]
+    link = (f"Atidaryti užsakymą #{oid}", f"{PUBLIC_URL}/#order={oid}")
+    who = author["name"] or author["email"]
+    if author["role"] == "admin":
+        notify_users(con, [r["client_id"]], f"Užsakymas #{oid}: {title}", "Jūsų užsakyme naujienų", [f"#{oid} {title}", *lines], link)
+    else:
+        notify_users(con, [a for a in admin_ids(con) if a != author["id"]], f"Užsakymas #{oid}: {title}", f"Klientas {who} užsakyme",
+                     [f"#{oid} {title}", *lines], link)
 
 
 @app.patch("/api/orders/{oid}")
@@ -1109,6 +1300,7 @@ async def orders_update(oid: int, req: Request):
         for kind, b in events or [("edited", "")]:
             order_event(con, oid, u["id"], kind, b)
         audit(con, u["id"], client_ip(req), "order_update", f"{oid} {sorted(sets)}")
+        notify_order(con, r, u, events)
         return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
 
 
@@ -1128,6 +1320,7 @@ async def orders_comment(oid: int, req: Request):
         now = time.time()
         order_event(con, oid, u["id"], "comment", text)
         con.execute(f"UPDATE orders SET updated=?, {'seen_admin' if u['role'] == 'admin' else 'seen_client'}=? WHERE id=?", (now, now, oid))
+        notify_order(con, get_order(con, u, oid), u, [("comment", text)])
         return order_json(con, con.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone(), u, detail=True)
 
 
@@ -1145,7 +1338,7 @@ def orders_delete(oid: int, req: Request):
 def health():
     with db() as con:
         n = con.execute("SELECT COUNT(*) FROM users WHERE role='admin' AND pw IS NOT NULL").fetchone()[0]
-    return {"ok": True, "admins": n}
+    return {"ok": True, "admins": n, "mail": MAIL_ON}
 
 
 init_db()
@@ -1280,6 +1473,13 @@ def cli():
         sys.exit(0 if snaps else 3)
     elif len(sys.argv) >= 2 and sys.argv[1] == "restore":
         restore(sys.argv[2] if len(sys.argv) > 2 else "")
+    elif len(sys.argv) >= 3 and sys.argv[1] == "test-email":
+        if not MAIL_ON:
+            sys.exit("El. laiškai neįjungti: .env faile nustatykite SMTP_HOST, SMTP_USER, SMTP_PASS (ir, jei reikia, SMTP_FROM)")
+        os.environ["PORTAL_NO_BG"] = "1"
+        send_mail(sys.argv[2], "Bandomasis laiškas – Atea 3D Matuoklis", "Laiškai veikia",
+                  ["Jei matote šį laišką, Atea 3D Matuoklis gali siųsti kvietimus, slaptažodžio keitimo nuorodas ir pranešimus."])
+        print(f"Išsiųsta: {sys.argv[2]}")
     elif len(sys.argv) >= 3 and sys.argv[1] == "create-admin":
         email = sys.argv[2].strip().lower()
         name = sys.argv[3] if len(sys.argv) > 3 else ""

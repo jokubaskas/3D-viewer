@@ -4,6 +4,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# Programos versija (start-windows.bat: git data ir žymė) – rodoma Pagalboje
+ARG APP_VERSION=
+ENV APP_VERSION=$APP_VERSION
 RUN npm run build
 
 FROM nginx:1.27-alpine

@@ -12,8 +12,9 @@ services:
     build:
       context: ./odm
       args:
-        NODEODM_IMAGE: opendronemap/nodeodm:${NODEODM_TAG:-latest}
-    image: atea3d-nodeodm:${NODEODM_TAG:-latest}
+        # ODM versija užfiksuota (patch.py patikrintas su ja, CI); keisti – .env ODM_VERSION
+        NODEODM_IMAGE: opendronemap/nodeodm:${ODM_VERSION:-3.6.2}
+    image: atea3d-nodeodm:${ODM_VERSION:-3.6.2}
     restart: unless-stopped
     command:
       - --port=3000
@@ -84,6 +85,14 @@ services:
       # Transliacijų persiuntėjas (VPS, deploy\relay-setup.bat): klientams iš interneto – WebRTC per jį
       - RELAY_HOST=${RELAY_HOST:-}
       - RELAY_KEY=${RELAY_KEY:-}
+      # El. laiškai (kvietimai, slaptažodžio priminimas, užsakymų pranešimai) – .env SMTP_*
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Atea 3D Matuoklis}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
     volumes:
       # Duomenų bazė ir klientų failai (3D modeliai, ataskaitos, įrašai) – išlieka atnaujinus programą
       - portal-data:/data
@@ -110,6 +119,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-}
     restart: unless-stopped
     depends_on:
       - nodeodm

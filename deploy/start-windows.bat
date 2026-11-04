@@ -89,6 +89,9 @@ if not defined PUBLIC set "PUBLIC_URL=http://localhost:%PORT%"
 rem Prieiga is interneto (Cloudflare Tunnel) - tik jei .env faile nustatytas CF_TUNNEL_TOKEN
 set "PROFILE="
 for /f "tokens=1,* delims==" %%a in ('findstr /b "CF_TUNNEL_TOKEN=" .env 2^>nul') do if not "%%b"=="" set "PROFILE=--profile internet"
+rem Programos versija (rodoma Pagalboje): paskutinio pakeitimo data ir git zyme
+set "APP_VERSION="
+for /f "tokens=1,2" %%a in ('git -C .. log -1 "--format=%%cs %%h" 2^>nul') do set "APP_VERSION=%%a (%%b)"
 docker compose %PROFILE% up -d --build
 if errorlevel 1 if defined GPU (
   echo.
