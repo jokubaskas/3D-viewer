@@ -305,16 +305,14 @@ def _find_planes(S, SN, per, cand_mask, ok_normal, rng, tree, remaining, max_pla
     return out
 
 
-def flatten_facades(mesh_path, args=None):
+def _flatten(mesh):
+    """Fasadų ir stogų lyginimas. Grąžina (naujos viršūnės, pataisytų viršūnių skaičius, plokštumų skaičius)."""
     import numpy as np
     import trimesh
 
-    if not io.file_exists(mesh_path):
-        return 0
-    mesh = trimesh.load(mesh_path, process=False, force="mesh")
     V = np.asarray(mesh.vertices, dtype=np.float64).copy()
     if len(V) < 2000:
-        return 0
+        return V, 0, 0
     rng = np.random.default_rng(0)
     # Taškai tolygiai pagal plotą (ne pagal viršūnes – jų tankis tinkle netolygus) su paviršiaus normalėmis
     ns = 150000
@@ -354,8 +352,8 @@ def flatten_facades(mesh_path, args=None):
     nroof = len(planes) - nfac
 
     if not planes:
-        log.ODM_INFO("Atea: fasadų plokštumų nerasta – tinklas nekeičiamas")
-        return 0
+        log.ODM_INFO("Atea: fasadų plokštumų nerasta")
+        return V, 0, 0
 
     # Kiekvienai viršūnei – atstumas iki kiekvienos plokštumos, kurios ribose ir tolerancijoje ji yra.
     # Traukiamos tik į plokštumą atsuktos viršūnės (normalė ~ plokštumos normalė): žemė prie sienos, palangės,
@@ -405,22 +403,175 @@ def flatten_facades(mesh_path, args=None):
     log.ODM_INFO("Atea: rasta fasadų %s, stogų %s; traukiama %s viršūnių, briaunose %s (pataisyta > 2 cm: %s)"
                  % (nfac, nroof, int(moved_v.sum()), corners, moved))
 
-    # Įrašoma per OpenMVS lygiai taip, kaip ODM valo savo tinklą (opendm/mesh.py) – tas pats PLY formatas, kurį
-    # toliau skaito tekstūravimas. Nepavykus – trimesh įrašytas dvejetainis PLY (jį skaito ir OpenMVS, ir texrecon).
+    return V, moved, len(planes)
+
+
+def _save(mesh_path, V, F):
+    """Įrašoma per OpenMVS lygiai taip, kaip ODM valo savo tinklą (opendm/mesh.py) – tas pats PLY formatas, kurį
+    toliau skaito tekstūravimas. Nepavykus – trimesh įrašytas dvejetainis PLY (jį skaito ir OpenMVS, ir texrecon)."""
+    import trimesh
     work = os.path.join(os.path.dirname(mesh_path), "atea_flat")
     system.mkdir_p(work)
     tmp = os.path.join(work, "flat_in.ply")
-    faces = np.asarray(mesh.faces)
-    trimesh.Trimesh(V, faces, process=False).export(tmp, encoding="binary")
+    trimesh.Trimesh(V, F, process=False).export(tmp, encoding="binary")
     out = os.path.join(work, "flat_out.ply")
     try:
         system.run('"%s" -i "%s" -o "%s" --archive-type 3 --remove-spikes 0 --remove-spurious 0 --smooth 0 '
-                   '--target-face-num %s -v 0' % (_bin("ReconstructMesh"), tmp, out, len(faces)))
+                   '--target-face-num %s -v 0' % (_bin("ReconstructMesh"), tmp, out, len(F)))
     except Exception as e:
         log.ODM_WARNING("Atea: OpenMVS įrašymas nepavyko (%s) – įrašoma tiesiogiai" % str(e))
     if not io.file_exists(out):
         out = tmp
     shutil.move(out, mesh_path)
     shutil.rmtree(work, ignore_errors=True)
-    log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (len(planes), moved))
+
+
+def flatten_facades(mesh_path, args=None):
+    """Tik fasadų lyginimas (testams); ODM kviečia improve_mesh."""
+    import numpy as np
+    import trimesh
+    if not io.file_exists(mesh_path):
+        return 0
+    mesh = trimesh.load(mesh_path, process=False, force="mesh")
+    V, moved, n = _flatten(mesh)
+    if moved:
+        _save(mesh_path, V, np.asarray(mesh.faces))
+        log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (n, moved))
     return moved
+
+
+# ---------------------------------------------------------------- tinklo valymas
+# Plaukiojantys gabalai: nuo pagrindinio tinklo atskiros dalys – medžių lajų „debesys“ be kamieno, atplaišos prie
+# stiklo, pavieniai trikampiai. Šalinamos labai mažos (< SPECK m²) ir tos, kurios kabo ore (žemiausias taškas
+# daugiau nei FLOAT_GAP virš pagrindinio tinklo po jomis). Didelės atskiros dalys (> FLOAT_MAX m² arba > 5 % ploto)
+# ir ant žemės stovinčios (pvz. atskiras automobilis) paliekamos.
+SPECK = 2.0        # m²
+FLOAT_MAX = 200.0  # m²
+FLOAT_GAP = 1.0    # m
+# Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
+# neapfotografuotos vietos, modelio kraštas) paliekamos – ten nėra duomenų. Užpildoma prieš tekstūravimą, todėl
+# užpildyta vieta gauna tikrą tekstūrą iš nuotraukų.
+HOLE_PERIM = 12.0  # m
+HOLE_EDGES = 300
+
+
+def _vertex_components(F, nv):
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    e = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    g = coo_matrix((np.ones(len(e), dtype=np.int8), (e[:, 0], e[:, 1])), shape=(nv, nv))
+    return connected_components(g, directed=False)[1]
+
+
+def _remove_floating(V, F, face_area):
+    """Grąžina (F be plaukiojančių dalių, pašalintų dalių skaičius, pašalintas plotas m²)."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    lab = _vertex_components(F, len(V))
+    flab = lab[F[:, 0]]
+    area = np.bincount(flab, weights=face_area, minlength=lab.max() + 1)
+    main = int(np.argmax(area))
+    big = max(min(FLOAT_MAX, 0.05 * area.sum()), SPECK)
+    mv = np.flatnonzero(lab == main)
+    tree = cKDTree(V[mv, :2])
+    drop = np.zeros(len(area), dtype=bool)
+    for c in np.flatnonzero((area > 0) & (area < big)):
+        if c == main:
+            continue
+        if area[c] < SPECK:
+            drop[c] = True
+            continue
+        cv = np.flatnonzero(lab == c)
+        P = V[cv]
+        lo, hi = P[:, :2].min(axis=0), P[:, :2].max(axis=0)
+        r = float(np.linalg.norm(hi - lo)) / 2 + 3.0
+        near = tree.query_ball_point((lo + hi) / 2, r)
+        if not near:
+            continue  # po juo nieko nėra – nežinoma, paliekama
+        ground = V[mv[near], 2].min()
+        if P[:, 2].min() > ground + FLOAT_GAP:
+            drop[c] = True
+    keep = ~drop[flab]
+    return F[keep], int(drop.sum()), float(area[drop].sum())
+
+
+def _fill_holes(V, F):
+    """Uždaro mažas skyles (vėduoklė iš kontūro centro). Grąžina (V, F, užpildytų skylių skaičius)."""
+    import numpy as np
+    from collections import Counter
+    lab = _vertex_components(F, len(V))
+    flab = lab[F[:, 0]]
+    main = np.bincount(flab).argmax()
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    key = np.sort(E, axis=1)
+    _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    bd = E[cnt[inv.ravel()] == 1]  # kraštinės, priklausančios vienai sienelei (kryptis kaip sienelėje)
+    outdeg = Counter(bd[:, 0].tolist())
+    nxt = {int(a): int(b) for a, b in bd if outdeg[int(a)] == 1}
+    seen = set()
+    newV, newF, filled = [], [], 0
+    nv = len(V)
+    for start in list(nxt):
+        if start in seen:
+            continue
+        loop, v = [], start
+        while v in nxt and v not in seen:
+            seen.add(v)
+            loop.append(v)
+            v = nxt[v]
+        if v != start or len(loop) < 3 or len(loop) > HOLE_EDGES or lab[start] != main:
+            continue
+        P = V[loop]
+        per = float(np.linalg.norm(P - np.roll(P, -1, axis=0), axis=1).sum())
+        if per > HOLE_PERIM:
+            continue
+        c = nv + len(newV)
+        newV.append(P.mean(axis=0))
+        for k in range(len(loop)):
+            a, b = loop[k], loop[(k + 1) % len(loop)]
+            newF.append((b, a, c))  # priešinga kryptis nei krašto sienelėje – ta pati orientacija
+        filled += 1
+    if filled:
+        V = np.vstack([V, np.array(newV)])
+        F = np.vstack([F, np.array(newF, dtype=F.dtype)])
+    return V, F, filled
+
+
+def improve_mesh(mesh_path, args=None):
+    """ODM 3D tinklo etapo pabaigoje: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas.
+    Kiekvienas žingsnis atskirai – jei vienas nepavyksta, kiti vis tiek atliekami."""
+    import numpy as np
+    import trimesh
+    if not io.file_exists(mesh_path):
+        return
+    mesh = trimesh.load(mesh_path, process=False, force="mesh")
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    F = np.asarray(mesh.faces)
+    changed = False
+    try:
+        F2, n, a = _remove_floating(V, F, np.asarray(mesh.area_faces))
+        log.ODM_INFO("Atea: pašalinta plaukiojančių gabalų %s (%.1f m²)" % (n, a))
+        if n:
+            F, changed = F2, True
+            mesh = trimesh.Trimesh(V, F, process=False)
+            mesh.remove_unreferenced_vertices()
+            V, F = np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces)
+    except Exception as e:
+        log.ODM_WARNING("Atea: plaukiojančių gabalų šalinimas praleistas (%s)" % str(e))
+    try:
+        V2, moved, n = _flatten(mesh)
+        if moved:
+            V, changed = V2, True
+            log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (n, moved))
+    except Exception as e:
+        log.ODM_WARNING("Atea: fasadų lyginimas praleistas (%s)" % str(e))
+    try:
+        V2, F2, n = _fill_holes(V, F)
+        log.ODM_INFO("Atea: užpildyta mažų skylių %s" % n)
+        if n:
+            V, F, changed = V2, F2, True
+    except Exception as e:
+        log.ODM_WARNING("Atea: skylių užpildymas praleistas (%s)" % str(e))
+    if changed:
+        _save(mesh_path, V, F)

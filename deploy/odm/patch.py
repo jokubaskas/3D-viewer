@@ -3,7 +3,7 @@
 # praleidžiama (ODM veikia kaip originalas), kitos – pritaikomos. Pakartotinai paleidus jau pritaikytos grupės
 # nekeičiamos (žymė).
 #   mesh    – parinktis --mesh-method poisson|openmvs ir OpenMVS tinklas (opendm/atea_mesh.py)
-#   flatten – po 3D tinklo sukūrimo fasadų plokštumų lyginimas (stiklas, atspindžiai), bet kuriam metodui
+#   flatten – po 3D tinklo sukūrimo: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas
 #   fuse    – tankinant taškas priimamas, kai jį patvirtina ≥ 3 nuotraukos (ne 2) – atmetami atspindžių „taškai“
 import sys
 
@@ -44,17 +44,17 @@ GROUPS = {
          "              if not atea_done: mesh.screened_poisson_reconstruction("),
     ],
   }),
-  'flatten': ('atea_mesh.flatten_facades', {
+  'flatten': ('atea_mesh.improve_mesh', {
     MESHING: [
         ("                threads=max(1, self.params.get('max_concurrency') - 1)), # poissonrecon can get stuck on some machines if --threads == all cores\n",
          "                threads=max(1, self.params.get('max_concurrency') - 1)), # poissonrecon can get stuck on some machines if --threads == all cores\n"
          "\n"
-         "              # Atea: fasadų plokštumų lyginimas (stiklas, atspindžiai) – bet kuriam tinklo metodui\n"
+         "              # Atea: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas – bet kuriam metodui\n"
          "              try:\n"
          "                  from opendm import atea_mesh\n"
-         "                  atea_mesh.flatten_facades(tree.odm_mesh, args)\n"
+         "                  atea_mesh.improve_mesh(tree.odm_mesh, args)\n"
          "              except Exception as e:\n"
-         "                  log.ODM_WARNING('Atea: fasadų lyginimas praleistas (%s)' % str(e))\n"),
+         "                  log.ODM_WARNING('Atea: tinklo valymas praleistas (%s)' % str(e))\n"),
     ],
   }),
   'fuse': ('Atea: taškas patvirtinamas', {
