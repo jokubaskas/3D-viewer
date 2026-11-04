@@ -1555,4 +1555,11 @@ export const EN = {
   'Pranešimai el. paštu: išjungti': 'E-mail notifications: off',
   'Pranešimai el. paštu įjungti': 'E-mail notifications enabled',
   'Pranešimai el. paštu išjungti': 'E-mail notifications disabled',
+  '→ eilutė': '→ row',
+  'Sveiki,\n\nsukūrėme jums paskyrą. Atidarykite nuorodą ir nusistatykite slaptažodį (nuoroda galioja 7 dienas):\n\n{l}\n':
+    'Hello,\n\nwe have created an account for you. Open the link and set your password (the link is valid for 7 days):\n\n{l}\n',
+  'Tikras ortofoto ir aukščių modeliai, sukurti ODM iš nuotraukų. 3D modelį su LKS-94 koordinatėmis (OBJ / GLB) išsaugosite atidarę jį ir paspaudę':
+    'True orthophoto and elevation models created by ODM from the photos. To save the 3D model in LKS-94 coordinates (OBJ / GLB), open it and click',
+  'Modelis → Išsaugoti kompiuteryje': 'Model → Save to computer',
+  'versija': 'version',
 };

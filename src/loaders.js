@@ -54,10 +54,6 @@ async function expandZips(files, onStatus) {
   return out;
 }
 
-function dracoPath() {
-  return location.protocol === 'file:' ? 'https://www.gstatic.com/draco/versioned/decoders/1.5.7/' : './draco/';
-}
-
 /**
  * Įkelia modelį iš pasirinktų failų.
  * @returns {Promise<{object: THREE.Object3D, name: string, format: string, originOffset: THREE.Vector3, suggestedUp: 'y'|'z'|null, warnings: string[]}>}
@@ -120,10 +116,11 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
     case 'glb':
     case 'gltf': {
       const loader = new GLTFLoader(manager);
-      const draco = new DRACOLoader().setDecoderPath(dracoPath()); // be manager – dekoderio failai nėra modelio dalis
+      // Draco ir KTX2 dekoderiai įdėti į programą (three.js) – veikia ir be interneto, ir atidarius iš disko
+      const draco = new DRACOLoader(); // be manager – dekoderio failai nėra modelio dalis
       loader.setDRACOLoader(draco);
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const ktx2 = new KTX2Loader().setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/libs/basis/');
+      const ktx2 = new KTX2Loader();
       loader.setKTX2Loader(ktx2);
       const gltf = await new Promise((res, rej) => loader.parse(data, '', res, rej));
       object = gltf.scene || gltf.scenes[0];

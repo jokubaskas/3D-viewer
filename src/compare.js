@@ -58,7 +58,7 @@ export class CompareModel {
     for (let i = 0; i < toIndex.length; i++) {
       onStatus?.(i, toIndex.length);
       await tick();
-      toIndex[i].computeBoundsTree({ maxLeafTris: 10 });
+      toIndex[i].computeBoundsTree({ targetLeafSize: 10 });
     }
     this._updateBox();
     v.requestRender();

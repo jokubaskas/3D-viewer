@@ -3,8 +3,8 @@ services:
   nodeodm:
     build:
       args:
-        NODEODM_IMAGE: opendronemap/nodeodm:gpu
-    image: atea3d-nodeodm:gpu
+        NODEODM_IMAGE: opendronemap/nodeodm:${ODM_VERSION:-3.6.2}-gpu
+    image: atea3d-nodeodm:${ODM_VERSION:-3.6.2}-gpu
     deploy:
       resources:
         reservations:

@@ -1,0 +1,62 @@
+# Automatinis tikrinimas kiekvienam pakeitimui: programa susikuria, testai praeina,
+# Atea ODM pakeitimai tinka užfiksuotai ODM versijai.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Programa (build + testai)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run check:i18n
+      - run: npm run build
+      - run: npm run build:single
+
+  portal:
+    name: Portalas (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "fastapi==0.115.*" "uvicorn==0.32.*" httpx pytest
+      - run: PORTAL_NO_BG=1 pytest -q deploy/portal
+      - name: Python sintaksė (ai, odm, relay)
+        run: python -m py_compile deploy/ai/*.py deploy/odm/*.py
+
+  odm:
+    name: ODM pakeitimai
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy scipy trimesh pytest
+      - run: pytest -q deploy/odm
+      - name: patch.py tinka užfiksuotai ODM versijai
+        run: |
+          V=$(grep -oP 'ODM_VERSION:-\K[0-9.]+' deploy/docker-compose.yml)
+          git clone -q --depth 1 --branch "v$V" https://github.com/OpenDroneMap/ODM.git /tmp/odm
+          python deploy/odm/patch.py /tmp/odm | tee /tmp/patch.log
+          n=$(grep -c ': pritaikyta' /tmp/patch.log)
+          g=$(grep -c "^  '[a-z]*': (" deploy/odm/patch.py)
+          echo "Pritaikyta $n iš $g grupių (ODM $V)"
+          test "$n" = "$g"
+          python -m py_compile /tmp/odm/opendm/config.py /tmp/odm/stages/odm_meshing.py /tmp/odm/stages/openmvs.py

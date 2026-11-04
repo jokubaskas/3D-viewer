@@ -142,6 +142,10 @@ Prielaidos ir tikslumas:
    Programa visada paleidžiama tuo pačiu adresu **http://localhost:8080**: jei ji jau veikia, naudojamas jos prievadas; po sustabdymo palaukiama, kol Docker atlaisvins 8080. Kitas prievadas (8081…) parenkamas tik tada, kai 8080 tikrai užimtas kitos programos – tada parodoma, kuri programa jį užima. Pastovus adresas svarbus: naršyklė projektų sąrašą ir nustatymus saugo atskirai kiekvienam adresui. Paleidęs failas patikrina, ar programa atsidaro; jei ne – parodo konteinerių būseną ir `web` pranešimus.
 4. Programoje **„Iš nuotraukų“** palikite adresą `./odm/`, o rakto laukelį – tuščią: per `http://localhost:8080` raktą prideda serveris.
 
+**Atnaujinimas vienu paspaudimu – `deploy\update.bat`:** parodo, kas naujo, patikrina, ar serveris neapdoroja 3D projekto ar nemoko AI (jei taip – siūlo palaukti), parsiunčia naują versiją (`git pull`) ir paleidžia `start-windows.bat` (prieš perkuriant serverį – atsarginė duomenų kopija). Paskyros, užsakymai, failai ir ODM projektai išlieka. Dabartinė versija (data ir žymė) matoma programoje: **?** (Pagalba) apačioje ir vartotojo meniu.
+
+OpenDroneMap versija užfiksuota (`ODM_VERSION`, dabar 3.6.2) – Atea pakeitimai (`deploy/odm/patch.py`) automatiškai patikrinami su ja kiekvienam pakeitimui (GitHub Actions), todėl atnaujinimas netikėtai ODM nepakeičia.
+
 Kai naudojate vieno failo versiją (`release/…html`), programa pati suranda vietinį serverį prievaduose 8080–8099 (pvz. `http://localhost:8081/odm/` ir `/ai/`). Jei jungiatės tiesiai prie NodeODM (ne per 8080), įveskite `NODEODM_TOKEN` reikšmę iš `deploy/.env`.
 Docker Desktop pagal nutylėjimą WSL2 skiria tik dalį RAM. Dideliems projektams sukurkite `%UserProfile%\.wslconfig`:
 
@@ -395,7 +399,7 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 
 **Pastabos:**
 - Kompiuteris turi būti įjungtas ir neužmigęs: Windows → Maitinimas → Miegas: **Niekada**; Docker Desktop → **Start when you sign in**.
-- **Duomenys atnaujinant neištrinami:** paskyros, užsakymai ir jų istorija, priskyrimai, DBOX zona ir klientų failai saugomi Docker tome `portal-data`, kuris išlieka atnaujinant (`git pull` + `start-windows.bat`), perkuriant konteinerius ir paleidus `docker compose down`. Jį ištrina tik `docker compose down -v`, `docker volume rm` / `prune` ar Docker Desktop **Clean / Purge data / Reset to factory defaults** – to nedarykite.
+- **Duomenys atnaujinant neištrinami:** paskyros, užsakymai ir jų istorija, priskyrimai, DBOX zona ir klientų failai saugomi Docker tome `portal-data`, kuris išlieka atnaujinant (`update.bat` arba `git pull` + `start-windows.bat`), perkuriant konteinerius ir paleidus `docker compose down`. Jį ištrina tik `docker compose down -v`, `docker volume rm` / `prune` ar Docker Desktop **Clean / Purge data / Reset to factory defaults** – to nedarykite.
 - **Atsarginės kopijos (automatiškai):** portalas kas parą ir `start-windows.bat` – prieš kiekvieną atnaujinimą – padaro kopiją į aplanką kompiuteryje (numatyta – `atea3d-atsargines-kopijos` šalia programos aplanko; kitą vietą nurodykite `deploy\.env` faile, pvz. `BACKUP_DIR=O:\` – disko šaknyje sukuriamas aplankas `Atea3D-atsargines-kopijos`). Vietiniame diske kopijos rašomos tiesiai ten; **tinklo ar USB diske** – daromos vietoje ir kas valandą (bei paleidžiant `start-windows.bat`) nukopijuojamos į jį (Windows užduotis „Atea3D atsargines kopijos“, `robocopy` be trynimo), nes Docker tinklo diskų nemato, o atjungus USB serveris turi veikti toliau. Nukopijuoto kelio nematomi simboliai (pvz. iš Windows ypatybių) pašalinami automatiškai. Ten:
   - `db/portal-<data>-<priežastis>.db` – visa duomenų bazė (laikomos 30 paskutinių);
   - `files/` – klientų failų kopija (kopijuojami tik nauji ir pasikeitę);

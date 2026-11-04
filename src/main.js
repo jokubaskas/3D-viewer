@@ -117,6 +117,7 @@ TOOL_ORDER.forEach((group, gi) => {
     toolbar.append(b);
   }
 });
+$('#help-version').textContent = `Atea 3D Matuoklis · ${tr('versija')} ${__APP_VERSION__}`;
 $('#help-tools').innerHTML = [...Object.values(TOOLS).filter((t) => t.key), AI_DETECT_BTN].map((t) => `<li><span>${t.label}</span><kbd>${t.key}</kbd></li>`).join('');
 
 // ---------------------------------------------------------------------------
@@ -2168,7 +2169,8 @@ const closePages = () => {
     m.innerHTML = `<div class="small"><b>${escapeHtml(user.name || user.email)}</b><div class="muted">${escapeHtml(user.email)} · ${escapeHtml(tr(user.role === 'admin' ? 'administratorius' : 'klientas'))}</div></div>
       <button class="btn btn-ghost btn-sm" data-um="notify" aria-pressed="${user.notify !== false}">${icon(user.notify !== false ? 'check' : 'close')}${escapeHtml(tr(user.notify !== false ? 'Pranešimai el. paštu: įjungti' : 'Pranešimai el. paštu: išjungti'))}</button>
       <button class="btn btn-ghost btn-sm" data-um="pw">${icon('edit')}${escapeHtml(tr('Keisti slaptažodį'))}</button>
-      <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>`;
+      <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>
+      <div class="small muted" style="padding:2px 4px">${escapeHtml(tr('versija'))} ${escapeHtml(__APP_VERSION__)}</div>`;
     document.body.append(m);
     const r = e.currentTarget.getBoundingClientRect();
     m.style.top = `${r.bottom + 6}px`;

@@ -12,8 +12,9 @@ services:
     build:
       context: ./odm
       args:
-        NODEODM_IMAGE: opendronemap/nodeodm:${NODEODM_TAG:-latest}
-    image: atea3d-nodeodm:${NODEODM_TAG:-latest}
+        # ODM versija užfiksuota (patch.py patikrintas su ja, CI); keisti – .env ODM_VERSION
+        NODEODM_IMAGE: opendronemap/nodeodm:${ODM_VERSION:-3.6.2}
+    image: atea3d-nodeodm:${ODM_VERSION:-3.6.2}
     restart: unless-stopped
     command:
       - --port=3000
@@ -118,6 +119,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-}
     restart: unless-stopped
     depends_on:
       - nodeodm
