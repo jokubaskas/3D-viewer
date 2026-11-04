@@ -201,3 +201,69 @@ def test_patch_groups_on_fake_odm(tmp_path):
     assert len(re.findall(r": pritaikyta", out)) == len(ns["GROUPS"]), out
     out = run()
     assert len(re.findall(r"jau pritaikyta", out)) == len(ns["GROUPS"]), out
+
+
+def _boundary_edges(F):
+    E = np.sort(np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]]), axis=1)
+    _, cnt = np.unique(E, axis=0, return_counts=True)
+    return int((cnt == 1).sum())
+
+
+def test_remove_floating(tmp_path):
+    """Ore kabanti „laja“ ir smulkūs trupiniai pašalinami; ant žemės stovintis automobilis paliekamas."""
+    ground = _ground(-20, 20, -20, 20)
+    blob = trimesh.creation.icosphere(subdivisions=3, radius=2.0)
+    blob.apply_translation([5, 5, 6])          # kabo ore (be kamieno)
+    car = trimesh.creation.box(extents=[4.5, 1.8, 1.5])
+    car.apply_translation([-5, -5, 0.8])       # atskiras, bet stovi ant žemės
+    speck = trimesh.Trimesh([[0, 0, 3], [0.3, 0, 3], [0, 0.3, 3]], [[0, 1, 2]], process=False)
+    mesh = trimesh.util.concatenate([ground, blob, car, speck])
+    F, n, a = atea_mesh._remove_floating(np.asarray(mesh.vertices), np.asarray(mesh.faces), np.asarray(mesh.area_faces))
+    assert n == 2
+    assert len(F) == len(ground.faces) + len(car.faces)
+
+
+def test_fill_holes():
+    """Maža skylė (1×1 m) užpildoma; didelė (6×6 m) ir modelio išorinis kraštas – ne."""
+    g = _ground(-20, 20, -20, 20)
+    c = g.triangles_center
+    small = (np.abs(c[:, 0] - 5) < 0.5) & (np.abs(c[:, 1] - 5) < 0.5)
+    large = (np.abs(c[:, 0] + 8) < 3) & (np.abs(c[:, 1] + 8) < 3)
+    g.update_faces(~(small | large))
+    V, F = np.asarray(g.vertices), np.asarray(g.faces)
+    b0 = _boundary_edges(F)
+    V2, F2, n = atea_mesh._fill_holes(V, F)
+    assert n == 1
+    assert _boundary_edges(F2) == b0 - 8  # mažos skylės kontūras – 8 kraštinės (1 m / 0.5 m tinklelis)
+    # orientacija: naujų sienelių normalės į tą pačią pusę kaip žemės
+    m = trimesh.Trimesh(V2, F2, process=False)
+    assert (m.face_normals[len(F):, 2] > 0.9).all()
+
+
+def test_improve_mesh(tmp_path):
+    """Visas žingsnis: pastatas su triukšmu + plaukiojantis gabalas + skylė stoge."""
+    box = trimesh.creation.box(extents=[20, 20, 15])
+    box.apply_translation([0, 0, 7.5])
+    box.update_faces(box.face_normals[:, 2] > -0.5)
+    box.remove_unreferenced_vertices()
+    V, F = trimesh.remesh.subdivide_to_size(box.vertices, box.faces, 0.4)
+    b = trimesh.Trimesh(V, F, process=True)
+    c = b.triangles_center
+    b.update_faces(~((np.abs(c[:, 2] - 15) < 1e-6) & (np.abs(c[:, 0] - 3) < 0.6) & (np.abs(c[:, 1] - 3) < 0.6)))
+    b.remove_unreferenced_vertices()
+    rng = np.random.default_rng(3)
+    b.vertices = b.vertices + b.vertex_normals * rng.normal(0, 0.1, (len(b.vertices), 1))
+    ground = _ground(-30, 30, -30, 30)
+    ground.update_faces(~((np.abs(ground.triangles_center[:, 0]) < 10) & (np.abs(ground.triangles_center[:, 1]) < 10)))
+    ground.remove_unreferenced_vertices()
+    blob = trimesh.creation.icosphere(subdivisions=3, radius=1.5)
+    blob.apply_translation([14, 0, 8])
+    # pastatas sujungtas su žeme (kaip tikrame tinkle) – čia pakanka, kad būtų atskiras, bet stovintis ant žemės
+    mesh = trimesh.util.concatenate([b, ground, blob])
+    p = str(tmp_path / "odm_mesh.ply")
+    mesh.export(p, encoding="binary")
+    atea_mesh.improve_mesh(p)
+    out = trimesh.load(p, process=False, force="mesh")
+    assert len(out.faces) < len(mesh.faces) - len(blob.faces) + 200  # gabalas pašalintas (+ užpildas)
+    assert not (np.linalg.norm(np.asarray(out.vertices) - [14, 0, 8], axis=1) < 1.6).any()
+    assert _boundary_edges(np.asarray(out.faces)) < _boundary_edges(np.asarray(mesh.faces)) - len(blob.faces) * 0  # skylė užpildyta
