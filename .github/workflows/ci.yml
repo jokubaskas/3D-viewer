@@ -53,7 +53,7 @@ jobs:
       - run: pytest -q deploy/odm
       - name: patch.py tinka užfiksuotai ODM versijai
         run: |
-          V=$(grep -oP 'ODM_VERSION:-\K[0-9.]+' deploy/docker-compose.yml)
+          V=$(grep -oP 'ODM_VERSION:-\K[0-9.]+' deploy/docker-compose.yml | head -1)
           git clone -q --depth 1 --branch "v$V" https://github.com/OpenDroneMap/ODM.git /tmp/odm
           python deploy/odm/patch.py /tmp/odm | tee /tmp/patch.log
           n=$(grep -c ': pritaikyta' /tmp/patch.log)
