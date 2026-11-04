@@ -92,6 +92,19 @@ def test_flatten_facades(tmp_path):
     assert not os.path.exists(tmp_path / "atea_flat")
 
 
+def test_flatten_saves_when_openmvs_fails(tmp_path, monkeypatch):
+    """ReconstructMesh nepavyksta – išlygintas tinklas vis tiek įrašomas (ne originalas)."""
+    def fail(*a, **k):
+        raise Exception("Child returned 1")
+    monkeypatch.setattr(atea_mesh.system, "run", fail)
+    facade = _grid(0, 40, 0, 20, 0.5, lambda x, z: 0.3 * np.sin(x * 1.3) * np.cos(z * 0.9))
+    p = str(tmp_path / "odm_mesh.ply")
+    facade.export(p, encoding="binary")
+    assert atea_mesh.flatten_facades(p) > 100
+    V = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)
+    assert np.abs(V[:, 1] - np.median(V[:, 1])).mean() < np.abs(facade.vertices[:, 1]).mean() * 0.6
+
+
 def test_flatten_small_mesh_untouched(tmp_path):
     m = trimesh.creation.box()
     p = str(tmp_path / "m.ply")

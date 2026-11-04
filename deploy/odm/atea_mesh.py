@@ -340,16 +340,23 @@ def flatten_facades(mesh_path, args=None):
     V[m] -= best_d[m, None] * normals[which[m]]
     moved = int((np.abs(best_d[m]) > 0.02).sum())
 
-    # Įrašoma per OpenMVS (tas pats PLY formatas, kurį toliau skaito tekstūravimas); nepavykus – originalas lieka
+    log.ODM_INFO("Atea: rastos %s fasadų plokštumos, traukiama %s viršūnių (pataisyta > 2 cm: %s)" % (len(planes), int(m.sum()), moved))
+
+    # Įrašoma per OpenMVS lygiai taip, kaip ODM valo savo tinklą (opendm/mesh.py) – tas pats PLY formatas, kurį
+    # toliau skaito tekstūravimas. Nepavykus – trimesh įrašytas dvejetainis PLY (jį skaito ir OpenMVS, ir texrecon).
     work = os.path.join(os.path.dirname(mesh_path), "atea_flat")
     system.mkdir_p(work)
     tmp = os.path.join(work, "flat_in.ply")
-    trimesh.Trimesh(V, np.asarray(mesh.faces), process=False).export(tmp, encoding="binary")
+    faces = np.asarray(mesh.faces)
+    trimesh.Trimesh(V, faces, process=False).export(tmp, encoding="binary")
     out = os.path.join(work, "flat_out.ply")
-    system.run('"%s" -i "%s" -o "%s" --archive-type 3 --remove-spikes 0 --remove-spurious 0 --close-holes 0 --smooth 0 -v 0'
-               % (_bin("ReconstructMesh"), tmp, out))
+    try:
+        system.run('"%s" -i "%s" -o "%s" --archive-type 3 --remove-spikes 0 --remove-spurious 0 --smooth 0 '
+                   '--target-face-num %s -v 0' % (_bin("ReconstructMesh"), tmp, out, len(faces)))
+    except Exception as e:
+        log.ODM_WARNING("Atea: OpenMVS įrašymas nepavyko (%s) – įrašoma tiesiogiai" % str(e))
     if not io.file_exists(out):
-        raise Exception("išlygintas tinklas neįrašytas")
+        out = tmp
     shutil.move(out, mesh_path)
     shutil.rmtree(work, ignore_errors=True)
     log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (len(planes), moved))
