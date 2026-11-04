@@ -177,7 +177,7 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh)")
         def refine(dev):
             system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --scales 2 -v 0'
+                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --scales 2 --regularity-weight 0.35 -v 0'
                        % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args, low_mem),
                           6 if low_mem else 8, 32 if low_mem else 16))
         try:
@@ -218,3 +218,139 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         if os.path.exists(out_mesh):
             os.remove(out_mesh)
         return False
+
+
+# ---------------------------------------------------------------- fasadų lyginimas
+# Stiklas ir atspindžiai fotogrametrijai „nematomi“: fasadas tinkle išeina banguotas, su įdubomis. Didelės vertikalios
+# plokštumos (fasadai) randamos RANSAC metodu iš tinklo viršūnių, o viršūnės, esančios arti plokštumos ir jos ribose,
+# priglaudžiamos prie jos. Gilesni nei TOL išsikišimai ar įdubos (balkonai, nišos, objektai prie sienos) nekeičiami.
+FIT = 0.15        # m – plokštumos taškų paklaida ją ieškant
+TOL = 0.6         # m – kiek toli nuo plokštumos viršūnė dar priglaudžiama
+MIN_AREA = 30.0   # m² – mažiausias fasado plotas (mažesnės plokštumos – medžiai, mašinos, triukšmas – neliečiamos)
+VERT = 0.2        # |n.z| < VERT – plokštuma laikoma vertikalia
+MAX_PLANES = 40
+ITERS = 150
+BIN = 1.0         # m – plokštumos ribų nustatymo tinklelis
+
+
+def _run_extent(vals, step=BIN):
+    """Didžiausios ištisinės srities ribos (be pavienių toli nutolusių taškų, pvz. žemės linijos išilgai plokštumos)."""
+    import numpy as np
+    lo = vals.min()
+    idx = np.floor((vals - lo) / step).astype(int)
+    occ = np.bincount(idx) > 0
+    best, start, cur = (0, 0), None, 0
+    for i, o in enumerate(occ):
+        if o:
+            if start is None:
+                start = i
+            if i - start + 1 > best[1] - best[0]:
+                best = (start, i + 1)
+        else:
+            start = None
+    return lo + best[0] * step, lo + best[1] * step
+
+
+def flatten_facades(mesh_path, args=None):
+    import numpy as np
+    import trimesh
+
+    if not io.file_exists(mesh_path):
+        return 0
+    mesh = trimesh.load(mesh_path, process=False, force="mesh")
+    V = np.asarray(mesh.vertices, dtype=np.float64).copy()
+    if len(V) < 2000:
+        return 0
+    rng = np.random.default_rng(0)
+    # Taškai tolygiai pagal plotą (ne pagal viršūnes – jų tankis tinkle netolygus) su paviršiaus normalėmis
+    ns = 150000
+    S, fi = trimesh.sample.sample_surface(mesh, ns, seed=0)
+    SN = np.asarray(mesh.face_normals)[fi]
+    per = float(mesh.area) / ns  # m² vienam imties taškui
+
+    from scipy.spatial import cKDTree
+    tree = cKDTree(S)
+    vert = np.abs(SN[:, 2]) < VERT  # taškai vertikaliuose paviršiuose – hipotezių pradžia
+    planes = []
+    remaining = np.ones(ns, dtype=bool)
+    for _ in range(MAX_PLANES):
+        idx = np.flatnonzero(remaining)
+        cand = np.flatnonzero(remaining & vert)
+        if len(cand) * per < MIN_AREA or len(idx) < 50:
+            break
+        P = S[idx]
+        PN = SN[idx]
+        best, best_cnt = None, 0
+        # Hipotezė – plokštuma, pritaikyta prie atsitiktinio taško 3 m aplinkos (fasadai sudaro mažą ploto dalį,
+        # todėl trys visiškai atsitiktiniai taškai beveik niekada nebūna ant to paties fasado)
+        for _ in range(ITERS):
+            a0 = S[cand[rng.integers(len(cand))]]
+            nb = [k for k in tree.query_ball_point(a0, 3.0) if remaining[k] and vert[k]]
+            if len(nb) < 8:
+                continue
+            Q = S[nb]
+            a = Q.mean(axis=0)
+            n = np.linalg.svd(Q - a, full_matrices=False)[2][2]
+            if abs(n[2]) >= VERT:
+                continue
+            cnt = int(((np.abs((P - a) @ n) < FIT) & (np.abs(PN @ n) > 0.75)).sum())
+            if cnt > best_cnt:
+                best, best_cnt = (a, n), cnt
+        if best is None or best_cnt * per < MIN_AREA:
+            break
+        a, n = best
+        inl = (np.abs((P - a) @ n) < FIT) & (np.abs(PN @ n) > 0.75)
+        Q = P[inl]
+        c = Q.mean(axis=0)
+        n = np.linalg.svd(Q - c, full_matrices=False)[2][2]
+        # Pašalinama visa fasado juosta (±TOL), ne tik tikslūs taškai – kitaip banguotas fasadas suskyla į kelias
+        # lygiagrečias „plokštumas“, kurios traukia viršūnes kiekviena į save
+        remaining[idx[(np.abs((P - c) @ n) < TOL) & (np.abs(PN @ n) > 0.5)]] = False
+        if abs(n[2]) >= VERT:
+            continue
+        u = np.cross([0.0, 0.0, 1.0], n)
+        u /= np.linalg.norm(u)
+        inl = (np.abs((P - c) @ n) < FIT) & (np.abs(PN @ n) > 0.75)
+        Q = P[inl]
+        if len(Q) * per < MIN_AREA:
+            continue
+        u0, u1 = _run_extent((Q - c) @ u)
+        z0, z1 = _run_extent(Q[:, 2])
+        if (u1 - u0) * (z1 - z0) < MIN_AREA:
+            continue
+        planes.append((c, n, u, u0 - 0.3, u1 + 0.3, z0 - 0.3, z1 + 0.3))
+
+    if not planes:
+        log.ODM_INFO("Atea: fasadų plokštumų nerasta – tinklas nekeičiamas")
+        return 0
+
+    # Traukiamos tik į fasadą atsuktos viršūnės (normalė ~ plokštumos normalė): žemė prie sienos, balkonų ir
+    # palangių viršus / apačia, mašinų stogai lieka nepaliesti
+    VN = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    best_d = np.full(len(V), np.inf)
+    which = np.full(len(V), -1)
+    for i, (c, n, u, u0, u1, z0, z1) in enumerate(planes):
+        d = (V - c) @ n
+        uu = (V - c) @ u
+        m = (np.abs(d) < TOL) & (np.abs(VN @ n) > 0.5) & (uu > u0) & (uu < u1) & (V[:, 2] > z0) & (V[:, 2] < z1) & (np.abs(d) < np.abs(best_d))
+        best_d[m] = d[m]
+        which[m] = i
+    m = which >= 0
+    normals = np.array([p[1] for p in planes])
+    V[m] -= best_d[m, None] * normals[which[m]]
+    moved = int((np.abs(best_d[m]) > 0.02).sum())
+
+    # Įrašoma per OpenMVS (tas pats PLY formatas, kurį toliau skaito tekstūravimas); nepavykus – originalas lieka
+    work = os.path.join(os.path.dirname(mesh_path), "atea_flat")
+    system.mkdir_p(work)
+    tmp = os.path.join(work, "flat_in.ply")
+    trimesh.Trimesh(V, np.asarray(mesh.faces), process=False).export(tmp, encoding="binary")
+    out = os.path.join(work, "flat_out.ply")
+    system.run('"%s" -i "%s" -o "%s" --archive-type 3 --remove-spikes 0 --remove-spurious 0 --close-holes 0 --smooth 0 -v 0'
+               % (_bin("ReconstructMesh"), tmp, out))
+    if not io.file_exists(out):
+        raise Exception("išlygintas tinklas neįrašytas")
+    shutil.move(out, mesh_path)
+    shutil.rmtree(work, ignore_errors=True)
+    log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (len(planes), moved))
+    return moved

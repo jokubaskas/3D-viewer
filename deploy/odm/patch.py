@@ -1,14 +1,19 @@
-# Atea 3D Matuoklis – ODM pakeitimas atvaizdo kūrimo metu (deploy/odm/Dockerfile).
-# Prideda parinktį --mesh-method poisson|openmvs ir jos naudojimą 3D tinklo etape (opendm/atea_mesh.py).
-# Jei ODM naujoje versijoje šios vietos pasikeitė – nieko nekeičiama (visi pakeitimai arba nė vieno): parinkties
-# nebus, NodeODM ją praleis ir bus naudojamas įprastas Poisson, t. y. apdorojimas nesugrius.
+# Atea 3D Matuoklis – ODM pakeitimai atvaizdo kūrimo metu (deploy/odm/Dockerfile).
+# Kiekviena grupė taikoma atskirai ir „visi arba nė vieno“: jei naujoje ODM versijoje grupės vietos pasikeitė, ta grupė
+# praleidžiama (ODM veikia kaip originalas), kitos – pritaikomos. Pakartotinai paleidus jau pritaikytos grupės
+# nekeičiamos (žymė).
+#   mesh    – parinktis --mesh-method poisson|openmvs ir OpenMVS tinklas (opendm/atea_mesh.py)
+#   flatten – po 3D tinklo sukūrimo fasadų plokštumų lyginimas (stiklas, atspindžiai), bet kuriam metodui
+#   fuse    – tankinant taškas priimamas, kai jį patvirtina ≥ 3 nuotraukos (ne 2) – atmetami atspindžių „taškai“
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "/code"
 CONFIG = ROOT + "/opendm/config.py"
 MESHING = ROOT + "/stages/odm_meshing.py"
+OPENMVS = ROOT + "/stages/openmvs.py"
 
-edits = {
+GROUPS = {
+  'mesh': ('atea_mesh.openmvs_mesh', {
     CONFIG: [
         ("    'mesh_size': 'odm_meshing',\n",
          "    'mesh_size': 'odm_meshing',\n    'mesh_method': 'odm_meshing',\n"),
@@ -38,15 +43,48 @@ edits = {
          "\n"
          "              if not atea_done: mesh.screened_poisson_reconstruction("),
     ],
+  }),
+  'flatten': ('atea_mesh.flatten_facades', {
+    MESHING: [
+        ("                threads=max(1, self.params.get('max_concurrency') - 1)), # poissonrecon can get stuck on some machines if --threads == all cores\n",
+         "                threads=max(1, self.params.get('max_concurrency') - 1)), # poissonrecon can get stuck on some machines if --threads == all cores\n"
+         "\n"
+         "              # Atea: fasadų plokštumų lyginimas (stiklas, atspindžiai) – bet kuriam tinklo metodui\n"
+         "              try:\n"
+         "                  from opendm import atea_mesh\n"
+         "                  atea_mesh.flatten_facades(tree.odm_mesh, args)\n"
+         "              except Exception as e:\n"
+         "                  log.ODM_WARNING('Atea: fasadų lyginimas praleistas (%s)' % str(e))\n"),
+    ],
+  }),
+  'fuse': ('Atea: taškas patvirtinamas', {
+    OPENMVS: [
+        ("            number_views_fuse = 2\n",
+         "            # Atea: taškas patvirtinamas bent 3 nuotraukose – atspindžių stikle „taškai“ nesutampa ir atmetami\n"
+         "            number_views_fuse = 3 if len(photos) >= 30 else 2\n"),
+    ],
+  }),
 }
 
-texts = {p: open(p, encoding="utf-8").read() for p in edits}
-missing = [(p, a[:60]) for p, lst in edits.items() for a, _ in lst if texts[p].count(a) != 1]
-if missing:
-    print("ATEA PATCH: ODM pakeitimo vietos nerastos – naudojamas originalus ODM (Poisson):", missing)
-    sys.exit(0)
-for p, lst in edits.items():
-    for a, b in lst:
-        texts[p] = texts[p].replace(a, b)
-    open(p, "w", encoding="utf-8").write(texts[p])
-print("ATEA PATCH: --mesh-method openmvs įdiegtas")
+texts = {}
+for name, (marker, edits) in GROUPS.items():
+    try:
+        for f in edits:
+            if f not in texts:
+                texts[f] = open(f, encoding="utf-8").read()
+    except OSError as e:
+        print("ATEA PATCH %s: failas nerastas (%s) – praleista" % (name, e))
+        continue
+    if any(marker in texts[f] for f in edits):
+        print("ATEA PATCH %s: jau pritaikyta" % name)
+        continue
+    missing = [(f, a[:60]) for f, lst in edits.items() for a, _ in lst if texts[f].count(a) != 1]
+    if missing:
+        print("ATEA PATCH %s: vietos nerastos – praleista (originalus ODM):" % name, missing)
+        continue
+    for f, lst in edits.items():
+        for a, b in lst:
+            texts[f] = texts[f].replace(a, b)
+    print("ATEA PATCH %s: pritaikyta" % name)
+for f, t in texts.items():
+    open(f, "w", encoding="utf-8").write(t)
