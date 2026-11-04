@@ -156,6 +156,23 @@ def test_flatten_building_corners_and_roof(tmp_path):
     assert np.allclose(out[nb:], ground.vertices, atol=1e-6)
 
 
+def test_flatten_parked_cars_untouched(tmp_path):
+    """Ilga automobilių eilė: tinkle ji „aptraukta“ ištisai (iš šono – 40 m × 1.5 m „siena“) – neturi būti
+    ištiesinta ar suplokštinta (tai ne fasadas)."""
+    rng = np.random.default_rng(5)
+    row = trimesh.creation.box(extents=[40, 1.8, 1.5])
+    row.apply_translation([0, 0, 0.75])
+    V, F = trimesh.remesh.subdivide_to_size(row.vertices, row.faces, 0.25)
+    row = trimesh.Trimesh(V, F, process=True)
+    row.vertices = row.vertices + row.vertex_normals * rng.normal(0, 0.05, (len(row.vertices), 1))
+    mesh = trimesh.util.concatenate([row, _ground(-30, 30, -15, 15)])
+    p = str(tmp_path / "odm_mesh.ply")
+    mesh.export(p, encoding="binary")
+    atea_mesh.flatten_facades(p)
+    out = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)
+    assert np.allclose(out, mesh.vertices, atol=1e-5)
+
+
 def test_flatten_small_mesh_untouched(tmp_path):
     m = trimesh.creation.box()
     p = str(tmp_path / "m.ply")

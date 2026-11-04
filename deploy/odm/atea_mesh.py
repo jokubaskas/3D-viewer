@@ -231,6 +231,7 @@ TOL = 0.6         # m – kiek toli nuo fasado viršūnė dar priglaudžiama
 TOL_H = 0.3       # m – tas pats stogui (mažiau – stogo įranga, parapetai lieka)
 MIN_AREA = 30.0   # m² – mažiausias plokštumos plotas (mažesnės – medžiai, mašinos, triukšmas – neliečiamos)
 VERT = 0.2        # |n.z| < VERT – plokštuma laikoma vertikalia
+MIN_HEIGHT = 3.5  # m – fasadas bent tokio aukščio (automobilių eilė, tvora, krūmai iš šono – žemesni, neliečiami)
 HORIZ = 0.97      # |n.z| > HORIZ – horizontali
 ROOF_GAP = 2.0    # m – stogas turi būti ne toliau kaip tiek nuo kurio nors fasado viršaus
 ROOF_MIN_H = 3.0  # m – ir bent tiek aukščiau to fasado apačios (ne žemė)
@@ -333,7 +334,7 @@ def flatten_facades(mesh_path, args=None):
         u /= np.linalg.norm(u)
         u0, u1 = _run_extent((Q - c) @ u)
         z0, z1 = _run_extent(Q[:, 2] - c[2])
-        if (u1 - u0) * (z1 - z0) < MIN_AREA:
+        if (u1 - u0) * (z1 - z0) < MIN_AREA or z1 - z0 < MIN_HEIGHT:
             continue
         planes.append((c, n, u, Z, u0 - EDGE, u1 + EDGE, z0 - EDGE, z1 + EDGE, TOL))
     nfac = len(planes)
