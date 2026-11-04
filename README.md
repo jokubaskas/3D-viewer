@@ -418,7 +418,12 @@ npm install
 npm run dev          # kūrimo serveris
 npm run build        # statinis build'as į dist/ (talpinti bet kuriame serveryje)
 npm run build:single # vienas HTML failas į dist-single/
+npm test             # skaičiavimų ir importų testai (node --test)
+npm run lint         # ESLint: neapibrėžti / nenaudojami kintamieji
+npm run check:i18n   # ar visi tekstai turi EN vertimą
 ```
+
+Python testai: `PORTAL_NO_BG=1 pytest deploy/portal` (portalas, el. laiškai) ir `pytest deploy/odm` (ODM pakeitimai; reikia `numpy scipy trimesh`). Visa tai automatiškai paleidžiama GitHub Actions kiekvienam pakeitimui (`.github/workflows/ci.yml`), kartu – `patch.py` patikra su užfiksuota ODM versija.
 
 Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.com/gkjohnson/three-mesh-bvh) (greitas spindulių sekimas dideliems modeliams), Vite.
 
@@ -428,7 +433,8 @@ Technologijos: [three.js](https://threejs.org), [three-mesh-bvh](https://github.
 - `src/loaders.js` – failų įkėlimas (įskaitant LAS ir XYZ skaitytuvus, ZIP)
 - `src/measurements.js` – matavimų tipai, skaičiavimai ir jų atvaizdavimas
 - `src/compute.js` – geometrija: plotai, plokštumos, tūrio ir paviršiaus skaičiavimas tinkleliu, profiliai
-- `src/main.js` – sąsaja, įrankių valdymas, eksportas
+- `src/main.js` – sąsajos „klijai“: įrankių valdymas, matavimų sąrašas, modelio įkėlimas, skydeliai, portalas, klaviatūra
+- `src/app/` – programos dalys: `core.js` (bendri objektai – nustatymai, 3D peržiūra, matavimai, pranešimai), `report-ui.js` (PDF ataskaita), `measure-io.js` (CSV / JSON), `save.js` (išsaugojimas kompiuteryje, ODM rezultatai), `screenshot.js`, `compare-ui.js` (palyginimas su kita data), `checkpoints.js` (kontroliniai taškai, mastelis, išlyginimas), `ai-tools.js` (AI kontūras ir transporto aptikimas), `basemap-ui.js` (žemėlapis po modeliu)
 - `src/style.css` – stiliai (tamsus režimas); Atea spalvos pagal atea.lt – `:root` kintamuosiuose (`--atea-green` #008B01, `--atea-graphite` #1F2326, `--atea-forest` #1D4629)
 - `src/logo.js` – ATEA logotipas (vektorinis kontūras)
 - `src/i18n.js`, `src/i18n.en.js` – kalbos perjungimas ir anglų kalbos žodynas (raktas – lietuviškas tekstas)

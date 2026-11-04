@@ -3,7 +3,7 @@ import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
 import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
-import { NodeODM, STATUS, STATUS_LABELS } from './nodeodm.js';
+import { NodeODM, STATUS } from './nodeodm.js';
 import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
 import { t, locale } from '../i18n.js';
