@@ -372,6 +372,13 @@ Kai programa paleista serveryje (`deploy/`, `start-windows.bat`), į ją reikia 
 - **3D modeliai, ortofoto, ataskaitos, įrašai:** atitinkamoje skiltyje **Įkelti naują** (galima ir „Įkelti dabar atidarytą modelį“), pažymėkite klientus. Ortofoto patogiausia įkelti iš ortofoto peržiūros – **Įkelti į portalą klientui**. Visus juos galima pridėti ir kaip užsakymo rezultatus.
 - **Transliacijos:** transliacijos langelyje mygtukas 👤 **Priskirti klientams**.
 
+**El. laiškai (nebūtina):** `deploy\.env` užpildžius `SMTP_*` (pvz. Microsoft 365: `SMTP_HOST=smtp.office365.com`, `SMTP_PORT=587`, `SMTP_USER` / `SMTP_FROM` – pašto dėžutė su įjungtu „Authenticated SMTP“, `SMTP_PASS` – jos slaptažodis) ir paleidus `start-windows.bat`:
+- kvietimas klientui išsiunčiamas automatiškai (nuoroda vis tiek parodoma);
+- prisijungimo lange veikia **Pamiršote slaptažodį?** – nuoroda naujam slaptažodžiui (galioja 7 dienas, prašymai ribojami, neatskleidžiama, ar paskyra yra);
+- administratorius gauna laišką apie naują kliento užsakymą ir žinutes; klientas – apie būsenos, datos, kainos pakeitimus, naujus rezultatus, žinutes ir jam priskirtus 3D modelius, ataskaitas, įrašus, transliacijas. Laiško mygtukas atidaro tą užsakymą;
+- kiekvienas vartotojas pranešimus gali išjungti: viršuje paspaudus savo vardą → **Pranešimai el. paštu**;
+- patikrinti: `docker compose exec portal python app.py test-email jusu@adresas.lt`. Neišsiųsti laiškai kartojami 3 kartus, klaidos – `docker compose logs portal`.
+
 **Serverio perkėlimas į kitą kompiuterį:**
 1. **Senajame:** `deploy\perkelti-eksportas.bat` – nurodykite aplanką (geriausia išorinis USB diskas). Išsaugomi `.env` (raktai, Cloudflare tunelis, persiuntėjas), paskyros, užsakymai ir jų istorija, klientų failai, savi AI modeliai ir, jei pasirenkate, ODM projektai. Senasis serveris sustabdomas ir pats nebepasileidžia (kad Cloudflare tunelis neskirstytų užklausų dviem kompiuteriams).
 2. **Naujajame:** įdiekite Docker Desktop ir Git, `git clone https://github.com/jokubaskas/3D-viewer.git C:\3D-viewer`, tada `deploy\perkelti-importas.bat` – atkuria viską ir paleidžia `start-windows.bat` (NVIDIA GPU naudojamas automatiškai).

@@ -20,8 +20,10 @@ export function showLogin() {
     <label>El. paštas<input name="email" type="email" autocomplete="username" required autofocus /></label>
     <label>Slaptažodis<input name="password" type="password" autocomplete="current-password" required /></label>
     <button class="btn btn-primary" type="submit">Prisijungti</button>
-    <p class="small muted">Paskyrą sukuria administratorius. Pamiršote slaptažodį? Kreipkitės į jį – gausite naują nuorodą.</p>`);
+    <button class="btn btn-ghost btn-sm" type="button" data-forgot>Pamiršote slaptažodį?</button>
+    <p class="small muted">Paskyrą sukuria administratorius.</p>`);
   const f = el.querySelector('form');
+  el.querySelector('[data-forgot]').addEventListener('click', () => (el.remove(), showForgot(f.email.value)));
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = el.querySelector('.auth-err');
@@ -43,6 +45,44 @@ export function showLogin() {
   setTimeout(() => !f.contains(document.activeElement) && f.email.focus(), 50);
 }
 
+/** Slaptažodžio priminimas: nuoroda el. paštu (jei serveryje įjungti laiškai). */
+function showForgot(email = '') {
+  const el = screen(`
+    <h1>Slaptažodžio keitimas</h1>
+    <p class="small">Įveskite paskyros el. paštą – atsiųsime nuorodą naujam slaptažodžiui nustatyti.</p>
+    <label>El. paštas<input name="email" type="email" autocomplete="username" required value="${esc(email)}" /></label>
+    <button class="btn btn-primary" type="submit">Siųsti nuorodą</button>
+    <button class="btn btn-ghost btn-sm" type="button" data-back>Grįžti į prisijungimą</button>
+    <p class="small auth-ok" hidden></p>`);
+  const f = el.querySelector('form');
+  el.querySelector('[data-back]').addEventListener('click', () => (el.remove(), showLogin()));
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = el.querySelector('.auth-err');
+    const ok = el.querySelector('.auth-ok');
+    err.hidden = ok.hidden = true;
+    if (!f.email.value.includes('@')) {
+      err.textContent = t('Įveskite el. paštą');
+      err.hidden = false;
+      return;
+    }
+    f.querySelector('button[type=submit]').disabled = true;
+    try {
+      const r = await api('auth/forgot', { method: 'POST', body: { email: f.email.value } });
+      ok.textContent = r.mail
+        ? t('Jei tokia paskyra yra, nuoroda išsiųsta. Patikrinkite el. paštą (ir šlamšto aplanką).')
+        : t('El. laiškai šiame serveryje neįjungti – kreipkitės į administratorių, jis atsiųs naują nuorodą.');
+      ok.hidden = false;
+    } catch (ex) {
+      err.textContent = ex.message;
+      err.hidden = false;
+    } finally {
+      f.querySelector('button[type=submit]').disabled = false;
+    }
+  });
+  setTimeout(() => f.email.focus(), 50);
+}
+
 /** Serveris (portalas) laikinai nepasiekiamas – bandoma vėl kas 5 s. */
 export function showDown() {
   const el = screen(`<h1>Serveris paleidžiamas</h1><p>Paskyrų paslauga dar neatsako. Puslapis atsinaujins automatiškai.</p><button class="btn btn-outline" type="submit">Bandyti dabar</button>`);
@@ -61,7 +101,7 @@ export async function showInvite(token) {
     return;
   }
   const el = screen(`
-    <h1>Slaptažodžio nustatymas</h1>
+    <h1>${esc(t(info.reset ? 'Naujas slaptažodis' : 'Slaptažodžio nustatymas'))}</h1>
     <p class="small">${esc(info.name ? `${info.name} · ` : '')}${esc(info.email)}</p>
     <input type="email" name="username" autocomplete="username" value="${esc(info.email)}" hidden />
     <label>Naujas slaptažodis<input name="password" type="password" autocomplete="new-password" minlength="10" required /></label>

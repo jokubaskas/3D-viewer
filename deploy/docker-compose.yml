@@ -84,6 +84,14 @@ services:
       # Transliacijų persiuntėjas (VPS, deploy\relay-setup.bat): klientams iš interneto – WebRTC per jį
       - RELAY_HOST=${RELAY_HOST:-}
       - RELAY_KEY=${RELAY_KEY:-}
+      # El. laiškai (kvietimai, slaptažodžio priminimas, užsakymų pranešimai) – .env SMTP_*
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Atea 3D Matuoklis}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
     volumes:
       # Duomenų bazė ir klientų failai (3D modeliai, ataskaitos, įrašai) – išlieka atnaujinus programą
       - portal-data:/data

@@ -373,3 +373,50 @@ def test_backup_and_restore(env, tmp_path, monkeypatch):
     assert got["title"] == "Aikštelė" and any(e.get("body") == "Labas" for e in got["events"])
     assert ca.get(f"/api/items/{it['id']}/files/{f['id']}/a.zip").content == b"PK" * 500
     assert any("pries-atkurima" in p.name for p in app.backup_snapshots())
+
+
+def test_mail_notifications(env, monkeypatch):
+    app, client, adm = env
+    sent = []
+    monkeypatch.setenv("PORTAL_NO_BG", "1")
+    monkeypatch.setattr(app, "MAIL_ON", True)
+    monkeypatch.setattr(app, "SMTP_FROM", "noreply@atea.test")
+    monkeypatch.setattr(app, "_deliver", lambda m: sent.append(m))
+    # Kvietimas išsiunčiamas el. paštu
+    r = adm.post("/api/users", json={"email": "k@klientas.lt", "name": "Klientas", "role": "client"}, headers=H)
+    assert r.json()["mailed"] is True and sent[-1]["To"] == "k@klientas.lt" and "Kvietimas" in sent[-1]["Subject"]
+    tok = r.json()["invite"].split("#invite=")[1]
+    assert tok in sent[-1].get_body(("plain",)).get_content()
+    c = client()
+    c.post("/api/auth/invite", json={"token": tok, "password": "Kliento-slaptas-1"}, headers=H)
+    cid = r.json()["id"]
+    # Pamiršau slaptažodį: nežinomas el. paštas – tas pats atsakymas, laiško nėra
+    n = len(sent)
+    assert client().post("/api/auth/forgot", json={"email": "nera@x.lt"}, headers=H).json() == {"ok": True, "mail": True}
+    assert len(sent) == n
+    assert client().post("/api/auth/forgot", json={"email": "k@klientas.lt"}, headers=H).status_code == 200
+    assert "Slaptažodžio keitimas" in sent[-1]["Subject"]
+    reset = sent[-1].get_body(("plain",)).get_content().split("#invite=")[1].split()[0]
+    assert client().get(f"/api/auth/invite?token={reset}").status_code == 200
+    # Nauji duomenys klientui (tik naujai priskirtiems)
+    it = adm.post("/api/items", json={"kind": "model", "title": "Sandėlis", "clients": [cid]}, headers=H).json()
+    assert "Nauji duomenys: Sandėlis" in sent[-1]["Subject"]
+    n = len(sent)
+    adm.patch(f"/api/items/{it['id']}", json={"clients": [cid]}, headers=H)
+    assert len(sent) == n
+    # Užsakymas: kliento – administratoriams; administratoriaus pakeitimas ir žinutė – klientui
+    o = c.post("/api/orders", json={"title": "Aikštelė", "works": ["ortho"], "geometry": SQUARE, "due": "2026-12-01"}, headers=H).json()
+    assert sent[-1]["To"] == "admin@a.lt" and f"#order={o['id']}" in sent[-1].get_body(("plain",)).get_content()
+    adm.patch(f"/api/orders/{o['id']}", json={"status": "accepted", "price": "450 €"}, headers=H)
+    body = sent[-1].get_body(("plain",)).get_content()
+    assert sent[-1]["To"] == "k@klientas.lt" and "priimtas" in body and "450 €" in body
+    adm.post(f"/api/orders/{o['id']}/comments", json={"body": "Atvyksime pirmadienį"}, headers=H)
+    assert "Atvyksime pirmadienį" in sent[-1].get_body(("plain",)).get_content()
+    # Klientas išjungia pranešimus – užsakymų laiškų nebėra
+    assert c.patch("/api/me", json={"notify": False}, headers=H).json()["notify"] is False
+    n = len(sent)
+    adm.post(f"/api/orders/{o['id']}/comments", json={"body": "Dar viena žinutė"}, headers=H)
+    assert len(sent) == n
+    # Be SMTP – nesiunčiama, mailed=False
+    monkeypatch.setattr(app, "MAIL_ON", False)
+    assert adm.post("/api/users", json={"email": "b@klientas.lt", "role": "client"}, headers=H).json()["mailed"] is False

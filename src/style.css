@@ -696,6 +696,7 @@ body.role-client .admin-only, .live-client .admin-only { display: none !importan
 .auth-card .btn { justify-content: center; }
 .auth-card p { margin: 0; }
 .auth-err { color: var(--danger); font-size: 13px; }
+.auth-ok { color: var(--atea-green-text, #008b01); }
 
 .user-menu { position: fixed; z-index: 200; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); min-width: 220px; }
 .user-menu .btn { justify-content: flex-start; }

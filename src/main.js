@@ -2139,6 +2139,12 @@ const closePages = () => {
     },
   });
   const goHome = () => (closePages(), homeUI.open());
+  // Nuoroda iš laiško: #order=N – iškart atidaromas užsakymas
+  const orderLink = /#order=(\d+)/.exec(location.hash)?.[1];
+  if (orderLink) {
+    history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(() => (closePages(), ordersUI.open(+orderLink)));
+  }
   $('#btn-portal').addEventListener('click', goHome);
   // Puslapių „×“ → „← Pradžia“ (puslapio kairėje, kaip pradžios ekrano navigacija)
   document.querySelectorAll('.odm-page .odm-head').forEach((head) => {
@@ -2160,6 +2166,7 @@ const closePages = () => {
     const m = document.createElement('div');
     m.className = 'user-menu';
     m.innerHTML = `<div class="small"><b>${escapeHtml(user.name || user.email)}</b><div class="muted">${escapeHtml(user.email)} · ${escapeHtml(tr(user.role === 'admin' ? 'administratorius' : 'klientas'))}</div></div>
+      <button class="btn btn-ghost btn-sm" data-um="notify" aria-pressed="${user.notify !== false}">${icon(user.notify !== false ? 'check' : 'close')}${escapeHtml(tr(user.notify !== false ? 'Pranešimai el. paštu: įjungti' : 'Pranešimai el. paštu: išjungti'))}</button>
       <button class="btn btn-ghost btn-sm" data-um="pw">${icon('edit')}${escapeHtml(tr('Keisti slaptažodį'))}</button>
       <button class="btn btn-ghost btn-sm" data-um="out">${icon('logout')}${escapeHtml(tr('Atsijungti'))}</button>`;
     document.body.append(m);
@@ -2168,7 +2175,14 @@ const closePages = () => {
     m.style.right = `${Math.max(8, innerWidth - r.right)}px`;
     m.addEventListener('click', (ev) => {
       const a = ev.target.closest('[data-um]')?.dataset.um;
-      if (a === 'pw') changePasswordDialog(toast);
+      if (a === 'notify')
+        api('me', { method: 'PATCH', body: { notify: user.notify === false } })
+          .then((u) => {
+            user.notify = u.notify;
+            toast(tr(u.notify ? 'Pranešimai el. paštu įjungti' : 'Pranešimai el. paštu išjungti'));
+          })
+          .catch((ex) => toast(ex.message, 'error'));
+      else if (a === 'pw') changePasswordDialog(toast);
       else if (a === 'out') logout();
       m.remove();
     });

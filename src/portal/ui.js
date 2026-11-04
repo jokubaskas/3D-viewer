@@ -165,10 +165,10 @@ export function createPortalUI(app) {
       <p class="small muted">${esc(t('Kvietimo nuoroda galioja 7 dienas ir tik vieną kartą. Nusiųskite ją klientui – jis pats nusistatys slaptažodį. Išjungus paskyrą klientas iškart atjungiamas.'))}</p>`;
   }
 
-  function showInvite(email, link) {
+  function showInvite(email, link, mailed = false) {
     const subject = encodeURIComponent(t('Prieiga prie Atea 3D Matuoklio'));
     const body = encodeURIComponent(t('Sveiki,\n\nsukūrėme jums paskyrą. Atidarykite nuorodą ir nusistatykite slaptažodį (nuoroda galioja 7 dienas):\n\n{l}\n', { l: link }));
-    $('#pt-invite').innerHTML = `<div class="pt-invite"><div class="small">${esc(t('Nuoroda vartotojui {e}:', { e: email }))}</div>
+    $('#pt-invite').innerHTML = `<div class="pt-invite">${mailed ? `<div class="small" style="color:var(--atea-green-text)"><b>${esc(t('Kvietimas išsiųstas el. paštu: {e}', { e: email }))}</b></div>` : ''}<div class="small">${esc(t(mailed ? 'Ta pati nuoroda (jei reikėtų perduoti kitaip):' : 'Nuoroda vartotojui {e}:', { e: email }))}</div>
       <input readonly value="${esc(link)}" />
       <div class="pane-actions"><button class="btn btn-sm btn-primary" data-pi="copy">${icon('copy')}${esc(t('Kopijuoti'))}</button><a class="btn btn-sm btn-outline" href="mailto:${esc(email)}?subject=${subject}&body=${body}">${esc(t('Siųsti el. paštu'))}</a></div></div>`;
   }
@@ -333,7 +333,7 @@ export function createPortalUI(app) {
       const email = f.email.value;
       users = await api('users');
       render();
-      showInvite(email, r.invite);
+      showInvite(email, r.invite, r.mailed);
     } catch (ex) {
       app.toast(ex.message, 'error', 7000);
     }
@@ -346,7 +346,7 @@ export function createPortalUI(app) {
         const r = await api(`users/${id}/invite`, { method: 'POST' });
         users = await api('users');
         render();
-        showInvite(u.email, r.invite);
+        showInvite(u.email, r.invite, r.mailed);
       } else if (act === 'toggle') {
         await api(`users/${id}`, { method: 'PATCH', body: { disabled: !u.disabled } });
         load();
