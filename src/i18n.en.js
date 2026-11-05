@@ -1551,4 +1551,9 @@ export const EN = {
   'Modelis → Išsaugoti kompiuteryje': 'Model → Save to computer',
   'versija': 'version',
   'Kamera su eilutiniu užraktu (rolling shutter) – įjungta judesio iškraipymų korekcija.': 'Rolling shutter camera – motion distortion correction enabled.',
+  'Perdaryti': 'Redo',
+  'Perdaryti projektą': 'Redo project',
+  'Projektas perdaromas iš naujo': 'Project is being reprocessed',
+  'Apdoroti visą projektą iš naujo su dabartiniais programos nustatymais (nuotraukos jau serveryje – iš naujo kelti nereikia)': 'Reprocess the whole project with the current settings (photos are already on the server – no re-upload needed)',
+  '„{n}“ bus apdorotas visas iš naujo su dabartiniais programos nustatymais. Nuotraukos jau serveryje – kelti nereikia. Užtruks panašiai kaip pirmą kartą; dabartiniai rezultatai bus pakeisti (jei norite palyginti – pirma atsisiųskite).': '“{n}” will be fully reprocessed with the current settings. Photos are already on the server – no upload needed. It takes about as long as the first time; current results will be replaced (download them first if you want to compare).',
 };

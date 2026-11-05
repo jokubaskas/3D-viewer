@@ -635,7 +635,8 @@ export function createOdmUI(app) {
             <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>`}
             ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
             <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>
-            ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-ghost" data-pact="remesh" title="Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami">${icon('refresh')}Kitas 3D tinklas</button>`}` : ''}
+            ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-ghost" data-pact="remesh" title="Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami">${icon('refresh')}Kitas 3D tinklas</button>`}
+            <button class="btn btn-sm btn-ghost" data-pact="redo" title="Apdoroti visą projektą iš naujo su dabartiniais programos nustatymais (nuotraukos jau serveryje – iš naujo kelti nereikia)">${icon('play')}Perdaryti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
           ${p.status !== 'uploading' ? `<button class="btn btn-sm btn-ghost icon-only danger" data-pact="delete" title="Pašalinti">${icon('trash')}</button>` : ''}
@@ -668,6 +669,8 @@ export function createOdmUI(app) {
         await remesh(p, c);
       } else if (act === 'restart') {
         await openRestart(p, c);
+      } else if (act === 'redo') {
+        await redo(p, c);
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         try {
@@ -701,6 +704,39 @@ export function createOdmUI(app) {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Baigtas projektas apdorojamas visas iš naujo su DABARTINIAIS ruošinio nustatymais (programos atnaujinimai,
+   * pvz. naujos ODM parinktys, pritaikomi ir senam projektui). Nuotraukos jau serveryje. Paliekama tai, kas nepriklauso
+   * ruošiniui: sritis, DSM / DTM, ortofoto, skaidymas, tikslus tinklas, rolling shutter ir kt.
+   */
+  async function redo(p, c) {
+    const info = await c.taskInfo(p.uuid);
+    const presetKeys = new Set(Object.values(PRESETS).flatMap((x) => Object.keys(x.options)));
+    const keep = (info.options || []).filter((o) => !presetKeys.has(o.name) && !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
+    const choices = Object.entries(PRESETS).filter(([k]) => (p.preset === 'orthoOnly') === (k === 'orthoOnly'));
+    const preset = await new Promise((resolve) => {
+      const d = document.createElement('dialog');
+      d.className = 'dialog';
+      d.innerHTML = `<form method="dialog">
+        <h2>${esc(t('Perdaryti projektą'))}</h2>
+        <p class="small">${esc(t('„{n}“ bus apdorotas visas iš naujo su dabartiniais programos nustatymais. Nuotraukos jau serveryje – kelti nereikia. Užtruks panašiai kaip pirmą kartą; dabartiniai rezultatai bus pakeisti (jei norite palyginti – pirma atsisiųskite).', { n: p.name }))}</p>
+        <label class="row">${esc(t('Kokybė'))} <select class="rd-preset">${choices.map(([k, x]) => `<option value="${k}" ${k === p.preset ? 'selected' : ''}>${esc(t(x.label))}</option>`).join('')}</select></label>
+        <menu><button class="btn btn-ghost" value="">${esc(t('Atšaukti'))}</button><button class="btn btn-primary" value="ok">${esc(t('Perdaryti'))}</button></menu>
+      </form>`;
+      document.body.append(d);
+      d.addEventListener('close', () => (resolve(d.returnValue === 'ok' ? d.querySelector('.rd-preset').value : null), d.remove()), { once: true });
+      d.showModal();
+    });
+    if (!preset) return;
+    const opts = Object.entries(PRESETS[preset].options).map(([name, value]) => ({ name, value }));
+    await c.restart(p.uuid, keep.concat(opts, { name: 'rerun-all', value: true }));
+    Object.assign(p, { preset, statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: t('viskas iš naujo') });
+    ls.set(LS_PROJECTS, projects);
+    renderProjects();
+    poll();
+    app.toast(t('Projektas perdaromas iš naujo'), 'info');
   }
 
   /** Baigtas projektas: 3D tinklas perdaromas kitu būdu (nuo tinklo etapo – sujungimas ir tankinimas nekartojami). */
