@@ -455,6 +455,7 @@ export function createOdmUI(app) {
       boundary: boundary ? boundaryPath(presetUuid) : null,
       photos: photos.length,
       mvsMesh: $('#odm-mvsmesh').checked,
+      rollingShutter: !!analysis?.rollingShutter,
     });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });

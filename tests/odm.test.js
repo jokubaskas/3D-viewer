@@ -1,7 +1,7 @@
 // Grynųjų funkcijų testai (node --test): ODM parinktys, RAM įvertinimas, koordinatės, vienetai.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PRESETS, buildOdmOptions, estimateRamGB, diagnoseFailure, lowerMemoryOptions, ODM_STAGES } from '../src/odm/project.js';
+import { PRESETS, buildOdmOptions, estimateRamGB, diagnoseFailure, lowerMemoryOptions, ODM_STAGES, analyzePhotos } from '../src/odm/project.js';
 import { LKS94 } from '../src/geo/tm.js';
 
 const opts = (list) => Object.fromEntries(list.map((o) => [o.name, o.value]));
@@ -62,4 +62,19 @@ test('LKS-94 projekcija (Vilnius) – grįžtamasis perskaičiavimas', () => {
   assert.ok(Math.abs(e - 582000) < 2000 && Math.abs(n - 6062000) < 3000, `${e} ${n}`);
   const [lon2, lat2] = LKS94.inverse(e, n);
   assert.ok(Math.abs(lon2 - lon) < 1e-8 && Math.abs(lat2 - lat) < 1e-8);
+});
+
+test('3D ruošiniai: dangaus kaukės įstrižoms nuotraukoms', () => {
+  for (const k of ['objects3d', 'max']) assert.equal(opts(buildOdmOptions(k))['sky-removal'], true);
+  for (const k of ['orthoOnly', 'fast', 'standard']) assert.equal(opts(buildOdmOptions(k))['sky-removal'], undefined);
+});
+
+test('rolling shutter: įjungiama tik eilutinio užrakto kameroms', () => {
+  const photo = (make, model, i) => ({ name: `p${i}.jpg`, size: 1, make, model, lat: 54.68 + i * 1e-4, lon: 25.28, absAlt: 200, relAlt: 80, gimbalPitch: -90, width: 5280, height: 3956 });
+  const mini = Array.from({ length: 40 }, (_, i) => photo('DJI', 'FC3582', i));
+  const m3e = Array.from({ length: 40 }, (_, i) => photo('DJI', 'M3E', i));
+  assert.equal(analyzePhotos(mini).rollingShutter, true);
+  assert.equal(analyzePhotos(m3e).rollingShutter, false);
+  assert.equal(opts(buildOdmOptions('standard', { rollingShutter: true }))['rolling-shutter'], true);
+  assert.equal(opts(buildOdmOptions('standard'))['rolling-shutter'], undefined);
 });

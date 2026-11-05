@@ -4,7 +4,8 @@
 # nekeičiamos (žymė).
 #   mesh    – parinktis --mesh-method poisson|openmvs ir OpenMVS tinklas (opendm/atea_mesh.py)
 #   flatten – po 3D tinklo sukūrimo: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas
-#   fuse    – tankinant taškas priimamas, kai jį patvirtina ≥ 3 nuotraukos (ne 2) – atmetami atspindžių „taškai“
+#   fuse    – parinktis --pc-fuse-views: kiek nuotraukų turi patvirtinti tašką tankinant (numatyta 2, kaip ODM;
+#             3 – mažiau atspindžių triukšmo stikle, bet dingsta ir blizgių automobilių stogų taškai)
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "/code"
@@ -57,11 +58,25 @@ GROUPS = {
          "                  log.ODM_WARNING('Atea: tinklo valymas praleistas (%s)' % str(e))\n"),
     ],
   }),
-  'fuse': ('Atea: taškas patvirtinamas', {
+  'fuse': ('pc_fuse_views', {
+    CONFIG: [
+        ("    'pc_filter': 'openmvs',\n",
+         "    'pc_filter': 'openmvs',\n    'pc_fuse_views': 'openmvs',\n"),
+        ("    parser.add_argument('--pc-filter',\n",
+         "    parser.add_argument('--pc-fuse-views',\n"
+         "                        metavar='<positive integer>',\n"
+         "                        action=StoreValue,\n"
+         "                        type=int,\n"
+         "                        default=2,\n"
+         "                        help=('Atea: minimum number of images that must agree on a point during depthmap fusion. '\n"
+         "                              '3 removes more reflection noise (glass) but also points on glossy surfaces (car roofs). Default: %(default)s'))\n"
+         "\n"
+         "    parser.add_argument('--pc-filter',\n"),
+    ],
     OPENMVS: [
         ("            number_views_fuse = 2\n",
-         "            # Atea: taškas patvirtinamas bent 3 nuotraukose – atspindžių stikle „taškai“ nesutampa ir atmetami\n"
-         "            number_views_fuse = 3 if len(photos) >= 30 else 2\n"),
+         "            # Atea: --pc-fuse-views (numatyta 2, kaip ODM)\n"
+         "            number_views_fuse = max(2, int(getattr(args, 'pc_fuse_views', 2) or 2))\n"),
     ],
   }),
 }

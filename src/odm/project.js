@@ -37,15 +37,31 @@ export const PRESETS = {
     // mažiau „plaukiojančių“ taškų debesėlių, iš kurių tinkle atsiranda gumbai ant pastatų ir mašinų
     // ignore-gsd: ODM tekstūroms ir tankinimui naudoja nuotraukas, sumažintas pagal ortofoto raišką – įstrižose
     // nuotraukose fasadai nufotografuoti smulkiau, todėl be šios parinkties jų tekstūros neryškios
-    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    // sky-removal: įstrižose nuotraukose (ODM – tik > 20° nuo statmens) dangus užmaskuojamas AI – mažiau „dangaus“
+    // taškų ant pastatų kraštų ir stiklo, kuriame atsispindi dangus. Statmenoms nuotraukoms netaikoma.
+    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
   },
   max: {
     label: 'Maksimali',
     desc: 'Geriausia, ką gali ODM: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis (ultra), tikslus 3D tinklas. Labai ilgai ir daug RAM – galingam kompiuteriui su GPU.',
     // ultra: gylio žemėlapiai ½ nuotraukos raiškos (high – ¼, medium – ⅛); požymiai pilna raiška; 3 mln. viršūnių
-    options: { 'feature-quality': 'ultra', 'min-num-features': 20000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 3000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
+    options: { 'feature-quality': 'ultra', 'min-num-features': 20000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 3000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
   },
 };
+
+/**
+ * Kameros su eilutiniu sensoriaus nuskaitymu (rolling shutter) – ODM 3.6.2 opendm/rollingshutter.py duomenų bazė
+ * („gamintojas modelis“ mažosiomis). Fotografuojant skrendant vaizdas šiek tiek iškreipiamas; ODM korekcija
+ * (--rolling-shutter) įjungiama automatiškai. Mechaninio užrakto kameros (Mavic 3 Enterprise, Matrice…) – ne.
+ */
+export const ROLLING_SHUTTER_CAMERAS = new Set([
+  'autel robotics xt701', 'dji phantom vision fc200', 'dji fc300s', 'dji fc300c', 'dji fc300x', 'dji fc330', 'dji fc6310',
+  'dji fc7203', 'dji fc2103', 'dji fc3170', 'dji fc3411', 'dji fc220', 'hasselblad l1d-20c', 'hasselblad l2d-20c',
+  'dji fc3682', 'dji fc3582', 'dji fc8482', 'dji fc350', 'dji mavic2-enterprise-advanced', 'dji zenmuse z30', 'yuneec e90',
+  'gopro hero4 black', 'gopro hero8 black', 'fujifilm x-a5', 'fujifilm x-t2', 'autel robotics xl724', 'parrot anafi',
+  'autel robotics xt705',
+]);
+export const cameraKey = (m) => `${(m.make || '').trim()} ${(m.model || '').trim()}`.toLowerCase().trim();
 
 /** Įstriža nuotrauka – kamera pakreipta 15° ir daugiau nuo statmeno žemyn. */
 export const isOblique = (m) => m.gimbalPitch != null && m.gimbalPitch >= -75;
@@ -191,9 +207,12 @@ export function analyzePhotos(metas, opts = {}) {
   if (used.length && oblique / used.length >= 0.2) warnings.push({ level: 'info', text: t('Rasta {n} įstrižų nuotraukų ({p} %) – 3D modeliui parinkta kokybė „3D objektai“ (aštresni pastatai ir mašinos).', { n: oblique, p: Math.round((100 * oblique) / used.length) }) });
   else if (used.length && nadirShare > 0.95) warnings.push({ level: 'info', text: t('Visos nuotraukos statmenos žemyn – vertikalios sienos (pastatai, krūvų šlaitai) gali būti mažiau detalūs. Įstrižos nuotraukos pagerintų 3D.') });
 
+  const rollingShutter = used.length > 0 && used.filter((m) => ROLLING_SHUTTER_CAMERAS.has(cameraKey(m))).length / used.length >= 0.5;
+  if (rollingShutter) warnings.push({ level: 'info', text: t('Kamera su eilutiniu užraktu (rolling shutter) – įjungta judesio iškraipymų korekcija.') });
+
   const mps = used.filter((m) => m.width && m.height).map((m) => (m.width * m.height) / 1e6).sort((a, b) => a - b);
   return {
-    used, excluded, rtk, stdH, stdV, lks, agl, gsd, takeoff, models, versions, totalBytes, oblique,
+    used, excluded, rtk, stdH, stdV, lks, agl, gsd, takeoff, models, versions, totalBytes, oblique, rollingShutter,
     megapixels: mps.length ? mps[mps.length >> 1] : null,
     areaM2: hullArea(lks), center: { lat: centerLat, lon: centerLon },
     timeFrom: dates.length ? new Date(Math.min(...dates)) : null,
@@ -260,8 +279,10 @@ export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.g
 /** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
 export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false } = {}) {
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false, rollingShutter = false } = {}) {
   const o = { ...PRESETS[presetKey].options };
+  // Eilutinio užrakto kameros: ODM pats parenka nuskaitymo laiką pagal kameros modelį
+  if (rollingShutter) o['rolling-shutter'] = true;
   // Tikslus 3D tinklas (Atea ODM atvaizdas, deploy/odm): OpenMVS ReconstructMesh + RefineMesh vietoj Poisson –
   // aštrios briaunos, be „pakilusio“ asfalto. Sename / kitame NodeODM parinktis praleidžiama (lieka Poisson).
   if (mvsMesh && !o['skip-3dmodel']) o['mesh-method'] = 'openmvs';
