@@ -1550,4 +1550,5 @@ export const EN = {
     'True orthophoto and elevation models created by ODM from the photos. To save the 3D model in LKS-94 coordinates (OBJ / GLB), open it and click',
   'Modelis → Išsaugoti kompiuteryje': 'Model → Save to computer',
   'versija': 'version',
+  'Kamera su eilutiniu užraktu (rolling shutter) – įjungta judesio iškraipymų korekcija.': 'Rolling shutter camera – motion distortion correction enabled.',
 };
