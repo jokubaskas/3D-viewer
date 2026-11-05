@@ -267,3 +267,34 @@ def test_improve_mesh(tmp_path):
     assert len(out.faces) < len(mesh.faces) - len(blob.faces) + 200  # gabalas pašalintas (+ užpildas)
     assert not (np.linalg.norm(np.asarray(out.vertices) - [14, 0, 8], axis=1) < 1.6).any()
     assert _boundary_edges(np.asarray(out.faces)) < _boundary_edges(np.asarray(mesh.faces)) - len(blob.faces) * 0  # skylė užpildyta
+
+
+def test_flatten_car_roofs_on_sloped_site(tmp_path):
+    """Nelygi aikštelė: įdubime (−4 m) stovinčio pastato viršus (+0.5 m) – vos 1 m žemiau už automobilių stogus
+    už 30 m. Automobilių stogai neturi būti palaikyti pastato stogu ir suplokštinti."""
+    rng = np.random.default_rng(7)
+    bld = trimesh.creation.box(extents=[20, 20, 4.5])
+    bld.apply_translation([0, -30, -4 + 2.25])
+    bld.update_faces(bld.face_normals[:, 2] > -0.5)
+    bld.remove_unreferenced_vertices()
+    V, F = trimesh.remesh.subdivide_to_size(bld.vertices, bld.faces, 0.4)
+    bld = trimesh.Trimesh(V, F, process=True)
+    bld.vertices = bld.vertices + bld.vertex_normals * rng.normal(0, 0.05, (len(bld.vertices), 1))
+    cars = []
+    for k in range(12):
+        car = trimesh.creation.box(extents=[4.5, 1.8, 1.5])
+        car.apply_translation([k * 2.2 - 12, 10, 0.75])
+        V, F = trimesh.remesh.subdivide_to_size(car.vertices, car.faces, 0.25)
+        car = trimesh.Trimesh(V, F, process=True)
+        # suapvalintas stogas: vidurys aukščiau už kraštus
+        top = car.vertices[:, 2] > 1.4
+        car.vertices[top, 2] += 0.08 * (1 - ((car.vertices[top, 0] - (k * 2.2 - 12)) / 2.25) ** 2)
+        cars.append(car)
+    row = trimesh.util.concatenate(cars)
+    mesh = trimesh.util.concatenate([bld, row, _ground(-30, 30, 0, 25)])
+    p = str(tmp_path / "odm_mesh.ply")
+    mesh.export(p, encoding="binary")
+    atea_mesh.flatten_facades(p)
+    out = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)
+    nb, nr = len(bld.vertices), len(row.vertices)
+    assert np.allclose(out[nb:nb + nr], row.vertices, atol=1e-5)

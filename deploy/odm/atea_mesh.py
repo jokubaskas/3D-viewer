@@ -235,6 +235,7 @@ MIN_HEIGHT = 3.5  # m – fasadas bent tokio aukščio (automobilių eilė, tvor
 HORIZ = 0.97      # |n.z| > HORIZ – horizontali
 ROOF_GAP = 2.0    # m – stogas turi būti ne toliau kaip tiek nuo kurio nors fasado viršaus
 ROOF_MIN_H = 3.0  # m – ir bent tiek aukščiau to fasado apačios (ne žemė)
+ROOF_NEAR = 3.0   # m – ir dalis stogo ne toliau kaip tiek nuo to fasado (ne tik panašus aukštis kitoje aikštelės vietoje)
 CORNER_COS = 0.87 # kampas tarp plokštumų > ~30° – sankirta laikoma briauna
 MAX_PLANES = 40
 ITERS = 150
@@ -337,18 +338,40 @@ def _flatten(mesh):
         planes.append((c, n, u, Z, u0 - EDGE, u1 + EDGE, z0 - EDGE, z1 + EDGE, TOL))
     nfac = len(planes)
 
-    # Plokšti stogai – tik prie rastų fasadų viršaus (žemė, aikštelės, šaligatviai neliečiami)
+    # Plokšti stogai – tik prie rastų fasadų viršaus (žemė, aikštelės, šaligatviai, automobiliai neliečiami): fasado
+    # viršus panašiame aukštyje IR bent ~1 m² stogo šalia to fasado (nelygioje aikštelėje kito fasado viršus kitur
+    # gali būti automobilių stogų aukštyje)
+    roofs_info = []
     if planes:
-        tops = [(p[0][2] + p[7] - EDGE, p[0][2] + p[6] + EDGE) for p in planes]  # (viršus, apačia) absoliučiai
+        facades = [(p[0], p[1], p[2], p[4], p[5], p[0][2] + p[7] - EDGE, p[0][2] + p[6] + EDGE) for p in planes]
         X, Y = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
         for c, n, Q in _find_planes(S, SN, per, np.abs(SN[:, 2]) > 0.85, lambda n: abs(n[2]) > HORIZ, rng, tree, remaining, 10, TOL_H):
             h = c[2]
-            if not any(abs(top - h) < ROOF_GAP and h - bot > ROOF_MIN_H for top, bot in tops):
+            ends, bot_min = [], None
+            for fc, fn, fu, u0, u1, top, bot in facades:
+                if abs(top - h) >= ROOF_GAP or h - bot <= ROOF_MIN_H:
+                    continue
+                t = (Q - fc) @ fu
+                near = (np.abs((Q - fc) @ fn) < ROOF_NEAR) & (t > u0) & (t < u1)
+                if near.sum() * per >= 1.0:
+                    ends += [(fc + fu * u0)[:2], (fc + fu * u1)[:2]]
+                    bot_min = bot if bot_min is None else min(bot_min, bot)
+            if not ends:
                 continue
+            # Lyginama tik pastato pagrindo ribose (stačiakampis per jį laikančių fasadų galus): žemė šlaito
+            # pusėje stogo lygyje ar automobiliai už pastato nepaliečiami. Vienas fasadas – tik ROOF_NEAR juosta.
+            E = np.array(ends)
+            pad = EDGE if len(ends) > 2 else ROOF_NEAR
+            lo, hi = E.min(axis=0) - pad, E.max(axis=0) + pad
             n = n if n[2] > 0 else -n
             x0, x1 = _run_extent((Q - c) @ X)
             y0, y1 = _run_extent((Q - c) @ Y)
-            planes.append((c, n, X, Y, x0 - EDGE, x1 + EDGE, y0 - EDGE, y1 + EDGE, TOL_H))
+            x0, x1 = max(x0 - EDGE, lo[0] - c[0]), min(x1 + EDGE, hi[0] - c[0])
+            y0, y1 = max(y0 - EDGE, lo[1] - c[1]), min(y1 + EDGE, hi[1] - c[1])
+            if x1 <= x0 or y1 <= y0:
+                continue
+            planes.append((c, n, X, Y, x0, x1, y0, y1, TOL_H))
+            roofs_info.append("%.1f m (%.0f m²)" % (h - bot_min, (x1 - x0) * (y1 - y0)))
     nroof = len(planes) - nfac
 
     if not planes:
@@ -402,6 +425,8 @@ def _flatten(mesh):
     moved = int((np.linalg.norm(shift, axis=1) > 0.02).sum())
     log.ODM_INFO("Atea: rasta fasadų %s, stogų %s; traukiama %s viršūnių, briaunose %s (pataisyta > 2 cm: %s)"
                  % (nfac, nroof, int(moved_v.sum()), corners, moved))
+    if roofs_info:
+        log.ODM_INFO("Atea: stogai (aukštis virš fasado apačios, plotas): %s" % ", ".join(roofs_info))
 
     return V, moved, len(planes)
 
@@ -545,6 +570,12 @@ def improve_mesh(mesh_path, args=None):
     import trimesh
     if not io.file_exists(mesh_path):
         return
+    # Originalas palyginimui (programoje galima atidaryti abu PLY ir palyginti)
+    if not getattr(args, "optimize_disk_space", False):
+        try:
+            shutil.copy(mesh_path, os.path.join(os.path.dirname(mesh_path), "odm_mesh_be_valymo.ply"))
+        except OSError:
+            pass
     mesh = trimesh.load(mesh_path, process=False, force="mesh")
     V = np.asarray(mesh.vertices, dtype=np.float64)
     F = np.asarray(mesh.faces)
