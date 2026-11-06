@@ -9,6 +9,12 @@ import { t } from '../i18n.js';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nf = (n) => Number(n).toLocaleString('lt-LT');
 
+/** SH laipsnis (atspindžiai): Spark pritaiko perkūręs generatorių. */
+function setSh(mesh, n) {
+  mesh.maxSh = n;
+  mesh.updateGenerator?.();
+}
+
 export function createSplatUI(app) {
   const page = document.createElement('section');
   page.className = 'odm-page splat-page';
@@ -24,6 +30,7 @@ export function createSplatUI(app) {
         <button class="btn btn-sm icon-only" type="button" data-sp="fit" title="Rodyti visą sceną">${icon('fit')}</button>
         <button class="btn btn-sm icon-only" type="button" data-sp="drone" title="Vaizdas iš drono padėties">${icon('camera')}</button>
         <button class="btn btn-sm icon-only" type="button" data-sp="top" title="Vaizdas iš viršaus">${icon('map')}</button>
+        <button class="btn btn-sm icon-only" type="button" data-sp="sh" aria-pressed="true" title="Atspindžiai (spalva pagal žiūrėjimo kampą) – įjungti / išjungti. Išjungus vaizdas iš šono ramesnis.">${icon('sun')}</button>
       </div>
       <div class="splat-info small" id="sp-info"></div>
       <div class="splat-help small muted">Kairys pelės klavišas – sukti, dešinys – stumti, ratukas – priartinti</div>
@@ -112,6 +119,17 @@ export function createSplatUI(app) {
       });
       await mesh.initialized;
       if (ctx?.mesh !== mesh) return;
+      // Įsimintas atspindžių jungiklis
+      let shOn = true;
+      try {
+        shOn = localStorage.getItem('atea3d.splat.sh') !== '0';
+      } catch {}
+      if (!shOn) {
+        setSh(mesh, 0);
+        const b = $('[data-sp=sh]');
+        b.setAttribute('aria-pressed', 'false');
+        b.style.opacity = '.55';
+      }
       loading.hidden = true;
       app.onOpened?.();
     } catch (e) {
@@ -142,6 +160,15 @@ export function createSplatUI(app) {
     if (b.dataset.act === 'close') close();
     else if (b.dataset.sp === 'fit') fit();
     else if (b.dataset.sp === 'top') fit(true);
+    else if (b.dataset.sp === 'sh' && ctx) {
+      const on = b.getAttribute('aria-pressed') !== 'true';
+      b.setAttribute('aria-pressed', String(on));
+      b.style.opacity = on ? '' : '.55';
+      setSh(ctx.mesh, on ? 3 : 0);
+      try {
+        localStorage.setItem('atea3d.splat.sh', on ? '1' : '0');
+      } catch {}
+    }
     else if (b.dataset.sp === 'drone') fit(false, true);
   });
 

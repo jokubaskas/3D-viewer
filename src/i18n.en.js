@@ -1587,4 +1587,5 @@ export const EN = {
   'Realistiško vaizdo paslauga nepasiekiama: {e}': 'Realistic view service is not available: {e}',
   'Ji veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps splat ir docker compose logs --tail 50 splat': 'It only runs on a computer with an NVIDIA GPU. Check in the deploy folder: docker compose ps splat and docker compose logs --tail 50 splat',
   'Vaizdas iš drono padėties': 'View from drone position',
+  'Atspindžiai (spalva pagal žiūrėjimo kampą) – įjungti / išjungti. Išjungus vaizdas iš šono ramesnis.': 'Reflections (view-dependent colour) – on / off. Off gives a calmer view from the side.',
 };

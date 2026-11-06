@@ -71,12 +71,13 @@ def main():
     ap.add_argument("--task-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--steps", type=int, default=30000)
-    ap.add_argument("--max-size", type=int, default=1600, help="nuotraukų ilgesnė kraštinė mokant (px)")
+    ap.add_argument("--max-size", type=int, default=2400, help="nuotraukų ilgesnė kraštinė mokant (px)")
     ap.add_argument("--cap", type=int, default=3_000_000, help="didžiausias splatų skaičius")
     ap.add_argument("--sh-degree", type=int, default=3)
     ap.add_argument("--max-points", type=int, default=1_500_000)
     ap.add_argument("--depth-weight", type=float, default=0.3, help="gylio priežiūros iš ODM taškų svoris (pradžioje)")
     ap.add_argument("--max-ratio", type=float, default=10.0, help="didžiausias splato ilgio ir pločio santykis (adatos)")
+    ap.add_argument("--sh-reg", type=float, default=0.01, help="atspindžių (SH) koeficientų bauda – iš naujų kampų mažiau triukšmo")
     ap.add_argument("--device", default="cuda", help=argparse.SUPPRESS)  # testams: cpu
     a = ap.parse_args()
     os.makedirs(a.out_dir, exist_ok=True)
@@ -174,6 +175,9 @@ def main():
         loss = 0.8 * l1 + 0.2 * (1 - ssim(img, gt))
         sc = torch.exp(params["scales"])
         loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * sc.mean()
+        # Atspindžiai švelnūs: kryptinė spalva išmokstama tik tiek, kiek tikrai matoma nuotraukose (iš kitų kampų – ramiau)
+        if a.sh_reg > 0 and step >= 1000:
+            loss = loss + a.sh_reg * (params["shN"] ** 2).mean()
         # Adatos: splatas ne daugiau kaip max_ratio karto ilgesnis nei platus
         loss = loss + 0.1 * torch.relu(sc.max(-1).values / sc.min(-1).values.clamp_min(1e-8) - a.max_ratio).mean()
         # Gylis iš ODM (santykinė paklaida langelio centre); svoris mažėja, kad pabaigoje nuotraukos lemtų detales
