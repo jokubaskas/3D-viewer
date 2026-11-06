@@ -475,7 +475,7 @@ async def forgot(req: Request):
 
 
 # --------------------------------------------------------------------------- nginx auth_request
-ADMIN_ONLY = re.compile(r"^/(odm/|live/api/|ext/|ai/train|ai/models/(active|delete))")
+ADMIN_ONLY = re.compile(r"^/(odm/|splat/|live/api/|ext/|ai/train|ai/models/(active|delete))")
 STREAM_PATH = re.compile(r"^/live/(?:webrtc|hls|relay)/([A-Za-z0-9_-]+)(?:/|$)")
 SAFE_PATH = re.compile(r"^/[A-Za-z0-9._~/-]*$")
 

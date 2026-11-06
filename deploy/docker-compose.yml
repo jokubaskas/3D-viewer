@@ -129,6 +129,8 @@ services:
     volumes:
       # ODM rezultatai (tik skaityti): 3D modelis ir ortofoto atidaromi be viso all.zip atsisiuntimo
       - nodeodm-data:/odm-data:ro
+      # Realistiško vaizdo (Gaussian Splatting) rezultatai – tik skaityti
+      - splat-data:/splat-data:ro
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}
@@ -148,5 +150,6 @@ networks:
 
 volumes:
   nodeodm-data:
+  splat-data:
   ai-models:
   portal-data:

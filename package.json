@@ -14,6 +14,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@sparkjsdev/spark": "^2.4.0",
     "geotiff": "^3.0.5",
     "hls.js": "^1.7.4",
     "jspdf": "^4.2.1",
