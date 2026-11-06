@@ -136,3 +136,66 @@ def test_app_train_status(tmp_path, monkeypatch):
     assert jobs[0]["state"] == "error" and jobs[0]["message"]  # be gsplat / GPU
     assert c.post("/delete", json={"uuid": uuid}).json()["ok"]
     assert c.get("/jobs").json() == []
+
+
+def test_train_pipeline_with_fake_rasterizer(tmp_path, monkeypatch):
+    """train.py logika be GPU: gsplat pakeičiamas paprastu (diferencijuojamu) imitaciniu atvaizdavimu.
+    Tikrinama: kameros, gylio taikiniai, nuostoliai, eksporto valymas (splatai ore), meta.json su pradiniu vaizdu."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("scipy")
+    import types
+
+    def rasterization(means, quats, scales, opacities, colors, viewmats, Ks, width, height, render_mode="RGB", **kw):
+        # vidutinė spalva + gylis = vidutinis z kameros koordinatėse (užtenka formoms ir gradientams)
+        pc = means @ viewmats[0, :3, :3].T + viewmats[0, :3, 3]
+        rgb = (colors[:, 0, :] * 0.28209479177387814 + 0.5).mean(0) * opacities.mean() + 0 * scales.mean() + 0 * quats.mean()
+        img = rgb.view(1, 1, 1, 3).expand(1, height, width, 3)
+        if render_mode == "RGB+ED":
+            img = torch.cat([img, pc[:, 2].mean().view(1, 1, 1, 1).expand(1, height, width, 1)], -1)
+        return img, torch.ones(1, height, width, 1), {}
+
+    class MCMCStrategy:
+        def __init__(self, **kw):
+            pass
+
+        def check_sanity(self, params, optimizers):
+            assert set(params.keys()) == set(optimizers.keys())
+
+        def initialize_state(self):
+            return {}
+
+        def step_pre_backward(self, *a, **k):
+            pass
+
+        def step_post_backward(self, params, optimizers, state, step, info, lr):
+            assert lr > 0
+
+    g = types.ModuleType("gsplat")
+    g.rasterization = rasterization
+    gs = types.ModuleType("gsplat.strategy")
+    gs.MCMCStrategy = MCMCStrategy
+    monkeypatch.setitem(sys.modules, "gsplat", g)
+    monkeypatch.setitem(sys.modules, "gsplat.strategy", gs)
+
+    task = _fake_task(tmp_path / "task")
+    out_dir = tmp_path / "out"
+    import importlib
+    import train
+    importlib.reload(train)
+    monkeypatch.setattr(sys, "argv", ["train.py", "--task-dir", str(task), "--out-dir", str(out_dir), "--steps", "120",
+                                      "--device", "cpu", "--max-size", "200"])
+    train.main()
+    st = json.load(open(out_dir / "status.json"))
+    assert st["state"] == "done", st
+    meta = json.load(open(out_dir / "meta.json"))
+    assert meta["splats"] == 500
+    assert len(meta["view"]["position"]) == 3 and len(meta["view"]["target"]) == 3
+    v = splat_io.read_ply_vertices(str(out_dir / "scene.ply"))
+    assert len(v) == 500 and (out_dir / "scene.spz").stat().st_size > 1000
+
+
+def test_near_points_mask():
+    from scipy.spatial import cKDTree
+    pts = np.random.default_rng(0).uniform(0, 10, (1000, 3))
+    m = splat_io.near_points_mask(np.array([[5, 5, 5], [5, 5, 30], [50, 0, 0]]), cKDTree(pts), 1.0)
+    assert m.tolist() == [True, False, False]

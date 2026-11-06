@@ -1586,4 +1586,5 @@ export const EN = {
   'Apmokyti realistišką vaizdą (Gaussian Splatting): stiklas, atspindžiai ir medžiai – kaip nuotraukose': 'Train a realistic view (Gaussian Splatting): glass, reflections and trees look like in the photos',
   'Realistiško vaizdo paslauga nepasiekiama: {e}': 'Realistic view service is not available: {e}',
   'Ji veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps splat ir docker compose logs --tail 50 splat': 'It only runs on a computer with an NVIDIA GPU. Check in the deploy folder: docker compose ps splat and docker compose logs --tail 50 splat',
+  'Vaizdas iš drono padėties': 'View from drone position',
 };

@@ -22,6 +22,7 @@ export function createSplatUI(app) {
       <div class="splat-view" id="sp-view"></div>
       <div class="or-map-btns">
         <button class="btn btn-sm icon-only" type="button" data-sp="fit" title="Rodyti visą sceną">${icon('fit')}</button>
+        <button class="btn btn-sm icon-only" type="button" data-sp="drone" title="Vaizdas iš drono padėties">${icon('camera')}</button>
         <button class="btn btn-sm icon-only" type="button" data-sp="top" title="Vaizdas iš viršaus">${icon('map')}</button>
       </div>
       <div class="splat-info small" id="sp-info"></div>
@@ -34,8 +35,21 @@ export function createSplatUI(app) {
   let ctx = null; // { renderer, scene, camera, controls, mesh, ro }
   let meta = null;
 
-  function fit(top = false) {
+  function fit(top = false, fromCamera = false) {
     if (!ctx) return;
+    // Pradžia – iš drono kameros padėties (meta.view): iš ten vaizdas atrodo geriausiai (splatai mokyti iš tų kampų)
+    if (fromCamera && meta?.view) {
+      const { camera, controls } = ctx;
+      const [p, q] = [meta.view.position, meta.view.target];
+      const dist = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+      controls.target.set(q[0], q[1], q[2]);
+      camera.position.set(p[0], p[1], p[2]);
+      camera.near = Math.max(0.05, dist / 2000);
+      camera.far = dist * 50;
+      camera.updateProjectionMatrix();
+      controls.update();
+      return;
+    }
     const [lo, hi] = meta?.bbox || [[-50, -50, 0], [50, 50, 30]];
     const c = lo.map((v, i) => (v + hi[i]) / 2);
     const r = Math.max(5, Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) / 2);
@@ -91,7 +105,7 @@ export function createSplatUI(app) {
       ro.observe(host);
       ctx = { renderer, scene, camera, controls, mesh, ro };
       resize();
-      fit();
+      fit(false, true);
       renderer.setAnimationLoop(() => {
         controls.update();
         renderer.render(scene, camera);
@@ -128,6 +142,7 @@ export function createSplatUI(app) {
     if (b.dataset.act === 'close') close();
     else if (b.dataset.sp === 'fit') fit();
     else if (b.dataset.sp === 'top') fit(true);
+    else if (b.dataset.sp === 'drone') fit(false, true);
   });
 
   return {

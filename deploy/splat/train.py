@@ -75,6 +75,9 @@ def main():
     ap.add_argument("--cap", type=int, default=3_000_000, help="didžiausias splatų skaičius")
     ap.add_argument("--sh-degree", type=int, default=3)
     ap.add_argument("--max-points", type=int, default=1_500_000)
+    ap.add_argument("--depth-weight", type=float, default=0.3, help="gylio priežiūros iš ODM taškų svoris (pradžioje)")
+    ap.add_argument("--max-ratio", type=float, default=10.0, help="didžiausias splato ilgio ir pločio santykis (adatos)")
+    ap.add_argument("--device", default="cuda", help=argparse.SUPPRESS)  # testams: cpu
     a = ap.parse_args()
     os.makedirs(a.out_dir, exist_ok=True)
     write_status(a.out_dir, state="preparing", step=0, steps=a.steps, message="Ruošiamos nuotraukos ir taškai")
@@ -82,9 +85,9 @@ def main():
     from gsplat import rasterization
     from gsplat.strategy import MCMCStrategy
 
-    if not torch.cuda.is_available():
+    if a.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("NVIDIA GPU nepasiekiama (CUDA)")
-    dev = torch.device("cuda")
+    dev = torch.device(a.device)
     torch.manual_seed(0)
     random.seed(0)
 
@@ -100,7 +103,9 @@ def main():
     print("Kamerų: %d, taškų: %d, scenos dydis: %.1f m" % (len(cams), len(xyz), scene_scale), flush=True)
 
     from scipy.spatial import cKDTree
-    d, _ = cKDTree(xyz).query(xyz, k=4)
+    kd = cKDTree(xyz)
+    d, _ = kd.query(xyz, k=4)
+    spacing = float(np.median(np.sqrt((d[:, 1:] ** 2).mean(1))))
     dist = np.sqrt((d[:, 1:] ** 2).mean(1)).clip(1e-3, scene_scale * 0.01)
     n = len(xyz)
     deg = a.sh_degree
@@ -121,6 +126,30 @@ def main():
     state = strategy.initialize_state()
 
     imgs = Images(cams, a.max_size)
+
+    # Gylio priežiūra: ODM tankus taškų debesis projektuojamas į kiekvieną nuotrauką; langelyje (DEPTH_CELL px)
+    # paliekamas artimiausias taškas. Splatai baudžiami, jei jų gylis neatitinka – nebelieka „debesėlių“ ore ir
+    # ištirpusių paviršių ten, kur nuotraukų mažai (aeronuotraukos – daug vienodų kampų).
+    DEPTH_CELL = 4
+    pts_t = torch.tensor(xyz, device=dev)
+    depth_cache = {}
+
+    def depth_target(i, H, W, Kc):
+        if i in depth_cache:
+            return depth_cache[i]
+        V = torch.tensor(cams[i]["viewmat"], device=dev, dtype=torch.float32)
+        pc = pts_t @ V[:3, :3].T + V[:3, 3]
+        z = pc[:, 2]
+        ok = z > 0.1
+        u = Kc[0, 0] * pc[:, 0] / z.clamp_min(1e-6) + Kc[0, 2]
+        v = Kc[1, 1] * pc[:, 1] / z.clamp_min(1e-6) + Kc[1, 2]
+        hs, ws = H // DEPTH_CELL, W // DEPTH_CELL
+        ui, vi = (u / DEPTH_CELL).floor().long(), (v / DEPTH_CELL).floor().long()
+        ok &= (ui >= 0) & (ui < ws) & (vi >= 0) & (vi < hs)
+        dmin = torch.full((hs * ws,), float("inf"), device=dev)
+        dmin.scatter_reduce_(0, (vi * ws + ui)[ok], z[ok], reduce="amin")
+        depth_cache[i] = dmin.view(hs, ws)
+        return depth_cache[i]
     t0 = time.time()
     cancel = os.path.join(a.out_dir, "cancel")
     order = []
@@ -138,12 +167,24 @@ def main():
         colors = torch.cat([params["sh0"], params["shN"]], 1)
         renders, alphas, info = rasterization(
             params["means"], params["quats"], torch.exp(params["scales"]), torch.sigmoid(params["opacities"]), colors,
-            viewmat, Kt, W, H, sh_degree=min(step // 1000, deg), packed=False, near_plane=0.1)
+            viewmat, Kt, W, H, sh_degree=min(step // 1000, deg), packed=False, near_plane=0.1, render_mode="RGB+ED")
         strategy.step_pre_backward(params, optimizers, state, step, info)
-        img = renders[0].clamp(0, 1)
+        img = renders[0, ..., :3].clamp(0, 1)
         l1 = (img - gt).abs().mean()
         loss = 0.8 * l1 + 0.2 * (1 - ssim(img, gt))
-        loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * torch.exp(params["scales"]).mean()
+        sc = torch.exp(params["scales"])
+        loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * sc.mean()
+        # Adatos: splatas ne daugiau kaip max_ratio karto ilgesnis nei platus
+        loss = loss + 0.1 * torch.relu(sc.max(-1).values / sc.min(-1).values.clamp_min(1e-8) - a.max_ratio).mean()
+        # Gylis iš ODM (santykinė paklaida langelio centre); svoris mažėja, kad pabaigoje nuotraukos lemtų detales
+        if a.depth_weight > 0:
+            dt = depth_target(i, H, W, Kc)
+            c0 = DEPTH_CELL // 2
+            ed = renders[0, c0::DEPTH_CELL, c0::DEPTH_CELL, 3][: dt.shape[0], : dt.shape[1]]
+            m = torch.isfinite(dt) & (alphas[0, c0::DEPTH_CELL, c0::DEPTH_CELL, 0][: dt.shape[0], : dt.shape[1]] > 0.5)
+            if m.any():
+                wd = a.depth_weight * (0.1 + 0.9 * (1 - step / a.steps))
+                loss = loss + wd * ((ed[m] - dt[m]).abs() / dt[m]).mean()
         loss.backward()
         for opt in optimizers.values():
             opt.step()
@@ -153,17 +194,23 @@ def main():
         if step % 100 == 0 or step == a.steps - 1:
             el = time.time() - t0
             eta = el / (step + 1) * (a.steps - step - 1)
-            write_status(a.out_dir, step=step + 1, eta=round(eta), splats=int(params["means"].shape[0]), loss=round(float(l1), 4))
+            write_status(a.out_dir, step=step + 1, eta=round(eta), splats=int(params["means"].shape[0]), loss=round(float(l1.detach()), 4))
             if step % 1000 == 0:
-                print("žingsnis %d/%d, l1 %.4f, splatų %d, liko ~%d min." % (step, a.steps, float(l1), params["means"].shape[0], eta / 60), flush=True)
+                print("žingsnis %d/%d, l1 %.4f, splatų %d, liko ~%d min." % (step, a.steps, float(l1.detach()), params["means"].shape[0], eta / 60), flush=True)
             if os.path.exists(cancel):
                 write_status(a.out_dir, state="cancelled", message="Atšaukta")
                 return
 
     write_status(a.out_dir, state="exporting", message="Įrašomas rezultatas")
     with torch.no_grad():
-        keep = torch.sigmoid(params["opacities"]) > 0.005
+        sc = torch.exp(params["scales"])
+        keep = (torch.sigmoid(params["opacities"]) > 0.005) & (sc.max(-1).values / sc.min(-1).values.clamp_min(1e-8) < 50)
         out = {k: v[keep].detach().cpu().numpy() for k, v in params.items()}
+    # Splatai toli nuo bet kurio ODM taško – „debesėliai“ ore (dangus, atspindžiai): pašalinami
+    far = max(1.0, 8 * spacing)
+    near = splat_io.near_points_mask(out["means"], kd, far)
+    print("Eksportas: pašalinta %d splatų ore (> %.1f m nuo ODM taškų) iš %d" % (int((~near).sum()), far, len(near)), flush=True)
+    out = {k: v[near] for k, v in out.items()}
     q = out["quats"] / np.linalg.norm(out["quats"], axis=1, keepdims=True)
     args = (out["means"], out["scales"], q, out["opacities"], out["sh0"][:, 0, :], out["shN"])
     splat_io.write_spz(os.path.join(a.out_dir, "scene.spz.tmp"), *args)
@@ -171,7 +218,16 @@ def main():
     splat_io.write_ply(os.path.join(a.out_dir, "scene.ply"), *args)
     m = out["means"]
     lo, hi = np.percentile(m, 2, axis=0), np.percentile(m, 98, axis=0)
-    meta = {"splats": int(len(m)), "steps": a.steps, "cameras": len(cams), "bbox": [lo.tolist(), hi.tolist()],
+    # Peržiūros pradžia – iš drono kameros padėties (įstrižos, jei tokių yra): iš ten vaizdas atrodo geriausiai
+    fwd = np.array([c["viewmat"][:3, :3].T @ np.array([0, 0, 1.0]) for c in cams])
+    pitch = np.degrees(np.arcsin(np.clip(-fwd[:, 2], -1, 1)))  # 90 – statmenai žemyn
+    obl = np.flatnonzero((pitch > 25) & (pitch < 70))
+    cand = obl if len(obl) else np.arange(len(cams))
+    mid = (lo + hi) / 2
+    k = cand[np.argmin(np.linalg.norm(centers[cand, :2] - centers[cand, :2].mean(0), axis=1))]
+    tdist = max(1.0, float((mid - centers[k]) @ fwd[k]))
+    view = {"position": centers[k].tolist(), "target": (centers[k] + fwd[k] * tdist).tolist()}
+    meta = {"splats": int(len(m)), "steps": a.steps, "cameras": len(cams), "bbox": [lo.tolist(), hi.tolist()], "view": view,
             "camera_center": centers.mean(0).tolist(), "created": time.time(), "minutes": round((time.time() - t0) / 60, 1)}
     coords = os.path.join(a.task_dir, "odm_georeferencing", "coords.txt")
     if os.path.isfile(coords):
