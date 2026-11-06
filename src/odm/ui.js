@@ -65,7 +65,7 @@ export function createOdmUI(app) {
   /** Projekto serveris: vietiniam serveriui – dabartinis adresas (prievadas galėjo pasikeisti). */
   const serverFor = (p) => (isLocalOdm(p.server) ? server.url : p.server);
   // Realistiškas vaizdas (Gaussian Splatting, deploy/splat – tik su NVIDIA GPU): paslaugos būsena ir mokymai
-  const splat = { available: false, gpu: null, jobs: {} };
+  const splat = { available: false, gpu: null, jobs: {}, error: null };
   async function splatApi(path, body) {
     const base = splatBase(server.url);
     if (!base) throw new Error(t('Realistiško vaizdo paslauga nepasiekiama'));
@@ -79,6 +79,7 @@ export function createOdmUI(app) {
     try {
       const h = await splatApi('health');
       splat.available = true;
+      splat.error = null;
       splat.gpu = h.gpu;
       const prev = splat.jobs;
       splat.jobs = Object.fromEntries((await splatApi('jobs')).map((j) => [j.uuid, j]));
@@ -90,8 +91,9 @@ export function createOdmUI(app) {
           notify(t('Realistiškas vaizdas „{n}“ paruoštas', { n: name }));
         } else if (j.state === 'error') app.toast(t('Realistiškas vaizdas „{n}“ nepavyko: {e}', { n: name, e: j.message || '' }), 'error', 10000);
       }
-    } catch {
+    } catch (e) {
       splat.available = false;
+      splat.error = e.message;
       splat.jobs = {};
     }
   }
@@ -109,7 +111,9 @@ export function createOdmUI(app) {
     return '';
   }
   function splatButton(p) {
-    if (!splat.available || p.preset === 'orthoOnly' || splatRunning(splat.jobs[p.uuid])) return '';
+    if (p.preset === 'orthoOnly' || splatRunning(splat.jobs[p.uuid])) return '';
+    // Paslauga nepasiekiama – mygtukas vis tiek rodomas, paspaudus paaiškinama priežastis
+    if (!splat.available) return `<button class="btn btn-sm btn-ghost" data-pact="splat-why" title="${esc(t('Realistiško vaizdo paslauga nepasiekiama'))}" style="opacity:.6">${icon('magic')}${t('Realistiškas vaizdas')}</button>`;
     const has = splat.jobs[p.uuid]?.has_result;
     return `<button class="btn btn-sm ${has ? 'btn-outline' : 'btn-ghost'}" data-pact="${has ? 'splat' : 'splat-train'}" title="${esc(t(has ? 'Atidaryti realistišką vaizdą (Gaussian Splatting)' : 'Apmokyti realistišką vaizdą (Gaussian Splatting): stiklas, atspindžiai ir medžiai – kaip nuotraukose'))}">${icon('magic')}${t('Realistiškas vaizdas')}</button>`;
   }
@@ -741,6 +745,11 @@ export function createOdmUI(app) {
       } else if (act === 'splat') {
         await splatOpen(p);
         close();
+        return;
+      } else if (act === 'splat-why') {
+        await splatRefresh();
+        if (splat.available) renderProjects();
+        else alert(t('Realistiško vaizdo paslauga nepasiekiama: {e}', { e: splat.error || '—' }) + '\n\n' + t('Ji veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps splat ir docker compose logs --tail 50 splat'));
         return;
       } else if (act === 'splat-train') {
         await splatTrain(p);
