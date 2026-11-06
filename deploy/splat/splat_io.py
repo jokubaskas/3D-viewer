@@ -126,6 +126,12 @@ def load_points(path, max_points=2_000_000, seed=0):
     return xyz, rgb
 
 
+def near_points_mask(means, kdtree, far):
+    """True – splatas ne toliau kaip `far` m nuo artimiausio ODM taško (kiti – „debesėliai“ ore)."""
+    dist, _ = kdtree.query(np.asarray(means), k=1, distance_upper_bound=far * 2)
+    return dist < far
+
+
 def write_ply(path, means, scales, quats, opacities, sh0, shN):
     """Standartinis 3DGS PLY (Inria / gsplat): scales – log, opacities – logit, quats – (w, x, y, z),
     sh0 N×3, shN N×K×3 (f_rest – kanalas išorinis: visi R, tada G, tada B)."""
