@@ -13,6 +13,23 @@ services:
               count: all
               capabilities: [gpu]
 
+  # „Realistiškas vaizdas“ (Gaussian Splatting) – tik su NVIDIA GPU (deploy/splat)
+  splat:
+    build: ./splat
+    restart: unless-stopped
+    volumes:
+      - nodeodm-data:/odm-data:ro
+      - splat-data:/data
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   ai:
     build:
       args:

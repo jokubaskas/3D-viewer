@@ -4,6 +4,7 @@ import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
 import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS } from './nodeodm.js';
+import { splatBase } from '../splat/ui.js';
 import { PhotoPreview } from './preview.js';
 import { loadGeoidFile } from '../geo/geoid.js';
 import { t, locale } from '../i18n.js';
@@ -63,6 +64,70 @@ export function createOdmUI(app) {
   let client = new NodeODM(server.url, server.token);
   /** Projekto serveris: vietiniam serveriui – dabartinis adresas (prievadas galėjo pasikeisti). */
   const serverFor = (p) => (isLocalOdm(p.server) ? server.url : p.server);
+  // Realistiškas vaizdas (Gaussian Splatting, deploy/splat – tik su NVIDIA GPU): paslaugos būsena ir mokymai
+  const splat = { available: false, gpu: null, jobs: {} };
+  async function splatApi(path, body) {
+    const base = splatBase(server.url);
+    if (!base) throw new Error(t('Realistiško vaizdo paslauga nepasiekiama'));
+    const r = await fetch(base + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin' } : { credentials: 'same-origin', cache: 'no-store' });
+    const ct = r.headers.get('content-type') || '';
+    const data = ct.includes('json') ? await r.json().catch(() => null) : null;
+    if (!r.ok || !data) throw new Error(data?.detail || (r.status === 502 || r.status === 504 ? t('Realistiško vaizdo paslauga nepaleista (reikia NVIDIA GPU)') : `HTTP ${r.status}`));
+    return data;
+  }
+  async function splatRefresh() {
+    try {
+      const h = await splatApi('health');
+      splat.available = true;
+      splat.gpu = h.gpu;
+      const prev = splat.jobs;
+      splat.jobs = Object.fromEntries((await splatApi('jobs')).map((j) => [j.uuid, j]));
+      for (const [uuid, j] of Object.entries(splat.jobs)) {
+        if (!splatRunning(prev[uuid])) continue;
+        const name = projects.find((p) => p.uuid === uuid)?.name || uuid.slice(0, 8);
+        if (j.state === 'done') {
+          app.toast(t('Realistiškas vaizdas „{n}“ paruoštas!', { n: name }), 'info', 8000);
+          notify(t('Realistiškas vaizdas „{n}“ paruoštas', { n: name }));
+        } else if (j.state === 'error') app.toast(t('Realistiškas vaizdas „{n}“ nepavyko: {e}', { n: name, e: j.message || '' }), 'error', 10000);
+      }
+    } catch {
+      splat.available = false;
+      splat.jobs = {};
+    }
+  }
+  const splatRunning = (j) => j && ['preparing', 'training', 'exporting'].includes(j.state);
+  function splatRow(p) {
+    if (!splat.available || p.statusCode !== STATUS.COMPLETED || p.preset === 'orthoOnly') return '';
+    const j = splat.jobs[p.uuid];
+    if (splatRunning(j)) {
+      const pct = j.steps ? Math.round((100 * (j.step || 0)) / j.steps) : 0;
+      const eta = j.eta ? ` · ${t('liko ~{m} min.', { m: Math.max(1, Math.round(j.eta / 60)) })}` : '';
+      return `<div class="odm-splat small"><span>${t('Realistiškas vaizdas: {s}', { s: esc(t(j.state === 'training' ? 'mokoma' : j.state === 'exporting' ? 'įrašoma' : 'ruošiama')) })} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
+    }
+    if (j?.state === 'error') return `<div class="odm-splat small bad">${t('Realistiškas vaizdas nepavyko: {e}', { e: esc(j.message || '') })} <button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Bandyti dar kartą')}</button></div>`;
+    if (j?.has_result) return `<div class="odm-splat small muted">${t('Realistiškas vaizdas paruoštas')}${j.splats ? ` (${t('{n} splatų', { n: nf(j.splats, 0) })})` : ''} · <button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Mokyti iš naujo')}</button></div>`;
+    return '';
+  }
+  function splatButton(p) {
+    if (!splat.available || p.preset === 'orthoOnly' || splatRunning(splat.jobs[p.uuid])) return '';
+    const has = splat.jobs[p.uuid]?.has_result;
+    return `<button class="btn btn-sm ${has ? 'btn-outline' : 'btn-ghost'}" data-pact="${has ? 'splat' : 'splat-train'}" title="${esc(t(has ? 'Atidaryti realistišką vaizdą (Gaussian Splatting)' : 'Apmokyti realistišką vaizdą (Gaussian Splatting): stiklas, atspindžiai ir medžiai – kaip nuotraukose'))}">${icon('magic')}${t('Realistiškas vaizdas')}</button>`;
+  }
+  async function splatTrain(p) {
+    const busy = serverTasks.some((x) => x.status?.code === STATUS.RUNNING);
+    const msg = t('Apmokyti realistišką vaizdą projektui „{n}“? Naudojamos jau serveryje esančios nuotraukos ir ODM skaičiavimai; užtrunka apie 30–90 min., vaizdo plokštė tuo metu užimta.', { n: p.name })
+      + (busy ? '\n\n' + t('Dėmesio: šiuo metu apdorojamas kitas ODM projektas – abu kartu gali pritrūkti vaizdo plokštės atminties.') : '');
+    if (!confirm(msg)) return;
+    splat.jobs[p.uuid] = await splatApi('train', { uuid: p.uuid });
+    app.toast(t('Realistiško vaizdo mokymas pradėtas'), 'info');
+  }
+  async function splatOpen(p) {
+    const base = splatBase(server.url);
+    const files = `${base}files/${p.uuid}/`;
+    const meta = await fetch(files + 'meta.json', { credentials: 'same-origin', cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const safe = p.name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'projektas';
+    await app.openSplat?.({ url: files + 'scene.spz', name: p.name, meta, downloads: [{ href: files + 'scene.ply', name: `${safe}_splat.ply`, label: 'Atsisiųsti PLY' }] });
+  }
   let analysis = null;
   let serverInfo = null;
   let metas = [];
@@ -626,6 +691,7 @@ export function createOdmUI(app) {
         <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(PRESETS[p.preset]?.label || ''))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
         ${p.statusCode === STATUS.RUNNING ? `<div class="progress"><div class="progress-bar" style="width:${p.progress || 0}%"></div></div>` : ''}
         ${p.statusCode === STATUS.FAILED && (p.diag || p.error) ? `<div class="small bad">${esc(p.diag?.text || p.error)}</div>${p.diag?.line ? `<div class="small muted odm-errline" title="${esc(p.diag.line)}">${esc(p.diag.line)}</div>` : ''}` : ''}
+        ${splatRow(p)}
         ${p.retryNote && p.statusCode !== STATUS.FAILED ? `<div class="small muted">${t('Kartojama: {c}', { c: esc(p.retryNote) })}</div>` : ''}
         ${p.statusCode === STATUS.QUEUED && p.status !== 'uploading' ? `<div class="small muted odm-queue-why">${queueWhy(p)}</div>` : ''}
         ${p.pollError ? `<div class="small ${p.pollTemp ? 'warn' : 'bad'}">${t('Nepavyksta gauti būsenos: {e}', { e: esc(p.pollError) })}${p.polledAt ? ` <span class="muted">${t('(paskutinį kartą gauta {d})', { d: esc(new Date(p.polledAt).toLocaleString(locale())) })}</span>` : ''}</div>` : ''}
@@ -636,6 +702,7 @@ export function createOdmUI(app) {
             ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
             <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>
             ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-ghost" data-pact="remesh" title="Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami">${icon('refresh')}Kitas 3D tinklas</button>`}
+            ${splatButton(p)}
             <button class="btn btn-sm btn-ghost" data-pact="redo" title="Apdoroti visą projektą iš naujo su dabartiniais programos nustatymais (nuotraukos jau serveryje – iš naujo kelti nereikia)">${icon('play')}Perdaryti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
@@ -671,6 +738,14 @@ export function createOdmUI(app) {
         await openRestart(p, c);
       } else if (act === 'redo') {
         await redo(p, c);
+      } else if (act === 'splat') {
+        await splatOpen(p);
+        close();
+        return;
+      } else if (act === 'splat-train') {
+        await splatTrain(p);
+      } else if (act === 'splat-cancel') {
+        if (confirm(t('Atšaukti realistiško vaizdo mokymą?'))) await splatApi('cancel', { uuid: p.uuid });
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         try {
@@ -827,6 +902,10 @@ export function createOdmUI(app) {
   async function poll() {
     clearTimeout(pollTimer);
     let active = false;
+    if (!page.hidden || Object.values(splat.jobs).some(splatRunning)) {
+      await splatRefresh();
+      if (Object.values(splat.jobs).some(splatRunning)) active = true;
+    }
     for (const p of projects) {
       if (!p.uuid || p.status === 'uploading' || p.status === 'missing') continue;
       if (p.statusCode === STATUS.COMPLETED || p.statusCode === STATUS.CANCELED) continue;

@@ -38,8 +38,10 @@ jobs:
           python-version: "3.12"
       - run: pip install "fastapi==0.115.*" "uvicorn==0.32.*" httpx pytest
       - run: PORTAL_NO_BG=1 pytest -q deploy/portal
+      - name: Realistiško vaizdo (splat) duomenys ir API (be GPU)
+        run: pip install numpy scipy pillow && pytest -q deploy/splat
       - name: Python sintaksė (ai, odm, relay)
-        run: python -m py_compile deploy/ai/*.py deploy/odm/*.py
+        run: python -m py_compile deploy/ai/*.py deploy/odm/*.py deploy/splat/*.py
 
   odm:
     name: ODM pakeitimai

@@ -11,6 +11,7 @@ import { createOdmUI } from './odm/ui.js';
 import { createLiveUI } from './live/ui.js';
 import { createPlanUI } from './plan/ui.js';
 import { createOrthoUI } from './ortho/ui.js';
+import { createSplatUI } from './splat/ui.js';
 import { extractFromZipUrl, fetchDirect, DIRECT_MODEL, DIRECT_POINTS, WANT_MODEL, WANT_MODEL_GLB, WANT_POINTS } from './odm/results.js';
 import { whoAmI } from './portal/api.js';
 import { showLogin, showInvite, showDown, changePasswordDialog, logout } from './portal/auth.js';
@@ -936,6 +937,11 @@ const odmUI = createOdmUI({
   saveResults(project) {
     openOdmSaveDialog(project);
   },
+  /** Realistiškas vaizdas (Gaussian Splatting) – atskiras puslapis. */
+  openSplat(o) {
+    closePages();
+    return splatUI.open(o);
+  },
   async openResult(project, kind) {
     tools.deactivate();
     setLoading(true, 'Atsisiunčiami rezultatai…', 0);
@@ -961,7 +967,7 @@ const odmUI = createOdmUI({
     }
   },
 });
-const openOdm = () => (liveUI.close(), planUI.close(), orthoUI.close(), portalUI?.close(), ordersUI?.close(), homeUI?.close(), odmUI.open());
+const openOdm = () => (liveUI.close(), planUI.close(), orthoUI.close(), splatUI.close(), portalUI?.close(), ordersUI?.close(), homeUI?.close(), odmUI.open());
 $('#btn-odm').addEventListener('click', openOdm);
 $('#btn-odm-2').addEventListener('click', openOdm);
 $('#odm-badge').addEventListener('click', openOdm);
@@ -995,6 +1001,7 @@ const planUI = createPlanUI({ toast });
 // ---------------------------------------------------------------------------
 const orthoApp = { toast, uploadToPortal: null };
 const orthoUI = createOrthoUI(orthoApp);
+const splatUI = createSplatUI({ toast });
 function openOrthoPage(o, opts) {
   if (odmUI.isOpen) odmUI.close();
   liveUI.close();
@@ -1024,6 +1031,7 @@ let ordersUI = null;
 /** Uždaro visus puslapius (lieka 3D peržiūra). */
 const closePages = () => {
   if (odmUI.isOpen) odmUI.close();
+  splatUI.close();
   liveUI.close();
   planUI.close();
   portalUI?.close();
@@ -1204,7 +1212,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     return loadingAbort.abort();
   }
-  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || ordersUI?.isOpen || orthoUI.isOpen || homeUI?.isOpen) return;
+  if (e.target.closest('input, select, textarea') || document.querySelector('dialog[open]') || odmUI.isOpen || liveUI.isOpen || planUI.isOpen || portalUI?.isOpen || ordersUI?.isOpen || orthoUI.isOpen || splatUI.isOpen || homeUI?.isOpen) return;
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'o') {
     e.preventDefault();

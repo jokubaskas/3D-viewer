@@ -1045,3 +1045,16 @@ body.portal .portal-card { display: block; }
 .or-dock-btns { display: flex; gap: 2px; }
 @media (max-width: 640px) { .or-dock-row { grid-template-columns: 1fr 1fr; } .or-dock-name { grid-column: 1 / -1; } }
 
+
+/* Realistiškas vaizdas (Gaussian Splatting) */
+.splat-main { position: relative; flex: 1; min-height: 360px; margin: 0 24px 24px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow-sm); background: #1d2326; }
+.splat-view { position: absolute; inset: 0; }
+.splat-view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.splat-info, .splat-help { position: absolute; bottom: 12px; background: rgba(16,19,21,.78); color: #e6ebe8; padding: 6px 12px; border-radius: 14px; }
+.splat-info { left: 12px; }
+.splat-info a { color: #8fe08f; }
+.splat-help { right: 12px; color: #c3cac6; }
+.splat-page .ot-loading { top: 12px; left: 12px; }
+.odm-splat { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.odm-splat .progress { flex: 1; min-width: 120px; }
+@media (max-width: 720px) { .splat-main { margin: 0 8px 8px; } .splat-help { display: none; } }

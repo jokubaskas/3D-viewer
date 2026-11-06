@@ -14,6 +14,7 @@ server {
   set $odm_upstream nodeodm:3000;
   set $live_upstream mediamtx;
   set $portal_upstream portal:8000;
+  set $splat_upstream splat:8000;
   server_name _;
   root /usr/share/nginx/html;
   index index.html;
@@ -94,6 +95,25 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy strict-origin-when-cross-origin always;
     add_header X-Frame-Options SAMEORIGIN always;
+  }
+
+  # Realistiškas vaizdas (Gaussian Splatting): rezultatai iš splat tomo ir mokymo API – tik administratoriui
+  location ~ "^/splat/files/(?<splat_task>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/(?<splat_file>scene\.spz|scene\.ply|meta\.json)$" {
+    auth_request /_auth;
+    alias /splat-data/$splat_task/$splat_file;
+    default_type application/octet-stream;
+    add_header Cache-Control "private, no-cache" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+  }
+  location /splat/ {
+    auth_request /_auth;
+    rewrite ^/splat/(.*)$ /$1 break;
+    proxy_pass http://$splat_upstream;
+    proxy_http_version 1.1;
+    proxy_read_timeout 120s;
+    proxy_set_header Host $host;
   }
 
   # NodeODM API per tą patį adresą (be CORS problemų)
