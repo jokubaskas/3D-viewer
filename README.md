@@ -199,6 +199,12 @@ Viršutinėje juostoje paspauskite **„Planas“**.
 - įkelti iš KML ar GeoJSON;
 - surasti pagal adresą ar koordinates.
 
+**Misija.**
+- *Tinklelis* – lygiagrečios linijos, kamera statmenai žemyn (galima kryžminis). Ortofoto, tūriams, reljefui.
+- *5 krypčių* – tinklelis ir 4 įstriži praskridimai: kamera pakreipta (numatyta 45° nuo horizonto) ir nukreipta į š., r., p., v. Dronas skrenda statmenai žiūrėjimo krypčiai, atitrauktas nuo srities per `aukštis / tan(kampas)` (kad kadro centras būtų virš srities), jo kryptis fiksuota visą praskridimą. Pastatų sienoms, fasadams, stiklui – geriausiam 3D modeliui ir realistiškam vaizdui (~5× daugiau nuotraukų).
+- *Orbita* – pažymėkite pastato kontūrą ir nurodykite aukštį: 1–3 ratai aplink pastatą (aukščiausias – virš stogo, žemiausias – ~pusė pastato aukščio), kamera kiekviename taške nukreipta į pastato vidurį, nuotraukų rate – pagal išilginį persidengimą artimiausioje sienoje (dronas sustoja kiekviename taške). Spindulys – automatiškai (≥ 15 m nuo sienos) arba nurodomas. Papildo statmeną tinklelį.
+- DJI KMZ kiekviename taške turi aukštį, greitį, drono kryptį ir kameros kampą (DJI Pilot 2: Mavic 3E / 3T, M30, M4E). Failų pavadinimai – be lietuviškų raidžių (kitaip naršyklė ar pultas gali juos pakeisti).
+
 **Kamera.** Pasirinkite iš sąrašo (Anzu Raptor T / Mavic 3T, Mavic 3E, Matrice 4E, Phantom 4 RTK, M30T) arba nuskaitykite iš vienos savo drono nuotraukos (EXIF).
 
 **Tikslumas.** Įveskite norimą GSD (cm/px) – aukštis apskaičiuojamas (arba atvirkščiai). Pvz. Mavic 3E 100 m aukštyje: 2,73 cm/px. Virš 120 m programa įspėja.
