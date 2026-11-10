@@ -26,6 +26,7 @@ import { aiClient, aiOutline, runDetection, exportDetectionsCsv } from './app/ai
 import { askCheckpoint, level, renderCheckpoints, updateScaleBadge } from './app/checkpoints.js';
 import { clearCompare } from './app/compare-ui.js';
 import { refreshMap, toggleMap } from './app/basemap-ui.js';
+import { attachSplatLayer, detachSplatLayer, toggleSplatLayer } from './app/splat-layer.js';
 import './app/measure-io.js';
 import './app/report-ui.js';
 
@@ -566,6 +567,7 @@ async function openFiles(fileList, opts = {}) {
 }
 
 async function showModel(object, offset, up, name, format, { crs = null, heightSystem = null } = {}) {
+  detachSplatLayer();
   clearMeasurements();
   units.calibration = 1;
   $('#opt-scale').value = 1;
@@ -960,6 +962,9 @@ const odmUI = createOdmUI({
       if (viewer.hasModel) {
         state.odmProject = project;
         syncSaveCard();
+        // Realistiškas sluoksnis (splatai), jei šiam projektui apmokytas – rodomas iš karto, matavimai ant modelio
+        if (kind !== 'points' && project.splatUrl && (await attachSplatLayer(project.splatUrl)))
+          toast(tr('Rodomas realistiškas vaizdas. Matavimai – ant 3D modelio. Perjungti: G arba skydelis „Modelis“.'), 'info', 7000);
       }
     } catch (e) {
       setLoading(false);
@@ -1241,6 +1246,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === '5') viewer.setView('iso');
   else if (k === 'x') runDetection();
   else if (k === 'm') toggleMap();
+  else if (k === 'g') toggleSplatLayer();
   else if (KEY_TOOLS[k]) tools.activate(KEY_TOOLS[k]);
 });
 

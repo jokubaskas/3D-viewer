@@ -119,6 +119,7 @@
             <button class="vbtn" id="btn-ortho" title="Perspektyva / ortografinė projekcija (O)">Persp.</button>
             <button class="vbtn" id="btn-map" title="Žemėlapis po modeliu (M)"><span data-icon="map"></span></button>
             <button class="vbtn" id="btn-fit" title="Rodyti visą modelį (F)"><span data-icon="fit"></span></button>
+            <button class="vbtn" id="btn-splat-layer" title="Realistiškas vaizdas / 3D modelis (G) – matavimai visada ant 3D modelio" hidden><span data-icon="magic"></span></button>
           </div>
         </div>
 
@@ -177,6 +178,15 @@
         </div>
 
         <div class="tab-pane" data-pane="model">
+          <section class="card" id="splat-layer-card" hidden>
+            <h3>Realistiškas vaizdas</h3>
+            <div class="seg">
+              <button data-sl="model">3D modelis</button>
+              <button data-sl="splat" class="active">Realistiškas</button>
+            </div>
+            <label class="ot-range">3D modelis <input type="range" id="splat-layer-mix" min="0" max="100" value="100" /> Realistiškas</label>
+            <p class="muted small" id="splat-layer-status"></p>
+          </section>
           <section class="card">
             <h3>Informacija</h3>
             <dl class="kv" id="model-info"><dt>Modelis</dt><dd>—</dd></dl>

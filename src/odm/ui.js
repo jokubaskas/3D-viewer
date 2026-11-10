@@ -730,7 +730,9 @@ export function createOdmUI(app) {
         return;
       }
       if (act === 'model' || act === 'points') {
-        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid) }, act);
+        const sb = splatBase(server.url);
+        const splatUrl = act === 'model' && sb && splat.jobs[uuid]?.has_result ? `${sb}files/${uuid}/scene.spz` : null;
+        await app.openResult({ ...p, downloadUrl: c.downloadUrl(uuid), filesUrl: c.filesUrl(uuid), splatUrl }, act);
         close();
       } else if (act === 'ortho') {
         if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: `${c.filesUrl(uuid)}odm_orthophoto/odm_orthophoto.tif` })) close();

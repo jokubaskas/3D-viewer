@@ -221,6 +221,7 @@ export async function loadModelFiles(fileList, { onProgress, onStatus } = {}) {
       warnings.push(t('Modelis perskaičiuotas iš WGS84 / UTM {z}N į LKS-94.', { z: odmCoords.zone }));
     } else {
       originOffset = new THREE.Vector3(odmCoords.offE, odmCoords.offN, 0);
+      object.userData.odmToLocal = new THREE.Matrix4(); // modelis paliekamas ODM vietinėmis koordinatėmis
       crs = CRS.utm(odmCoords.zone);
       suggestedUp = 'z';
     }

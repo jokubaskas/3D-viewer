@@ -163,7 +163,11 @@ export class Viewer extends EventTarget {
     const dt = this._clock.getDelta();
     if (this._anim) this._stepAnim(dt);
     if (this.controls.update()) this.dirty = true;
-    if (!this.dirty) return;
+    // Splatų sluoksnis rūšiuojamas fone (Spark): po kiekvieno pakeitimo dar ~1,5 s piešiama kiekviename kadre, kad
+    // rūšiavimas spėtų baigtis; paskui – kaip įprasta, tik kai kas nors keičiasi (vaizdo plokštė ilsisi)
+    const now = performance.now();
+    if (this.dirty && this.continuous) this._keepUntil = now + 1500;
+    if (!this.dirty && !(this.continuous && now < (this._keepUntil || 0))) return;
     this.dirty = false;
     this.headlight.position.copy(this.camera.position);
     this.headlight.target.position.copy(this.controls.target);
@@ -377,6 +381,11 @@ export class Viewer extends EventTarget {
     this.viewMode = mode;
     this._applyMaterials();
   }
+  /** Modelio permatomumas (0 – nematomas, bet matavimai ant jo veikia; 1 – įprastas) – realistiškam sluoksniui. */
+  setModelOpacity(a) {
+    this.modelOpacity = Math.min(1, Math.max(0, a));
+    this._applyMaterials();
+  }
   setWireframe(on) {
     this.wireframe = on;
     this._applyMaterials();
@@ -410,10 +419,22 @@ export class Viewer extends EventTarget {
 
   _applyMaterials() {
     const planes = this._activeClipPlanes();
+    const op = this.modelOpacity ?? 1;
     const setCommon = (m) => {
       if (!m) return;
       m.clippingPlanes = planes;
       if ('wireframe' in m) m.wireframe = this.wireframe;
+      // Permatomumas (realistiškas sluoksnis): originali vertė įsimenama, kad grąžinus 1 būtų kaip buvo
+      if (m.userData._op0 == null) m.userData._op0 = { t: m.transparent, o: m.opacity, d: m.depthWrite };
+      if (op < 1) {
+        m.transparent = true;
+        m.opacity = m.userData._op0.o * op;
+        m.depthWrite = false;
+      } else {
+        m.transparent = m.userData._op0.t;
+        m.opacity = m.userData._op0.o;
+        m.depthWrite = m.userData._op0.d;
+      }
       m.needsUpdate = true;
     };
     for (const mesh of this.meshes) {
@@ -436,6 +457,7 @@ export class Viewer extends EventTarget {
           if ([].concat(orig).every((m) => m && !m.map && !m.vertexColors)) mat = orig;
       }
       mesh.material = mat;
+      mesh.visible = op > 0.01; // nematomas modelis vis tiek gaudo spindulius (matavimai)
       [].concat(mat).forEach(setCommon);
     }
     for (const pc of this.pointClouds) {

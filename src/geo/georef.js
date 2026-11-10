@@ -57,7 +57,39 @@ export function reprojectUtmLocalObject(object, { zone, offE, offN }) {
     o.geometry.computeBoundingBox();
     o.geometry.computeBoundingSphere();
   });
+  // Tas pats perskaičiavimas kaip 4×4 matrica (ODM vietinės koordinatės → modelio): kitiems tame pačiame rėme
+  // esantiems sluoksniams (realistiškas vaizdas – splatai), kurių viršūnių po vieną perskaičiuoti negalima
+  object.userData.odmToLocal = similarityMatrix(fn, offE, offN, origin, box);
   return origin;
+}
+
+/**
+ * 2D panašumo transformacija (pasukimas + mastelis + poslinkis; Z nekeičiamas), artimiausia funkcijai fn
+ * (UTM → LKS-94) srityje box: mažiausių kvadratų pagal 5×5 taškų tinklelį. Mažoje srityje paklaida – milimetrai.
+ */
+export function similarityMatrix(fn, offE, offN, origin, box) {
+  const src = [], dst = [];
+  for (let i = 0; i <= 4; i++)
+    for (let j = 0; j <= 4; j++) {
+      const x = box.min.x + ((box.max.x - box.min.x) * i) / 4, y = box.min.y + ((box.max.y - box.min.y) * j) / 4;
+      const [e, n] = fn(x + offE, y + offN);
+      src.push([x, y]);
+      dst.push([e - origin.x, n - origin.y]);
+    }
+  const m = src.length;
+  const sx = src.reduce((t, p) => t + p[0], 0) / m, sy = src.reduce((t, p) => t + p[1], 0) / m;
+  const dx = dst.reduce((t, p) => t + p[0], 0) / m, dy = dst.reduce((t, p) => t + p[1], 0) / m;
+  let sa = 0, sb = 0, ss = 0;
+  for (let k = 0; k < m; k++) {
+    const x = src[k][0] - sx, y = src[k][1] - sy, u = dst[k][0] - dx, v = dst[k][1] - dy;
+    sa += x * u + y * v;
+    sb += x * v - y * u;
+    ss += x * x + y * y;
+  }
+  const a = ss ? sa / ss : 1, b = ss ? sb / ss : 0;
+  const tx = dx - (a * sx - b * sy), ty = dy - (b * sx + a * sy);
+  // [a −b 0 tx; b a 0 ty; 0 0 1 0; 0 0 0 1]
+  return new THREE.Matrix4().set(a, -b, 0, tx, b, a, 0, ty, 0, 0, 1, 0, 0, 0, 0, 1);
 }
 
 /** LAS VLR'uose ieško koordinačių sistemos (GeoTIFF raktai arba WKT). */
