@@ -430,7 +430,10 @@ export class Viewer extends EventTarget {
           mat = this.heightMatMesh;
           break;
         default:
+          // „Tekstūra“ – be apšvietimo (tikros nuotraukų spalvos). Modelis be tekstūros ir be spalvų (pvz. ODM tinklas
+          // PLY) be apšvietimo būtų tik plokščias siluetas – jam paliekamas apšviestas paviršius.
           mat = Array.isArray(orig) ? orig.map((m) => this._basicFrom(m)) : this._basicFrom(orig);
+          if ([].concat(orig).every((m) => m && !m.map && !m.vertexColors)) mat = orig;
       }
       mesh.material = mat;
       [].concat(mat).forEach(setCommon);
