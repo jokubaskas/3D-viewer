@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI()
 _lock = threading.Lock()
-_proc = {"uuid": None, "p": None}
+_proc = {"uuid": None, "p": None, "kind": None}
 
 
 def _status(uuid):
@@ -29,7 +29,7 @@ def _status(uuid):
         st = json.load(open(os.path.join(DATA, uuid, "status.json")))
     except (OSError, ValueError):
         return None
-    running = _proc["uuid"] == uuid and _proc["p"] is not None and _proc["p"].poll() is None
+    running = _proc["uuid"] == uuid and _proc["kind"] == "train" and _proc["p"] is not None and _proc["p"].poll() is None
     if st.get("state") in ("preparing", "training", "exporting") and not running:
         st["state"] = "error"
         st["message"] = "Mokymas nutrūko (paslauga perkrauta arba pritrūko atminties)"
@@ -43,7 +43,26 @@ def _status(uuid):
             pass
     st["uuid"] = uuid
     st["has_result"] = os.path.isfile(os.path.join(DATA, uuid, "scene.spz"))
+    st["fuse"] = _fuse_status(uuid)
     return st
+
+
+def _fuse_status(uuid):
+    """„Sujungto modelio“ būsena (atskiras darbas po mokymo)."""
+    try:
+        st = json.load(open(os.path.join(DATA, uuid, "fuse_status.json")))
+    except (OSError, ValueError):
+        return None
+    running = _proc["uuid"] == uuid and _proc["kind"] == "fuse" and _proc["p"] is not None and _proc["p"].poll() is None
+    if st.get("state") in ("preparing", "fusing") and not running:
+        st["state"] = "error"
+        st["message"] = "Suliejimas nutrūko (paslauga perkrauta arba pritrūko atminties)"
+    st["has_result"] = os.path.isfile(os.path.join(DATA, uuid, "fused.glb"))
+    return st
+
+
+def _busy():
+    return _proc["p"] is not None and _proc["p"].poll() is None
 
 
 def _check(uuid):
@@ -59,7 +78,7 @@ def health():
         gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
     except Exception:
         pass
-    return {"ok": True, "gpu": gpu, "busy": _proc["p"] is not None and _proc["p"].poll() is None}
+    return {"ok": True, "gpu": gpu, "busy": _busy(), "fuse": True}
 
 
 @app.get("/jobs")
@@ -88,8 +107,8 @@ def train(r: TrainReq):
     if not os.path.isfile(os.path.join(task, "odm_filterpoints", "point_cloud.ply")):
         raise HTTPException(400, "Projekte nėra taškų debesies (odm_filterpoints)")
     with _lock:
-        if _proc["p"] is not None and _proc["p"].poll() is None:
-            raise HTTPException(409, "Jau mokomas kitas projektas – palaukite, kol baigsis")
+        if _busy():
+            raise HTTPException(409, "Jau vyksta kitas darbas – palaukite, kol baigsis")
         out = os.path.join(DATA, r.uuid)
         shutil.rmtree(out, ignore_errors=True)
         os.makedirs(out)
@@ -100,6 +119,44 @@ def train(r: TrainReq):
         _proc["p"] = subprocess.Popen([sys.executable, os.path.join(HERE, "train.py"), "--task-dir", task, "--out-dir", out,
                                        "--steps", str(steps)], stdout=log, stderr=subprocess.STDOUT, cwd=HERE)
         _proc["uuid"] = r.uuid
+        _proc["kind"] = "train"
+    return _status(r.uuid)
+
+
+class FuseReq(BaseModel):
+    uuid: str
+    radius: float = 0        # m aplink centrą; 0 – visas projektas
+    cx: float | None = None  # ODM vietinės koordinatės; None – kamerų centras
+    cy: float | None = None
+
+
+@app.post("/fuse")
+def fuse(r: FuseReq):
+    _check(r.uuid)
+    task = os.path.join(ODM_DATA, r.uuid)
+    out = os.path.join(DATA, r.uuid)
+    if not os.path.isfile(os.path.join(out, "scene.ply")):
+        raise HTTPException(400, "Pirma sukurkite realistišką vaizdą")
+    if not os.path.isfile(os.path.join(task, "opensfm", "undistorted", "reconstruction.json")):
+        raise HTTPException(400, "Projekte nebėra ištiesintų nuotraukų ir kamerų")
+    with _lock:
+        if _busy():
+            raise HTTPException(409, "Jau vyksta kitas darbas – palaukite, kol baigsis")
+        for f in ("fused.glb", "fuse_status.json"):
+            try:
+                os.remove(os.path.join(out, f))
+            except OSError:
+                pass
+        with open(os.path.join(out, "fuse_status.json"), "w") as f:
+            json.dump({"state": "preparing", "message": "Paleidžiama", "started": time.time()}, f)
+        log = open(os.path.join(out, "fuse.log"), "w")
+        cmd = [sys.executable, os.path.join(HERE, "fuse.py"), "--task-dir", task, "--out-dir", out,
+               "--radius", str(max(0.0, min(5000.0, float(r.radius))))]
+        if r.cx is not None and r.cy is not None:
+            cmd += ["--cx", str(float(r.cx)), "--cy", str(float(r.cy))]
+        _proc["p"] = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=HERE)
+        _proc["uuid"] = r.uuid
+        _proc["kind"] = "fuse"
     return _status(r.uuid)
 
 
@@ -120,7 +177,7 @@ def cancel(r: UuidReq):
             p.wait(30)
         except subprocess.TimeoutExpired:
             p.kill()
-        st = os.path.join(out, "status.json")
+        st = os.path.join(out, "fuse_status.json" if _proc["kind"] == "fuse" else "status.json")
         try:
             cur = json.load(open(st))
             cur.update(state="cancelled", message="Atšaukta")
@@ -134,6 +191,6 @@ def cancel(r: UuidReq):
 def delete(r: UuidReq):
     _check(r.uuid)
     if _proc["uuid"] == r.uuid and _proc["p"] is not None and _proc["p"].poll() is None:
-        raise HTTPException(409, "Pirma atšaukite mokymą")
+        raise HTTPException(409, "Pirma atšaukite vykdomą darbą")
     shutil.rmtree(os.path.join(DATA, r.uuid), ignore_errors=True)
     return {"ok": True}
