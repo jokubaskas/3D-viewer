@@ -1616,4 +1616,9 @@ export const EN = {
   'Įstrižai': 'Oblique',
   'Pastatas': 'Building',
   'Žymėti pastato kontūrą': 'Outline building',
+  'Rodomas realistiškas vaizdas. Matavimai – ant 3D modelio. Perjungti: G arba skydelis „Modelis“.': 'Showing the realistic view. Measurements use the 3D model. Toggle: G or the “Model” panel.',
+  'Matavimai – ant 3D modelio (tikslūs), vaizdas – realistiškas.': 'Measurements use the 3D model (accurate); the view is realistic.',
+  'Nepavyko įkelti realistiško vaizdo: {e}': 'Could not load the realistic view: {e}',
+  'Realistiškas': 'Realistic',
+  'Realistiškas vaizdas / 3D modelis (G) – matavimai visada ant 3D modelio': 'Realistic view / 3D model (G) – measurements always use the 3D model',
 };
