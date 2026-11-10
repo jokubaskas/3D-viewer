@@ -1639,4 +1639,6 @@ export const EN = {
   'sujungtas': 'merged',
   'Atidaryti sujungtą modelį: 3D modelio geometrija su realistiško vaizdo spalvomis ir užpildytomis skylėmis': 'Open the merged model: 3D model geometry with realistic-view colours and filled holes',
   'Sulieti realistišką vaizdą ir 3D modelį į vieną tikrovišką 3D modelį (GLB): skylės užpildomos, atspindžiai stikluose ignoruojami': 'Fuse the realistic view and the 3D model into one realistic 3D model (GLB): holes are filled, reflections in glass are ignored',
+  'Realistiško vaizdo paslauga serveryje – senos versijos (be „Sujungto modelio“): po atnaujinimo ji nebuvo perkurta, greičiausiai nepavyko jos sukurti.': 'The realistic view service on the server is an old version (without “Merged model”): it was not rebuilt after the update – most likely building it failed.',
+  'Aplanke deploy paleiskite: docker compose build splat – ir pažiūrėkite klaidą pabaigoje. Pavykus: docker compose up -d splat': 'In the deploy folder run: docker compose build splat – and check the error at the end. If it succeeds: docker compose up -d splat',
 };
