@@ -173,6 +173,25 @@ def test_flatten_parked_cars_untouched(tmp_path):
     assert np.allclose(out, mesh.vertices, atol=1e-5)
 
 
+def test_flatten_low_terrace_untouched(tmp_path):
+    """Žema terasa / aikštelė už 5 m atraminės sienos (nelygi vieta) – ne stogas: jos paviršius nelyginamas."""
+    rng = np.random.default_rng(11)
+    ter = trimesh.creation.box(extents=[60, 40, 5])
+    ter.apply_translation([0, 0, 2.5])
+    ter.update_faces(ter.face_normals[:, 2] > -0.5)
+    ter.remove_unreferenced_vertices()
+    V, F = trimesh.remesh.subdivide_to_size(ter.vertices, ter.faces, 0.5)
+    ter = trimesh.Trimesh(V, F, process=True)
+    top = ter.vertices[:, 2] > 4.99
+    ter.vertices[top, 2] += 0.15 * np.sin(ter.vertices[top, 0]) + rng.normal(0, 0.03, top.sum())  # aikštelės nelygumai
+    mesh = trimesh.util.concatenate([ter, _ground(-50, 50, -40, 40)])
+    p = str(tmp_path / "odm_mesh.ply")
+    mesh.export(p, encoding="binary")
+    atea_mesh.flatten_facades(p)
+    out = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)[: len(ter.vertices)]
+    assert np.allclose(out[top, 2], ter.vertices[top, 2], atol=1e-5)
+
+
 def test_flatten_small_mesh_untouched(tmp_path):
     m = trimesh.creation.box()
     p = str(tmp_path / "m.ply")

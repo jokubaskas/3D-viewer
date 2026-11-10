@@ -234,7 +234,9 @@ VERT = 0.2        # |n.z| < VERT – plokštuma laikoma vertikalia
 MIN_HEIGHT = 3.5  # m – fasadas bent tokio aukščio (automobilių eilė, tvora, krūmai iš šono – žemesni, neliečiami)
 HORIZ = 0.97      # |n.z| > HORIZ – horizontali
 ROOF_GAP = 2.0    # m – stogas turi būti ne toliau kaip tiek nuo kurio nors fasado viršaus
-ROOF_MIN_H = 3.0  # m – ir bent tiek aukščiau to fasado apačios (ne žemė)
+ROOF_MIN_H = 8.0  # m – ir bent tiek aukščiau to fasado apačios (2–3 aukštai): terasos, aikštelės prie atraminių sienų,
+                  #     vieno aukšto stogai neliečiami
+ROOF_MAX_AREA = 3000.0  # m² – didesnė „stogo“ plokštuma – greičiausiai aikštelė ar reljefas, ne stogas
 ROOF_NEAR = 3.0   # m – ir dalis stogo ne toliau kaip tiek nuo to fasado (ne tik panašus aukštis kitoje aikštelės vietoje)
 CORNER_COS = 0.87 # kampas tarp plokštumų > ~30° – sankirta laikoma briauna
 MAX_PLANES = 40
@@ -368,7 +370,7 @@ def _flatten(mesh):
             y0, y1 = _run_extent((Q - c) @ Y)
             x0, x1 = max(x0 - EDGE, lo[0] - c[0]), min(x1 + EDGE, hi[0] - c[0])
             y0, y1 = max(y0 - EDGE, lo[1] - c[1]), min(y1 + EDGE, hi[1] - c[1])
-            if x1 <= x0 or y1 <= y0:
+            if x1 <= x0 or y1 <= y0 or (x1 - x0) * (y1 - y0) > ROOF_MAX_AREA:
                 continue
             planes.append((c, n, X, Y, x0, x1, y0, y1, TOL_H))
             roofs_info.append("%.1f m (%.0f m²)" % (h - bot_min, (x1 - x0) * (y1 - y0)))
