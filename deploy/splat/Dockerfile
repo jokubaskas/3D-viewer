@@ -3,8 +3,8 @@
 # gsplat paruoštas paketas (be kompiliavimo): PyTorch 2.4 + CUDA 12.4 + Python 3.10 (Ubuntu 22.04)
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1
-# libegl1 / libgl1 / libgomp1 – Open3D („Sujungtas modelis“) bibliotekoms
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip libegl1 libgl1 libgomp1 \
+# libegl1 / libgl1 / libgomp1 / libusb-1.0-0 – Open3D („Sujungtas modelis“) bibliotekoms
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip libegl1 libgl1 libgomp1 libusb-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 RUN pip3 install torch==2.4.1 --index-url https://download.pytorch.org/whl/cu124
 # packaging ir typing_extensions gsplat importuoja, bet nedeklaruoja priklausomybėmis

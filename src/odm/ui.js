@@ -81,6 +81,7 @@ export function createOdmUI(app) {
       splat.available = true;
       splat.error = null;
       splat.gpu = h.gpu;
+      splat.fuse = !!h.fuse; // senesnė paslauga (neperkurta po atnaujinimo) „Sujungto modelio“ neturi
       const prev = splat.jobs;
       splat.jobs = Object.fromEntries((await splatApi('jobs')).map((j) => [j.uuid, j]));
       for (const [uuid, j] of Object.entries(splat.jobs)) {
@@ -126,6 +127,10 @@ export function createOdmUI(app) {
     return `<button class="btn btn-sm ${has ? 'btn-outline' : 'btn-ghost'}" data-pact="${has ? 'fused' : 'fuse'}" title="${esc(t(has ? 'Atidaryti sujungtą modelį: 3D modelio geometrija su realistiško vaizdo spalvomis ir užpildytomis skylėmis' : 'Sulieti realistišką vaizdą ir 3D modelį į vieną tikrovišką 3D modelį (GLB): skylės užpildomos, atspindžiai stikluose ignoruojami'))}">${icon('cube')}${t('Sujungtas modelis')}</button>`;
   }
   async function fuseStart(p) {
+    if (!splat.fuse) {
+      alert(t('Realistiško vaizdo paslauga serveryje – senos versijos (be „Sujungto modelio“): po atnaujinimo ji nebuvo perkurta, greičiausiai nepavyko jos sukurti.') + '\n\n' + t('Aplanke deploy paleiskite: docker compose build splat – ir pažiūrėkite klaidą pabaigoje. Pavykus: docker compose up -d splat'));
+      return;
+    }
     const r = prompt(t('Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 40 – kvadratas 80 × 80 m. Kuo mažesnė sritis, tuo smulkesnės detalės (iki 2 cm). 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.', { n: p.name }), '40');
     if (r === null) return;
     const radius = Number(String(r).replace(',', '.'));
