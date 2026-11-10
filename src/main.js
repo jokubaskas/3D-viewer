@@ -944,6 +944,35 @@ const odmUI = createOdmUI({
     closePages();
     return splatUI.open(o);
   },
+  /** „Sujungtas modelis“ (splatai + ODM modelis, deploy/splat/fuse.py): GLB ODM vietinėmis koordinatėmis + coords.txt. */
+  async openFused(project) {
+    tools.deactivate();
+    setLoading(true, 'Atsisiunčiami rezultatai…', 0);
+    try {
+      const get = async (url, name) => {
+        const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+        if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+        return new File([await r.blob()], name);
+      };
+      const files = [await get(project.glbUrl, 'fused.glb')];
+      try {
+        files.push(await get(project.coordsUrl, 'coords.txt'));
+      } catch {
+        /* be georeferencijos – modelis rodomas vietinėmis koordinatėmis */
+      }
+      setLoading(false);
+      await openFiles(files, { heightSystem: project.heightSystem, name: `${project.name} – ${tr('sujungtas')}` });
+      if (viewer.hasModel) {
+        state.odmProject = project;
+        syncSaveCard();
+      }
+      return viewer.hasModel;
+    } catch (e) {
+      setLoading(false);
+      toast(tr('Nepavyko atidaryti rezultatų: {e}', { e: e.message }), 'error', 8000);
+      return false;
+    }
+  },
   async openResult(project, kind) {
     tools.deactivate();
     setLoading(true, 'Atsisiunčiami rezultatai…', 0);

@@ -1621,4 +1621,22 @@ export const EN = {
   'Nepavyko įkelti realistiško vaizdo: {e}': 'Could not load the realistic view: {e}',
   'Realistiškas': 'Realistic',
   'Realistiškas vaizdas / 3D modelis (G) – matavimai visada ant 3D modelio': 'Realistic view / 3D model (G) – measurements always use the 3D model',
+  // Sujungtas modelis (splatai + 3D modelis)
+  'Sujungtas modelis „{n}“ paruoštas!': 'Merged model “{n}” is ready!',
+  'Sujungtas modelis „{n}“ paruoštas': 'Merged model “{n}” is ready',
+  'Sujungtas modelis „{n}“ nepavyko: {e}': 'Merged model “{n}” failed: {e}',
+  'Sujungtas modelis: suliejama': 'Merged model: fusing',
+  'Sujungtas modelis nepavyko: {e}': 'Merged model failed: {e}',
+  'Sujungtas modelis paruoštas': 'Merged model is ready',
+  'užpildyta iš realistiško vaizdo {p} %': '{p} % filled from the realistic view',
+  'Sulieti iš naujo': 'Fuse again',
+  'Sujungtas modelis': 'Merged model',
+  'Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 40 – kvadratas 80 × 80 m. Kuo mažesnė sritis, tuo smulkesnės detalės (iki 2 cm). 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.':
+    'Merged model for project “{n}”.\n\nWhich area should be fused? Enter the distance in metres from the project centre (the building in an orbit mission), e.g. 40 – an 80 × 80 m square. The smaller the area, the finer the detail (down to 2 cm). 0 – the whole project (coarser, up to 15 cm).\n\nTakes about 10–40 min; the graphics card is busy meanwhile.',
+  'Neteisingas atstumas': 'Invalid distance',
+  'Suliejimas pradėtas': 'Fusion started',
+  'Atšaukti suliejimą?': 'Cancel the fusion?',
+  'sujungtas': 'merged',
+  'Atidaryti sujungtą modelį: 3D modelio geometrija su realistiško vaizdo spalvomis ir užpildytomis skylėmis': 'Open the merged model: 3D model geometry with realistic-view colours and filled holes',
+  'Sulieti realistišką vaizdą ir 3D modelį į vieną tikrovišką 3D modelį (GLB): skylės užpildomos, atspindžiai stikluose ignoruojami': 'Fuse the realistic view and the 3D model into one realistic 3D model (GLB): holes are filled, reflections in glass are ignored',
 };
