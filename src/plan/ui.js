@@ -3,7 +3,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { readPhotoMeta } from '../odm/exif.js';
 import { PlanMap } from './map.js';
-import { CAMERAS, gsdAt, altForGsd, computePlan, toKML, toGeoJSON, toWPML, parseArea } from './plan.js';
+import { CAMERAS, MISSIONS, gsdAt, altForGsd, computePlan, toKML, toGeoJSON, toWPML, parseArea } from './plan.js';
 
 const LS_CUR = 'atea3d.plan.current';
 const LS_SAVED = 'atea3d.plan.saved';
@@ -23,7 +23,8 @@ const ls = {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nf = (v, d = 0) => (v == null || !isFinite(v) ? '—' : new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v));
-const safe = (s) => String(s || 'planas').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40);
+// Failo pavadinimas be diakritikų (ž → z): naršyklės ir pultai kitaip gali jį pakeisti į „download“
+const safe = (s) => String(s || 'planas').normalize('NFD').replace(/\p{M}/gu, '').replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 40);
 function download(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -52,7 +53,13 @@ const DEFAULTS = {
   poly: [],
   home: null,
   view: null,
+  mission: 'grid',
+  pitch: 45, // įstrižų praskridimų kameros kampas nuo horizonto (°)
+  buildingHeight: 30, // orbitai – pastato aukštis nuo pakilimo vietos (m)
+  rings: 2,
+  radius: null, // null – automatiškai
 };
+const PASS_COLORS = ['#3cc443', '#ff9f43', '#4aa3ff', '#e056fd', '#ffd23f'];
 
 /** @param {{toast:(msg:string,type?:string,ms?:number)=>void}} app */
 export function createPlanUI(app) {
@@ -91,6 +98,19 @@ export function createPlanUI(app) {
           </div>
           <input type="file" id="pl-file" accept=".kml,.geojson,.json" hidden />
         </section>
+        <section class="card" data-card="mission">
+          <h3>Misija</h3>
+          <select id="pl-mission" class="pl-wide">${Object.entries(MISSIONS).map(([k, v]) => `<option value="${k}">${esc(t(v))}</option>`).join('')}</select>
+          <p class="small muted" id="pl-mdesc"></p>
+          <div id="pl-obl" hidden>
+            <label class="row">Kameros kampas nuo horizonto <span><input id="pl-pitch" type="number" class="num" min="20" max="70" step="1" /> °</span></label>
+          </div>
+          <div id="pl-orb" hidden>
+            <label class="row">Pastato aukštis <span><input id="pl-bh" type="number" class="num" min="3" max="300" step="1" /> m</span></label>
+            <label class="row">Ratų skaičius <span><input id="pl-rings" type="number" class="num" min="1" max="3" step="1" /></span></label>
+            <label class="row">Rato spindulys <span><input id="pl-radius" type="number" class="num" min="5" max="500" step="1" placeholder="auto" /> m</span></label>
+          </div>
+        </section>
         <section class="card" data-card="camera">
           <h3>Kamera ir tikslumas</h3>
           <select id="pl-camera" class="pl-wide"></select>
@@ -113,7 +133,7 @@ export function createPlanUI(app) {
           <label class="row">Skersinis persidengimas <span><input id="pl-side" type="number" class="num" min="40" max="95" step="1" /> %</span></label>
           <label class="row check"><input type="checkbox" id="pl-autoh" /> Kryptis automatiškai (mažiausiai posūkių)</label>
           <label class="row">Kryptis nuo šiaurės <span><input id="pl-heading" type="number" class="num" min="0" max="359" step="1" /> °</span></label>
-          <label class="row check"><input type="checkbox" id="pl-cross" /> Kryžminis (dvigubas) – geresniam 3D modeliui</label>
+          <label class="row check" id="pl-cross-row"><input type="checkbox" id="pl-cross" /> Kryžminis (dvigubas) – geresniam 3D modeliui</label>
           <label class="row">Didžiausias greitis <span><input id="pl-speed" type="number" class="num" min="1" max="20" step="0.5" /> m/s</span></label>
           <label class="row">Kadro intervalas <span><input id="pl-interval" type="number" class="num" min="0.3" max="10" step="0.1" /> s</span></label>
           <label class="row">Vieno akumuliatoriaus skrydis <span><input id="pl-battery" type="number" class="num" min="5" max="90" step="1" /> min</span></label>
@@ -188,6 +208,31 @@ export function createPlanUI(app) {
     $('#pl-interval').value = st.interval ?? camera().interval;
     $('#pl-battery').value = st.battery;
     $('#pl-basemap').value = map.basemap;
+    $('#pl-mission').value = st.mission;
+    $('#pl-pitch').value = st.pitch;
+    $('#pl-bh').value = st.buildingHeight;
+    $('#pl-rings').value = st.rings;
+    $('#pl-radius').value = st.radius ?? '';
+    syncMission();
+  }
+
+  const MDESC = {
+    grid: 'Įprastas kartografavimas: lygiagrečios linijos, kamera statmenai žemyn. Ortofoto, tūriams, reljefui.',
+    oblique: 'Statmenas tinklelis ir 4 įstriži praskridimai (kamera į š., r., p., v.): pastatų sienos, fasadai, stiklas – geriausiam 3D modeliui ir realistiškam vaizdui. ~5× daugiau nuotraukų.',
+    orbit: 'Pažymėkite pastato kontūrą: dronas skrenda ratais aplink pastatą skirtinguose aukščiuose, kamera visada nukreipta į pastatą. Papildo statmeną tinklelį (fasadai, stiklas).',
+  };
+  function syncMission() {
+    const m = st.mission;
+    $('#pl-mdesc').textContent = t(MDESC[m]);
+    $('#pl-obl').hidden = m !== 'oblique';
+    $('#pl-orb').hidden = m !== 'orbit';
+    $('#pl-cross-row').hidden = m !== 'grid';
+    $('#pl-side').closest('label').hidden = m === 'orbit';
+    $('#pl-autoh').closest('label').hidden = m === 'orbit';
+    $('#pl-heading').closest('label').hidden = m === 'orbit';
+    $('#pl-alt').disabled = $('#pl-gsd').disabled = m === 'orbit';
+    page.querySelector('[data-card=area] h3').textContent = t(m === 'orbit' ? 'Pastatas' : 'Teritorija');
+    page.querySelector('[data-pl=draw]').lastChild.textContent = t(m === 'orbit' ? 'Žymėti pastato kontūrą' : 'Žymėti sritį');
   }
 
   const num = (sel, min, max) => {
@@ -228,6 +273,13 @@ export function createPlanUI(app) {
     else if (id === 'pl-speed') st.maxSpeed = num('#pl-speed', 1, 25) ?? st.maxSpeed;
     else if (id === 'pl-interval') st.interval = num('#pl-interval', 0.3, 10);
     else if (id === 'pl-battery') st.battery = num('#pl-battery', 5, 120) ?? st.battery;
+    else if (id === 'pl-mission') {
+      st.mission = e.target.value;
+      syncMission();
+    } else if (id === 'pl-pitch') st.pitch = num('#pl-pitch', 20, 70) ?? st.pitch;
+    else if (id === 'pl-bh') st.buildingHeight = num('#pl-bh', 3, 300) ?? st.buildingHeight;
+    else if (id === 'pl-rings') st.rings = Math.round(num('#pl-rings', 1, 3) ?? st.rings);
+    else if (id === 'pl-radius') st.radius = num('#pl-radius', 5, 500);
     else if (id === 'pl-basemap') {
       map.basemap = e.target.value;
       map.redraw();
@@ -250,13 +302,19 @@ export function createPlanUI(app) {
       raf = 0;
       const cam = camera();
       plan = st.poly.length >= 3
-        ? computePlan(st.poly, { camera: cam, alt: st.alt, front: st.front, side: st.side, heading: st.autoHeading ? null : st.heading, crosshatch: st.crosshatch, speed: null, maxSpeed: st.maxSpeed, interval: st.interval ?? cam.interval, battery: st.battery, home: st.home })
+        ? computePlan(st.poly, { camera: cam, alt: st.alt, front: st.front, side: st.side, heading: st.autoHeading ? null : st.heading, crosshatch: st.crosshatch, speed: null, maxSpeed: st.maxSpeed, interval: st.interval ?? cam.interval, battery: st.battery, home: st.home, mission: st.mission, pitch: st.pitch, buildingHeight: st.buildingHeight, rings: st.rings, radius: st.radius })
         : null;
       renderStats();
       map.redraw();
       $('#pl-hint').textContent = map.hint();
     });
   }
+
+  /** Praskridimų / ratų spalvos (žemėlapyje). */
+  const legend = () =>
+    plan.passesLL.length > 1
+      ? `<div class="plan-legend">${plan.passLabels.map((l, i) => `<span><i style="background:${PASS_COLORS[i % PASS_COLORS.length]}"></i>${esc(t(l))}</span>`).join('')}</div>`
+      : '';
 
   function renderStats() {
     const warn = $('#pl-alt-warn');
@@ -269,25 +327,48 @@ export function createPlanUI(app) {
       return;
     }
     const stat = (label, value, cls = '') => `<div class="odm-stat ${cls}"><span class="small muted">${esc(t(label))}</span><b>${value}</b></div>`;
+    const tail = [
+      stat('Nuotraukų', nf(plan.photos), plan.photos > 1500 ? 'warn' : ''),
+      stat('Maršrutas', `${nf(plan.length / 1000, 2)} km`),
+      stat('Trukmė', fmtMin(plan.time)),
+      stat('Akumuliatorių', nf(plan.batteries), plan.batteries > 1 ? 'warn' : 'ok'),
+    ];
+    if (plan.mission === 'orbit') {
+      const o = plan.orbit;
+      $('#pl-stats').innerHTML = [
+        stat('Spindulys', `${nf(o.radius, 0)} m`, o.radius - o.buildingRadius < 15 ? 'warn' : ''),
+        stat('Ratai', o.rings.map((r) => `${nf(r.alt)} m`).join(' / '), Math.max(...o.rings.map((r) => r.alt)) > 120 ? 'warn' : ''),
+        stat('Kameros kampas', o.rings.map((r) => `${nf(Math.round(r.pitch) || 0)}°`).join(' / ')),
+        stat('GSD ant sienos', `${nf(plan.gsd * 100, 2)} cm/px`),
+        ...tail,
+      ].join('');
+      const tips = [
+        t('Ratų aukščiai: {a} m nuo pakilimo vietos; spindulys {r} m nuo pastato centro ({d} m nuo sienos).', { a: o.rings.map((r) => nf(r.alt)).join(', '), r: nf(o.radius), d: nf(o.radius - o.buildingRadius) }),
+        t('Prieš skrydį apeikite ratą: ar žemiausiame aukštyje ({a} m) nėra medžių, stulpų, laidų, kranų. Kliūčių vengimas turi būti įjungtas.', { a: nf(Math.min(...o.rings.map((r) => r.alt))) }),
+        t('Pastato aukštį nurodykite nuo pakilimo vietos žemės. Orbita papildo statmeną tinklelį – geriausia skristi abu, tą pačią dieną.'),
+      ];
+      if (o.radius - o.buildingRadius < 15) tips.push(t('Spindulys mažas – dronas skris arti sienos. Padidinkite spindulį, jei aplink yra kliūčių.'));
+      $('#pl-advice').innerHTML = legend() + tips.map((x) => `<div>• ${esc(x)}</div>`).join('');
+      return;
+    }
     $('#pl-stats').innerHTML = [
       stat('Plotas', `${nf(plan.area / 1e4, 2)} ha`),
       stat('GSD', `${nf(plan.gsd * 100, 2)} cm/px`),
       stat('Aukštis', `${nf(st.alt)} m`, st.alt > 120 ? 'warn' : ''),
-      stat('Nuotraukų', nf(plan.photos), plan.photos > 1500 ? 'warn' : ''),
       stat('Linijų', `${nf(plan.lines)} · ${nf(plan.heading)}°`),
-      stat('Maršrutas', `${nf(plan.length / 1000, 2)} km`),
+      ...(plan.oblique ? [stat('Įstrižai', `${nf(-plan.oblique.pitch)}° · ${nf(plan.oblique.gsd * 100, 2)} cm/px`)] : []),
       stat('Greitis', `${nf(plan.speed, 1)} m/s`),
-      stat('Trukmė', fmtMin(plan.time)),
-      stat('Akumuliatorių', nf(plan.batteries), plan.batteries > 1 ? 'warn' : 'ok'),
+      ...tail,
     ].join('');
     const tips = [];
     tips.push(t('Pulte nustatykite: aukštis {a} m, persidengimas {f} % / {s} %, kryptis {h}°, greitis iki {v} m/s.', { a: nf(st.alt), f: st.front, s: st.side, h: nf(plan.heading), v: nf(plan.speed, 1) }));
     if (plan.speedLimitedByCamera) tips.push(t('Greitį riboja kameros intervalas ({i} s): kas {d} m reikia nuotraukos.', { i: nf(st.interval ?? camera().interval, 1), d: nf(plan.photoStep, 1) }));
     if (plan.batteries > 1) tips.push(t('Reikės {n} akumuliatorių – skrydis bus pratęstas nuo tos vietos, kur sustojo (pulto funkcija „Tęsti misiją“).', { n: plan.batteries }));
     if (plan.photos > 1500) tips.push(t('Daug nuotraukų: apdorojimui reikės daug RAM. Su 16 GB kompiuteriu rinkitės didesnį GSD arba skaidykite teritoriją.'));
+    if (plan.oblique) tips.push(t('Įstrižuose praskridimuose dronas skrenda atitrauktas {d} m nuo srities krašto (kamera {p}° žemyn) – patikrinkite, ar ten nėra kliūčių ir draudžiamų zonų.', { d: nf(plan.oblique.offset), p: nf(-plan.oblique.pitch) }));
     if (!st.home) tips.push(t('Pažymėkite pakilimo vietą – trukmė bus skaičiuojama su skrydžiu iki teritorijos ir atgal.'));
     tips.push(t('Aukštis – nuo pakilimo vietos. Jei teritorijoje yra kalvų ar aukštų pastatų, atitinkamai padidinkite aukštį.'));
-    $('#pl-advice').innerHTML = tips.map((x) => `<div>• ${esc(x)}</div>`).join('');
+    $('#pl-advice').innerHTML = legend() + tips.map((x) => `<div>• ${esc(x)}</div>`).join('');
   }
 
   // ------------------------------------------------------------------ piešimas ant žemėlapio
@@ -305,7 +386,7 @@ export function createPlanUI(app) {
     if (!plan) return;
     // Vieno kadro pėdsakas maršruto pradžioje – kad matytųsi persidengimas
     const r = plan.routeLL;
-    if (r.length >= 2) {
+    if (r.length >= 2 && plan.mission === 'grid') {
       const [x0, y0] = m.toScreen(r[0]), [x1, y1] = m.toScreen(r[1]);
       const ang = Math.atan2(y1 - y0, x1 - x0);
       const w = plan.footH / m.mPerPx, h = plan.footW / m.mPerPx;
@@ -323,7 +404,7 @@ export function createPlanUI(app) {
     }
     g.lineWidth = 2;
     plan.passesLL.forEach((lines, pi) => {
-      g.strokeStyle = pi ? '#ff9f43' : '#3cc443';
+      g.strokeStyle = PASS_COLORS[pi % PASS_COLORS.length];
       g.beginPath();
       let first = true;
       for (const [a, b] of lines) {

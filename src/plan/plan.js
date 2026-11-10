@@ -122,56 +122,96 @@ export function serpentine(P, heading, spacing, overshoot = 0) {
   return lines;
 }
 
+/** Kryptis (° nuo šiaurės, −180…180) iš taško a į b (vietinės E, N koordinatės). */
+const bearing = (a, b) => {
+  const d = Math.atan2(b[0] - a[0], b[1] - a[1]) / D2R;
+  return d > 180 ? d - 360 : d <= -180 ? d + 360 : d;
+};
+const norm180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180;
+
+export const MISSIONS = {
+  grid: 'Tinklelis (kamera žemyn)',
+  oblique: '5 krypčių: žemyn + 4 įstrižai',
+  orbit: 'Orbita aplink pastatą',
+};
+
 /**
  * Visas skrydžio planas.
- * @param {[number,number][]} polyLL – sritis [lon, lat]
+ * @param {[number,number][]} polyLL – sritis [lon, lat] (orbitai – pastato kontūras)
  * @param {{camera:object, alt:number, front:number, side:number, heading:number|null, crosshatch:boolean,
- *   speed:number|null, maxSpeed:number, interval:number, battery:number, home?:[number,number]|null}} s
+ *   speed:number|null, maxSpeed:number, interval:number, battery:number, home?:[number,number]|null,
+ *   mission?:'grid'|'oblique'|'orbit', pitch?:number, buildingHeight?:number, rings?:number, radius?:number|null}} s
+ * @returns plano skaičiai ir `waypoints` – taškai su aukščiu, kryptimi, kameros kampu ir fotografavimu (DJI KMZ)
  */
 export function computePlan(polyLL, s) {
   const cLat = polyLL.reduce((t, p) => t + p[1], 0) / polyLL.length;
   const cLon = polyLL.reduce((t, p) => t + p[0], 0) / polyLL.length;
   const proj = localProjection(cLat, cLon);
   const P = polyLL.map(([lon, lat]) => proj.toEN(lon, lat));
+  const toLL = (p) => proj.toLonLat(p[0], p[1]);
+  const home = s.home ? proj.toEN(s.home[0], s.home[1]) : null;
+  const mission = s.mission || 'grid';
+  if (mission === 'orbit') return orbitPlan(P, s, toLL, home);
+
   const fpm = footPerMeter(s.camera);
   const footW = fpm.w * s.alt, footH = fpm.h * s.alt; // kadro ilgoji kraštinė – skersai skrydžio
   const spacing = footW * (1 - s.side / 100);
   const photoStep = footH * (1 - s.front / 100);
   const heading = s.heading == null ? bestHeading(P) : ((s.heading % 180) + 180) % 180;
+  const interval = Math.max(s.interval, 0.3);
+  const passSpeed = (step) => Math.min(s.speed || step / interval, s.maxSpeed, step / interval);
   // Pratęsimas už srities: pusė kadro – kad kraštas būtų nufotografuotas su tuo pačiu persidengimu
-  const overshoot = footH / 2;
-  const passes = [serpentine(P, heading, spacing, overshoot)];
-  if (s.crosshatch) passes.push(serpentine(P, (heading + 90) % 180, spacing, overshoot));
-
-  // Maršrutas (taškai iš eilės) ir nuotraukų vietos
-  const route = [];
-  const photos = [];
-  let length = 0, turns = 0;
-  for (const lines of passes) {
-    for (const [a, b] of lines) {
-      if (route.length) {
-        length += Math.hypot(a[0] - route[route.length - 1][0], a[1] - route[route.length - 1][1]);
-        turns++;
-      }
-      route.push(a, b);
-      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      length += L;
-      const k = Math.max(1, Math.round(L / photoStep));
-      for (let i = 0; i <= k; i++) photos.push([a[0] + ((b[0] - a[0]) * i) / k, a[1] + ((b[1] - a[1]) * i) / k]);
+  /** @type {{lines:[number,number][][], step:number, speed:number, pitch:number, yaw:number|null, label:string}[]} */
+  const passes = [{ lines: serpentine(P, heading, spacing, footH / 2), step: photoStep, speed: passSpeed(photoStep), pitch: -90, yaw: null, label: 'žemyn' }];
+  if (mission === 'grid' && s.crosshatch) passes.push({ ...passes[0], lines: serpentine(P, (heading + 90) % 180, spacing, footH / 2) });
+  let oblique = null;
+  if (mission === 'oblique') {
+    // Įstrižai praskridimai: kamera pakreipta `pitch` ° nuo horizonto ir nukreipta į š., r., p., v. Dronas skrenda
+    // statmenai žiūrėjimo krypčiai (kadro ilgoji kraštinė – išilgai skrydžio) ir yra atitrauktas per alt / tan(pitch),
+    // kad kadro centras būtų virš srities. Drono kryptis fiksuota – kamera visą praskridimą žiūri į tą pačią pusę.
+    const p = Math.min(Math.max(s.pitch || 45, 20), 70) * D2R;
+    const slant = s.alt / Math.sin(p);
+    const offset = s.alt / Math.tan(p);
+    const wO = fpm.w * slant; // kadro plotis ties vaizdo centru
+    const dO = (fpm.h * slant) / Math.sin(p); // kadro gylis žemėje (apytiksliai)
+    const stepO = wO * (1 - s.front / 100);
+    const spacingO = dO * (1 - s.side / 100);
+    oblique = { pitch: -p / D2R, offset, gsd: fpm.gsd * slant, step: stepO, spacing: spacingO };
+    for (const [az, label] of [[0, 'į šiaurę'], [90, 'į rytus'], [180, 'į pietus'], [270, 'į vakarus']]) {
+      const dir = [Math.sin(az * D2R), Math.cos(az * D2R)];
+      const lines = serpentine(P, (az + 90) % 180, spacingO, wO / 2).map((ln) => ln.map(([x, y]) => [x - dir[0] * offset, y - dir[1] * offset]));
+      passes.push({ lines, step: stepO, speed: passSpeed(stepO), pitch: -p / D2R, yaw: norm180(az), label });
     }
   }
-  // Greitis: kad spėtų fotografuoti kas photoStep (kameros intervalas), bet ne daugiau maksimalaus
-  const speedByCam = photoStep / Math.max(s.interval, 0.3);
-  const speed = Math.min(s.speed || speedByCam, s.maxSpeed, speedByCam);
-  let transit = 0;
-  const home = s.home ? proj.toEN(s.home[0], s.home[1]) : null;
-  if (home && route.length) {
-    transit = Math.hypot(route[0][0] - home[0], route[0][1] - home[1]) + Math.hypot(route[route.length - 1][0] - home[0], route[route.length - 1][1] - home[1]);
+
+  // Taškai, nuotraukos, ilgis ir trukmė
+  const waypoints = [];
+  const photos = [];
+  let length = 0, time = 0, prev = null;
+  for (const ps of passes) {
+    for (const [a, b] of ps.lines) {
+      if (prev) {
+        const d = Math.hypot(a[0] - prev[0], a[1] - prev[1]);
+        length += d;
+        time += d / Math.max(ps.speed, 5) + 6; // posūkis / perėjimas
+      }
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      length += L;
+      time += L / ps.speed;
+      waypoints.push({ p: a, alt: s.alt, yaw: ps.yaw, pitch: ps.pitch, speed: ps.speed, photo: 'distance', step: ps.step });
+      waypoints.push({ p: b, alt: s.alt, yaw: ps.yaw, pitch: ps.pitch, speed: ps.speed, photo: null });
+      const k = Math.max(1, Math.round(L / ps.step));
+      for (let i = 0; i <= k; i++) photos.push([a[0] + ((b[0] - a[0]) * i) / k, a[1] + ((b[1] - a[1]) * i) / k]);
+      prev = b;
+    }
   }
-  const climb = (s.alt / 5) * 2; // kilimas ~5 m/s ir nusileidimas
-  const time = length / speed + turns * 6 + transit / Math.max(speed, 10) + climb + 30;
-  const toLL = (p) => proj.toLonLat(p[0], p[1]);
+  const route = waypoints.map((w) => w.p);
+  let transit = 0;
+  if (home && route.length) transit = Math.hypot(route[0][0] - home[0], route[0][1] - home[1]) + Math.hypot(route[route.length - 1][0] - home[0], route[route.length - 1][1] - home[1]);
+  const speed = passes[0].speed;
+  time += transit / Math.max(speed, 10) + (s.alt / 5) * 2 + 30; // kilimas ~5 m/s ir nusileidimas
   return {
+    mission,
     heading,
     gsd: fpm.gsd * s.alt,
     footW,
@@ -179,8 +219,10 @@ export function computePlan(polyLL, s) {
     spacing,
     photoStep,
     speed,
-    speedLimitedByCamera: speedByCam < (s.speed || s.maxSpeed),
-    lines: passes.reduce((t, l) => t + l.length, 0),
+    speedLimitedByCamera: photoStep / interval < (s.speed || s.maxSpeed),
+    lines: passes.reduce((t, ps) => t + ps.lines.length, 0),
+    passes: passes.length,
+    oblique,
     photos: photos.length,
     length,
     transit,
@@ -188,8 +230,83 @@ export function computePlan(polyLL, s) {
     batteries: Math.ceil(time / 60 / Math.max(s.battery, 5)),
     area: polygonArea(P),
     routeLL: route.map(toLL),
+    routeAlt: waypoints.map((w) => w.alt),
     photosLL: photos.map(toLL),
-    passesLL: passes.map((lines) => lines.map(([a, b]) => [toLL(a), toLL(b)])),
+    passesLL: passes.map((ps) => ps.lines.map(([a, b]) => [toLL(a), toLL(b)])),
+    passLabels: passes.map((ps) => ps.label),
+    waypoints: waypoints.map((w) => ({ ...w, ll: toLL(w.p) })),
+  };
+}
+
+/**
+ * Orbita: ratai aplink pastatą (pažymėtą kontūrą) skirtinguose aukščiuose. Kamera kiekviename taške nukreipta į pastato
+ * vidurį (aukštyje H/2), nuotrauka kiekviename taške (dronas sustoja – ryškios nuotraukos). Nuotraukų skaičius rate – pagal
+ * persidengimą artimiausioje pastato sienoje.
+ */
+function orbitPlan(P, s, toLL, home) {
+  const fpm = footPerMeter(s.camera);
+  const c = [P.reduce((t, p) => t + p[0], 0) / P.length, P.reduce((t, p) => t + p[1], 0) / P.length];
+  const rb = Math.max(...P.map((p) => Math.hypot(p[0] - c[0], p[1] - c[1])));
+  const H = Math.max(3, s.buildingHeight || 30);
+  const standoff = Math.max(15, 0.8 * H);
+  const R = Math.max(rb + 8, s.radius || rb + standoff);
+  const n = Math.min(Math.max(Math.round(s.rings || 2), 1), 3);
+  const hi = Math.round(H + Math.max(10, 0.25 * H));
+  const lo = Math.round(Math.max(H * 0.5, 15));
+  const alts = n === 1 ? [Math.round((hi + H) / 2)] : Array.from({ length: n }, (_, i) => Math.round(hi - ((hi - lo) * i) / (n - 1)));
+  const target = H / 2;
+  const speed = Math.min(s.maxSpeed, 5);
+  const rings = [];
+  const waypoints = [];
+  let time = 0, photos = 0;
+  for (const alt of alts) {
+    const pitch = -Math.atan2(alt - target, R) / D2R;
+    const near = Math.hypot(R - rb, alt - target); // atstumas iki artimiausios sienos
+    const step = fpm.w * near * (1 - s.front / 100);
+    const count = Math.min(72, Math.max(12, Math.ceil((2 * Math.PI * R) / Math.max(step, 0.5))));
+    for (let k = 0; k < count; k++) {
+      const a = (2 * Math.PI * k) / count; // nuo šiaurės pagal laikrodžio rodyklę
+      const p = [c[0] + R * Math.sin(a), c[1] + R * Math.cos(a)];
+      waypoints.push({ p, alt, yaw: bearing(p, c), pitch, speed, photo: 'point' });
+    }
+    rings.push({ alt, pitch, count, gsd: fpm.gsd * near });
+    photos += count;
+    time += (2 * Math.PI * R) / speed + count * 2.5; // sustojimas nuotraukai
+  }
+  let transit = 0;
+  if (home && waypoints.length) transit = Math.hypot(waypoints[0].p[0] - home[0], waypoints[0].p[1] - home[1]) * 2;
+  time += transit / 8 + (alts[0] / 5) * 2 + 30 + (alts.length - 1) * 15;
+  // Ratai + perėjimai tarp jų (aukščio keitimas)
+  const length = alts.length * 2 * Math.PI * R + alts.slice(1).reduce((t, a, i) => t + Math.abs(a - alts[i]), 0);
+  const ringSegs = rings.map((r) => {
+    const pts = waypoints.filter((w) => w.alt === r.alt).map((w) => w.p);
+    return pts.map((p, k) => [toLL(p), toLL(pts[(k + 1) % pts.length])]);
+  });
+  return {
+    mission: 'orbit',
+    heading: 0,
+    gsd: Math.min(...rings.map((r) => r.gsd)),
+    footW: 0,
+    footH: 0,
+    spacing: 0,
+    photoStep: (2 * Math.PI * R) / rings[0].count,
+    speed,
+    speedLimitedByCamera: false,
+    lines: rings.length,
+    passes: rings.length,
+    orbit: { center: toLL(c), radius: R, buildingRadius: rb, buildingHeight: H, rings },
+    photos,
+    length,
+    transit,
+    time,
+    batteries: Math.ceil(time / 60 / Math.max(s.battery, 5)),
+    area: polygonArea(P),
+    routeLL: waypoints.map((w) => toLL(w.p)),
+    routeAlt: waypoints.map((w) => w.alt),
+    photosLL: waypoints.map((w) => toLL(w.p)),
+    passesLL: ringSegs,
+    passLabels: rings.map((r) => `${r.alt} m`),
+    waypoints: waypoints.map((w) => ({ ...w, ll: toLL(w.p) })),
   };
 }
 
@@ -212,9 +329,9 @@ export function toKML(name, polyLL, plan, alt) {
     <Polygon><outerBoundaryIs><LinearRing><coordinates>${ring}</coordinates></LinearRing></outerBoundaryIs></Polygon>
   </Placemark>
   <Placemark>
-    <name>${esc(name)} – maršrutas (${alt} m, GSD ${(plan.gsd * 100).toFixed(2)} cm)</name>
+    <name>${esc(name)} – maršrutas (${plan.mission === 'orbit' ? plan.orbit.rings.map((x) => x.alt).join(' / ') : alt} m, GSD ${(plan.gsd * 100).toFixed(2)} cm)</name>
     <styleUrl>#route</styleUrl>
-    <LineString><altitudeMode>relativeToGround</altitudeMode><coordinates>${plan.routeLL.map((p) => ll(p, alt)).join(' ')}</coordinates></LineString>
+    <LineString><altitudeMode>relativeToGround</altitudeMode><coordinates>${plan.routeLL.map((p, i) => ll(p, plan.routeAlt?.[i] ?? alt)).join(' ')}</coordinates></LineString>
   </Placemark>
 </Document>
 </kml>
@@ -223,7 +340,9 @@ export function toKML(name, polyLL, plan, alt) {
 
 /** GeoJSON: sritis, maršrutas ir nuotraukų vietos. */
 export function toGeoJSON(name, polyLL, plan, settings) {
-  const props = { name, altitude: settings.alt, gsd_cm: +(plan.gsd * 100).toFixed(2), front: settings.front, side: settings.side, heading: plan.heading, speed: +plan.speed.toFixed(1) };
+  const props = { name, mission: plan.mission || 'grid', altitude: settings.alt, gsd_cm: +(plan.gsd * 100).toFixed(2), front: settings.front, side: settings.side, heading: plan.heading, speed: +plan.speed.toFixed(1) };
+  if (plan.oblique) props.oblique_pitch = +plan.oblique.pitch.toFixed(1);
+  if (plan.orbit) Object.assign(props, { orbit_radius: +plan.orbit.radius.toFixed(1), building_height: plan.orbit.buildingHeight, rings: plan.orbit.rings.map((x) => ({ altitude: x.alt, pitch: +x.pitch.toFixed(1), photos: x.count })) });
   return JSON.stringify(
     {
       type: 'FeatureCollection',
@@ -239,7 +358,9 @@ export function toGeoJSON(name, polyLL, plan, settings) {
 }
 
 /**
- * DJI WPML (KMZ: wpmz/template.kml + wpmz/waylines.wpml) – maršruto taškų misija su fotografavimu kas N m.
+ * DJI WPML (KMZ: wpmz/template.kml + wpmz/waylines.wpml) – maršruto taškų misija. Kiekviename taške: aukštis, greitis,
+ * drono kryptis (fiksuota – įstrižiems praskridimams ir orbitai; kitaip – pagal maršrutą), kameros kampas ir
+ * fotografavimas: kas N m iki kito taško (linijos) arba ties tašku (orbita, dronas sustoja).
  * Formatas – DJI Pilot 2 / FlightHub 2 (WPML 1.0.2). Aukštis – nuo pakilimo vietos.
  */
 export function toWPML(name, plan, s) {
@@ -248,6 +369,9 @@ export function toWPML(name, plan, s) {
   const [droneEnum, droneSub] = cam.drone || [77, 1];
   const payloadEnum = cam.payload ?? 67;
   const speed = +plan.speed.toFixed(1);
+  const wps = plan.waypoints;
+  const maxAlt = Math.max(...wps.map((w) => w.alt));
+  const suffix = esc(name.replace(/[^\w-]+/g, '_').slice(0, 20));
   const head = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:wpml="http://www.dji.com/wpmz/1.0.2">
   <Document>`;
@@ -257,20 +381,13 @@ export function toWPML(name, plan, s) {
       <wpml:finishAction>goHome</wpml:finishAction>
       <wpml:exitOnRCLost>executeLostAction</wpml:exitOnRCLost>
       <wpml:executeRCLostAction>goBack</wpml:executeRCLostAction>
-      <wpml:takeOffSecurityHeight>${Math.min(30, s.alt)}</wpml:takeOffSecurityHeight>
+      <wpml:takeOffSecurityHeight>${Math.min(30, maxAlt)}</wpml:takeOffSecurityHeight>
       <wpml:globalTransitionalSpeed>${Math.max(speed, 8)}</wpml:globalTransitionalSpeed>
       <wpml:droneInfo><wpml:droneEnumValue>${droneEnum}</wpml:droneEnumValue><wpml:droneSubEnumValue>${droneSub}</wpml:droneSubEnumValue></wpml:droneInfo>
       <wpml:payloadInfo><wpml:payloadEnumValue>${payloadEnum}</wpml:payloadEnumValue><wpml:payloadSubEnumValue>0</wpml:payloadSubEnumValue><wpml:payloadPositionIndex>0</wpml:payloadPositionIndex></wpml:payloadInfo>
     </wpml:missionConfig>`;
-  // Kiekvienos linijos pradžioje: kamera žemyn ir fotografavimas kas photoStep m iki linijos pabaigos
   let actionId = 0;
-  const lineStartActions = (i, groupId) => `
-        <wpml:actionGroup>
-          <wpml:actionGroupId>${groupId}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>${i}</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>${i}</wpml:actionGroupEndIndex>
-          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
-          <wpml:actionTrigger><wpml:actionTriggerType>reachPoint</wpml:actionTriggerType></wpml:actionTrigger>
+  const gimbal = (pitch) => `
           <wpml:action>
             <wpml:actionId>${actionId++}</wpml:actionId>
             <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>
@@ -278,7 +395,7 @@ export function toWPML(name, plan, s) {
               <wpml:gimbalHeadingYawBase>north</wpml:gimbalHeadingYawBase>
               <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>
               <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>
-              <wpml:gimbalPitchRotateAngle>-90</wpml:gimbalPitchRotateAngle>
+              <wpml:gimbalPitchRotateAngle>${Math.round(pitch * 10) / 10}</wpml:gimbalPitchRotateAngle>
               <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>
               <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>
               <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>
@@ -287,44 +404,53 @@ export function toWPML(name, plan, s) {
               <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>
               <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
             </wpml:actionActuatorFuncParam>
-          </wpml:action>
-        </wpml:actionGroup>
-        <wpml:actionGroup>
-          <wpml:actionGroupId>${groupId + 1}</wpml:actionGroupId>
-          <wpml:actionGroupStartIndex>${i}</wpml:actionGroupStartIndex>
-          <wpml:actionGroupEndIndex>${i + 1}</wpml:actionGroupEndIndex>
-          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
-          <wpml:actionTrigger>
-            <wpml:actionTriggerType>multipleDistance</wpml:actionTriggerType>
-            <wpml:actionTriggerParam>${plan.photoStep.toFixed(2)}</wpml:actionTriggerParam>
-          </wpml:actionTrigger>
+          </wpml:action>`;
+  const photo = () => `
           <wpml:action>
             <wpml:actionId>${actionId++}</wpml:actionId>
             <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>
             <wpml:actionActuatorFuncParam>
-              <wpml:fileSuffix>${esc(name.replace(/[^\w-]+/g, '_').slice(0, 20))}</wpml:fileSuffix>
+              <wpml:fileSuffix>${suffix}</wpml:fileSuffix>
               <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>
             </wpml:actionActuatorFuncParam>
-          </wpml:action>
+          </wpml:action>`;
+  const group = (id, from, to, trigger, body) => `
+        <wpml:actionGroup>
+          <wpml:actionGroupId>${id}</wpml:actionGroupId>
+          <wpml:actionGroupStartIndex>${from}</wpml:actionGroupStartIndex>
+          <wpml:actionGroupEndIndex>${to}</wpml:actionGroupEndIndex>
+          <wpml:actionGroupMode>sequence</wpml:actionGroupMode>
+          <wpml:actionTrigger>${trigger}</wpml:actionTrigger>${body}
         </wpml:actionGroup>`;
+  const headingParam = (w) =>
+    w.yaw == null
+      ? '<wpml:waypointHeadingParam><wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode></wpml:waypointHeadingParam>'
+      : `<wpml:waypointHeadingParam><wpml:waypointHeadingMode>smoothTransition</wpml:waypointHeadingMode><wpml:waypointHeadingAngle>${Math.round(w.yaw * 10) / 10}</wpml:waypointHeadingAngle><wpml:waypointPoiPoint>0.000000,0.000000,0.000000</wpml:waypointPoiPoint><wpml:waypointHeadingAngleEnable>1</wpml:waypointHeadingAngleEnable><wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode></wpml:waypointHeadingParam>`;
   const placemarks = (forExecute) => {
     actionId = 0;
     let groupId = 0;
-    return plan.routeLL
-      .map((p, i) => {
-        const startOfLine = i % 2 === 0; // taškai poromis: linijos pradžia, pabaiga
-        const actions = startOfLine ? lineStartActions(i, groupId) : '';
-        if (startOfLine) groupId += 2;
-        const height = forExecute ? `<wpml:executeHeight>${s.alt}</wpml:executeHeight><wpml:waypointSpeed>${speed}</wpml:waypointSpeed>` : `<wpml:height>${s.alt}</wpml:height><wpml:ellipsoidHeight>${s.alt}</wpml:ellipsoidHeight><wpml:useGlobalHeight>1</wpml:useGlobalHeight><wpml:useGlobalSpeed>1</wpml:useGlobalSpeed><wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam><wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam><wpml:useStraightLine>1</wpml:useStraightLine>`;
-        const turn = forExecute
-          ? `<wpml:waypointHeadingParam><wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode></wpml:waypointHeadingParam><wpml:waypointTurnParam><wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode><wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist></wpml:waypointTurnParam><wpml:useStraightLine>1</wpml:useStraightLine>`
-          : '';
+    return wps
+      .map((w, i) => {
+        let actions = '';
+        if (w.photo === 'distance') {
+          // Linijos pradžia: kamera į kampą, tada nuotrauka kas `step` m iki kito taško
+          actions = group(groupId++, i, i, '<wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>', gimbal(w.pitch)) +
+            group(groupId++, i, i + 1, `
+            <wpml:actionTriggerType>multipleDistance</wpml:actionTriggerType>
+            <wpml:actionTriggerParam>${w.step.toFixed(2)}</wpml:actionTriggerParam>
+          `, photo());
+        } else if (w.photo === 'point') {
+          actions = group(groupId++, i, i, '<wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>', gimbal(w.pitch) + photo());
+        }
+        const v = +w.speed.toFixed(1);
+        const body = forExecute
+          ? `<wpml:executeHeight>${w.alt}</wpml:executeHeight><wpml:waypointSpeed>${v}</wpml:waypointSpeed>${headingParam(w)}<wpml:waypointTurnParam><wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode><wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist></wpml:waypointTurnParam><wpml:useStraightLine>1</wpml:useStraightLine>`
+          : `<wpml:height>${w.alt}</wpml:height><wpml:ellipsoidHeight>${w.alt}</wpml:ellipsoidHeight><wpml:useGlobalHeight>0</wpml:useGlobalHeight><wpml:waypointSpeed>${v}</wpml:waypointSpeed><wpml:useGlobalSpeed>0</wpml:useGlobalSpeed>${w.yaw == null ? '<wpml:useGlobalHeadingParam>1</wpml:useGlobalHeadingParam>' : `<wpml:useGlobalHeadingParam>0</wpml:useGlobalHeadingParam>${headingParam(w)}`}<wpml:useGlobalTurnParam>1</wpml:useGlobalTurnParam><wpml:useStraightLine>1</wpml:useStraightLine>`;
         return `
       <Placemark>
-        <Point><coordinates>${ll(p)}</coordinates></Point>
+        <Point><coordinates>${ll(w.ll)}</coordinates></Point>
         <wpml:index>${i}</wpml:index>
-        ${height}
-        ${turn}${actions}
+        ${body}${actions}
       </Placemark>`;
       })
       .join('');
@@ -338,7 +464,7 @@ export function toWPML(name, plan, s) {
       <wpml:templateId>0</wpml:templateId>
       <wpml:waylineCoordinateSysParam><wpml:coordinateMode>WGS84</wpml:coordinateMode><wpml:heightMode>relativeToStartPoint</wpml:heightMode></wpml:waylineCoordinateSysParam>
       <wpml:autoFlightSpeed>${speed}</wpml:autoFlightSpeed>
-      <wpml:globalHeight>${s.alt}</wpml:globalHeight>
+      <wpml:globalHeight>${wps[0]?.alt ?? s.alt}</wpml:globalHeight>
       <wpml:caliFlightEnable>0</wpml:caliFlightEnable>
       <wpml:gimbalPitchMode>usePointSetting</wpml:gimbalPitchMode>
       <wpml:globalWaypointHeadingParam><wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode><wpml:waypointHeadingAngle>0</wpml:waypointHeadingAngle><wpml:waypointPoiPoint>0.000000,0.000000,0.000000</wpml:waypointPoiPoint><wpml:waypointHeadingPathMode>followBadArc</wpml:waypointHeadingPathMode></wpml:globalWaypointHeadingParam>

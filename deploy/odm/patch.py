@@ -4,6 +4,8 @@
 # nekeičiamos (žymė).
 #   mesh    – parinktis --mesh-method poisson|openmvs ir OpenMVS tinklas (opendm/atea_mesh.py)
 #   flatten – po 3D tinklo sukūrimo: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas
+#   sky     – dangaus kaukė (--sky-removal) išplečiama į pastato pusę ~2 % nuotraukos: ODM ją skaičiuoja 384×384 px
+#             vaizde ir ištempia, todėl pastatų kraštai prieš dangų (stogo parapetas) būdavo „nukandami“ – dantytas kraštas
 #   fuse    – parinktis --pc-fuse-views: kiek nuotraukų turi patvirtinti tašką tankinant (numatyta 2, kaip ODM;
 #             3 – mažiau atspindžių triukšmo stikle, bet dingsta ir blizgių automobilių stogų taškai)
 import sys
@@ -12,6 +14,7 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else "/code"
 CONFIG = ROOT + "/opendm/config.py"
 MESHING = ROOT + "/stages/odm_meshing.py"
 OPENMVS = ROOT + "/stages/openmvs.py"
+SKYFILTER = ROOT + "/opendm/skyremoval/skyfilter.py"
 
 GROUPS = {
   'mesh': ('atea_mesh.openmvs_mesh', {
@@ -77,6 +80,16 @@ GROUPS = {
         ("            number_views_fuse = 2\n",
          "            # Atea: --pc-fuse-views (numatyta 2, kaip ODM)\n"
          "            number_views_fuse = max(2, int(getattr(args, 'pc_fuse_views', 2) or 2))\n"),
+    ],
+  }),
+  'sky': ('Atea: dangaus kaukė', {
+    SKYFILTER: [
+        ("        res = cv2.threshold(res, 127, 255, cv2.THRESH_BINARY_INV)[1]\n",
+         "        res = cv2.threshold(res, 127, 255, cv2.THRESH_BINARY_INV)[1]\n"
+         "\n"
+         "        # Atea: dangaus kaukė išplečiama į pastato pusę (~2 % nuotraukos) – pastatų kraštai prieš dangų lieka\n"
+         "        k = max(3, int(0.02 * max(res.shape[:2])) | 1)\n"
+         "        res = cv2.dilate(res, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))\n"),
     ],
   }),
 }
