@@ -105,22 +105,38 @@ def test_region_and_voxel():
     pts = np.random.default_rng(0).uniform([-100, -100, 0], [100, 100, 20], (20000, 3))
     lo, hi = fuse.region(pts, np.array([[10.0, 0, 50], [30.0, 0, 50]]), radius=30)
     assert np.allclose(lo[:2], [-10, -30]) and np.allclose(hi[:2], [50, 30])
-    assert 0.04 <= fuse.auto_voxel(lo, hi) < 0.05             # 60×60 m, 8 mln. trikampių – ~4,7 cm
-    lo, hi = fuse.region(pts, np.zeros((1, 3)), radius=15)
-    assert 0.02 <= fuse.auto_voxel(lo, hi) < 0.03             # 30×30 m – ~2,4 cm
+    assert 0.03 <= fuse.auto_voxel(lo, hi) < 0.04             # 60×60 m, 16 mln. trikampių – ~3,4 cm
+    lo, hi = fuse.region(pts, np.zeros((1, 3)), radius=20)
+    assert 0.02 <= fuse.auto_voxel(lo, hi) < 0.025            # 40×40 m – ~2 cm
     lo, hi = fuse.region(pts, np.zeros((1, 3)))
-    assert fuse.auto_voxel(lo, hi) == 0.15                     # visas 200×200 m projektas – stambiau
-    # Mažai atminties – mažiau trikampių, stambesnis vokselis
-    assert fuse.tri_budget(64 * fuse.GB) == fuse.TRI_BUDGET
-    assert fuse.tri_budget(8 * fuse.GB) < 4_000_000
-    assert fuse.auto_voxel(lo, hi, fuse.tri_budget(4 * fuse.GB)) == 0.15
+    assert 0.10 < fuse.auto_voxel(lo, hi) <= 0.15             # visas 200×200 m projektas – stambiau
+    # Mažai laisvos atminties – mažesnės dalys (ne prastesnis detalumas)
+    assert fuse.tile_triangles(64 * fuse.GB) == fuse.TILE_TRIANGLES
+    assert fuse.tile_triangles(2 * fuse.GB) == fuse.TILE_TRIANGLES // 2
+    assert fuse.tile_triangles(0.1 * fuse.GB) == 300_000
 
 
-def test_low_memory_gives_clear_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(fuse, "mem_available", lambda: 1_000_000)  # 1 MB – „neužteks“
-    with pytest.raises(RuntimeError, match="Per mažai atminties"):
-        fuse.fuse(_cams(), _fake_splats(_building(hole=False)), None, ((-12, -12, -1), (12, 12, 10)), str(tmp_path / "f.glb"),
-                  max_size=160, voxel=0.15, log=lambda m: None)
+def test_tiles_give_same_surface(tmp_path):
+    """Suliejimas dalimis (plytelėmis): tas pats paviršius kaip vienu kartu, skylė užpildyta, siūlės be tarpų."""
+    mesh_path = str(tmp_path / "odm_mesh.ply")
+    o3d.io.write_triangle_mesh(mesh_path, _building(hole=True))
+    render = _fake_splats(_building(hole=False))
+    box = ((-12, -12, -1), (12, 12, 10))
+    one = fuse.fuse(_cams(), render, mesh_path, box, str(tmp_path / "a.glb"), max_size=160, voxel=0.12, log=lambda m: None, tile=100)
+    many = fuse.fuse(_cams(), render, mesh_path, box, str(tmp_path / "b.glb"), max_size=160, voxel=0.12, log=lambda m: None, tile=7,
+                     work_dir=str(tmp_path))
+    assert one["tiles"] == 1 and many["tiles"] == 16
+    assert abs(many["triangles"] - one["triangles"]) < 0.03 * one["triangles"]
+    assert not [f for f in os.listdir(tmp_path) if f.startswith("fuse_")]   # laikini kadrai ištrinti
+    import trimesh
+    a = trimesh.load(str(tmp_path / "a.glb"), force="mesh")
+    b = trimesh.load(str(tmp_path / "b.glb"), force="mesh")
+    assert abs(a.area - b.area) < 0.02 * a.area
+    V = np.asarray(b.vertices)
+    assert ((np.abs(V[:, 0] - 5) < 0.3) & (np.abs(V[:, 1]) < 1.2) & (V[:, 2] > 2.3) & (V[:, 2] < 3.7)).sum() > 20
+    # Siūlė ties x=-6 (plytelių riba) ant žemės: paviršius be tarpo
+    band = (np.abs(V[:, 0] + 6) < 0.2) & (np.abs(V[:, 2]) < 0.3) & (np.abs(V[:, 1]) < 10) & (np.abs(V[:, 1]) > 6)
+    assert band.sum() > 20
 
 
 def test_fuse_api(tmp_path, monkeypatch):
@@ -202,3 +218,23 @@ def test_fuse_killed_by_oom_message(tmp_path, monkeypatch):
     monkeypatch.setitem(appmod._proc, "kind", "fuse")
     st = appmod._fuse_status(uid)
     assert st["state"] == "error" and "pritrūko atminties (etapas: Išgaunamas paviršius)" in st["message"]
+
+
+def test_tiles_simplified_keep_seams(tmp_path, monkeypatch):
+    """Kiekviena dalis supaprastinama atskirai (be didelio galutinio supaprastinimo), sandūros išlieka."""
+    render = _fake_splats(_building(hole=False))
+    box = ((-12, -12, -1), (12, 12, 10))
+    full = fuse.fuse(_cams(), render, None, box, str(tmp_path / "a.glb"), max_size=160, voxel=0.12, log=lambda m: None, tile=7)
+    monkeypatch.setattr(fuse, "MAX_TRIANGLES", full["triangles"] // 4)
+    small = fuse.fuse(_cams(), render, None, box, str(tmp_path / "b.glb"), max_size=160, voxel=0.12, log=lambda m: None, tile=7)
+    assert small["triangles"] <= 1.2 * fuse.MAX_TRIANGLES
+    import trimesh
+    a = trimesh.load(str(tmp_path / "a.glb"), force="mesh")
+    b = trimesh.load(str(tmp_path / "b.glb"), force="mesh")
+    assert abs(a.area - b.area) < 0.03 * a.area                       # forma ta pati
+    # Atvirų kraštų (tarpų) ne daugiau nei be supaprastinimo
+    def boundary_len(m):
+        e = m.edges_sorted
+        u, c = np.unique(e, axis=0, return_counts=True)
+        return np.linalg.norm(m.vertices[u[c == 1, 0]] - m.vertices[u[c == 1, 1]], axis=1).sum()
+    assert boundary_len(b) < 1.3 * boundary_len(a) + 1

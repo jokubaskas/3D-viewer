@@ -1631,8 +1631,8 @@ export const EN = {
   'užpildyta iš realistiško vaizdo {p} %': '{p} % filled from the realistic view',
   'Sulieti iš naujo': 'Fuse again',
   'Sujungtas modelis': 'Merged model',
-  'Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 20 – kvadratas 40 × 40 m. Kuo mažesnė sritis, tuo smulkesnės detalės: 15 m – ~2,5 cm, 20 m – ~3 cm, 40 m – ~6 cm. 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.':
-    'Merged model for project “{n}”.\n\nWhich area should be fused? Enter the distance in metres from the project centre (the building in an orbit mission), e.g. 20 – a 40 × 40 m square. The smaller the area, the finer the detail: 15 m – ~2.5 cm, 20 m – ~3 cm, 40 m – ~6 cm. 0 – the whole project (coarser, up to 15 cm).\n\nTakes about 10–40 min; the graphics card is busy meanwhile.',
+  'Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 20 – kvadratas 40 × 40 m. Kuo mažesnė sritis, tuo smulkesnės detalės: 20 m – ~2 cm, 40 m – ~4,5 cm, 60 m – ~7 cm. 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.':
+    'Merged model for project “{n}”.\n\nWhich area should be fused? Enter the distance in metres from the project centre (the building in an orbit mission), e.g. 20 – a 40 × 40 m square. The smaller the area, the finer the detail: 20 m – ~2 cm, 40 m – ~4.5 cm, 60 m – ~7 cm. 0 – the whole project (coarser, up to 15 cm).\n\nTakes about 10–40 min; the graphics card is busy meanwhile.',
   'Neteisingas atstumas': 'Invalid distance',
   'Suliejimas pradėtas': 'Fusion started',
   'Atšaukti suliejimą?': 'Cancel the fusion?',
