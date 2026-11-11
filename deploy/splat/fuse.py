@@ -29,8 +29,10 @@ def _o3d():
     return o3d
 
 
-BLOCKS = 60_000      # pradinė TSDF blokų (16³ vokselių) talpa; prireikus Open3D ją padidina
-TRI_BUDGET = 8_000_000  # suliejamo paviršiaus trikampių riba (atmintis: ~1,1 GB / 1 mln.; žr. mem_budget)
+BLOCKS = 20_000      # pradinė TSDF blokų (16³ vokselių) talpa vienai daliai; prireikus Open3D ją padidina
+TILE_TRIANGLES = 1_500_000  # apytiksliai trikampių vienoje dalyje (plytelėje) – ~2 GB atminties
+TRI_BUDGET = 16_000_000  # suliejamo paviršiaus trikampių (prieš supaprastinimą) riba visai sričiai – nuo jos priklauso
+                         # detalumas ir trukmė; atmintis ribojama dalimis (plytelėmis), ne šiuo skaičiumi
 GB = 1024 ** 3
 
 
@@ -59,18 +61,17 @@ def max_rss_gb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
 
 
-def tri_budget(avail=None):
-    """Kiek trikampių galima sulieti: išmatuota ~1,1 GB atminties milijonui (suliejimas, išgavimas, valymas,
-    supaprastinimas), imama pusė laisvos atminties, ne daugiau TRI_BUDGET."""
+def tile_triangles(avail=None):
+    """Kiek trikampių vienoje dalyje: ~1,5 mln. – ~4 GB atminties (išmatuota); mažai laisvos atminties – mažesnės dalys."""
     avail = mem_available() if avail is None else avail
     if not avail:
-        return TRI_BUDGET
-    return int(np.clip(0.5 * avail / (1.1 * GB) * 1e6, 1e6, TRI_BUDGET))
+        return TILE_TRIANGLES
+    return int(np.clip(avail / (4 * GB) * TILE_TRIANGLES, 300_000, TILE_TRIANGLES))
 
 
 def auto_voxel(lo, hi, triangles=TRI_BUDGET):
     """Vokselio dydis pagal srities plotą: paviršius ≈ 2,5 × plotas, ~2 trikampiai vienam vokselio kvadratui.
-    8 mln. trikampių: 40×40 m – ~3 cm, 80×80 m – ~6 cm, 200×200 m – ~15 cm."""
+    16 mln. trikampių: 40×40 m – ~2 cm, 80×80 m – ~4,5 cm, 200×200 m – ~11 cm."""
     area = max(1.0, float(hi[0] - lo[0]) * float(hi[1] - lo[1]))
     return float(np.clip(np.sqrt(2 * 2.5 * area / triangles), 0.02, 0.15))
 
@@ -89,14 +90,19 @@ def sees_region(cam, lo, hi):
     return lo_uv[0] < cam["width"] and hi_uv[0] > 0 and lo_uv[1] < cam["height"] and hi_uv[1] > 0
 
 
-def in_region(d, cam, K, lo, hi):
-    """Pikseliai, kurių 3D taškas srities ribose (kiti nesuliejami – taupoma atmintis)."""
+def world_points(d, cam, K):
+    """Gylio vaizdo (z) pikselių 3D taškai pasaulio koordinatėmis (H×W×3)."""
     H, W = d.shape
-    u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    u, v = np.meshgrid(np.arange(W, dtype=np.float32) + 0.5, np.arange(H, dtype=np.float32) + 0.5)
     x = (u - K[0, 2]) / K[0, 0] * d
     y = (v - K[1, 2]) / K[1, 1] * d
     Vi = np.linalg.inv(cam["viewmat"])
-    P = np.stack([x, y, d], -1) @ Vi[:3, :3].T + Vi[:3, 3]
+    return np.stack([x, y, d], -1) @ Vi[:3, :3].T.astype(np.float32) + Vi[:3, 3].astype(np.float32)
+
+
+def in_region(d, cam, K, lo, hi):
+    """Pikseliai, kurių 3D taškas srities ribose."""
+    P = world_points(d, cam, K)
     return np.all((P >= lo) & (P <= hi), -1)
 
 
@@ -128,17 +134,18 @@ def fuse_depth(d_mesh, d_splat, alpha, tol=TOL):
 
 
 def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None, min_views=3.0, log=print, progress=None,
-         stage=None):
+         stage=None, tile=None, work_dir=None):
     """
     cams – splat_io.load_cameras(); render_fn(cam, W, H, K) → (rgb H×W×3 0..1, gylis H×W, nepermatomumas H×W);
     mesh_path – ODM tinklas (gali nebūti); bounds – (lo[3], hi[3]) suliejimo sritis.
     """
     o3d = _o3d()
+    stage = stage or (lambda m, part=None, parts=None: None)
     lo, hi = np.asarray(bounds[0], float), np.asarray(bounds[1], float)
+    avail = mem_available()
     if voxel is None:
-        avail = mem_available()
-        voxel = auto_voxel(lo, hi, tri_budget(avail))
-        log("Laisva atmintis: %s, vokselis %.1f cm" % ("%.1f GB" % (avail / GB) if avail else "nežinoma", voxel * 100))
+        voxel = auto_voxel(lo, hi)
+    log("Laisva atmintis: %s, vokselis %.1f cm" % ("%.1f GB" % (avail / GB) if avail else "nežinoma", voxel * 100))
     cams = [c for c in cams if sees_region(c, lo, hi)]
     if not cams:
         raise RuntimeError("Nė viena kamera nemato pasirinktos srities")
@@ -148,73 +155,71 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
         m = o3d.t.io.read_triangle_mesh(mesh_path)
         scene = o3d.t.geometry.RaycastingScene()
         scene.add_triangles(m)
-    T = o3d.core
-    dev = T.Device("CPU:0")
-    trunc = 4.0
-    vbg = o3d.t.geometry.VoxelBlockGrid(attr_names=("tsdf", "weight", "color"), attr_dtypes=(T.float32, T.float32, T.float32),
-                                        attr_channels=(1, 1, 3), voxel_size=voxel, block_resolution=16,
-                                        block_count=BLOCKS, device=dev)
-    stats = np.zeros(3, np.int64)
-    used = 0
-    t0 = time.time()
-    for i, cam in enumerate(cams):
-        s = min(1.0, max_size / max(cam["width"], cam["height"]))
-        W, H = max(1, round(cam["width"] * s)), max(1, round(cam["height"] * s))
-        K = cam["K"].copy()
-        K[0] *= W / cam["width"]
-        K[1] *= H / cam["height"]
-        rgb, d_s, a = render_fn(cam, W, H, K)
-        d_m = mesh_depth(scene, cam, W, H, K) if scene is not None else np.full((H, W), np.inf, np.float32)
-        d, src = fuse_depth(d_m, d_s, a)
-        d[~np.isfinite(d)] = 0
-        out = (d > 0) & ~in_region(d, cam, K, lo - margin, hi + margin)
-        d[out], src[out] = 0, 0
-        stats += np.bincount(src.ravel(), minlength=3)[:3]
-        # Open3D blokus parenka tik iš kas STRIDE-ojo pikselio ir be jų nutraukia darbą – kameros, kurios sritį mato
-        # tik keliais pikseliais (kraštu), praleidžiamos
-        if (d[::STRIDE, ::STRIDE] > 0).sum() >= MIN_TOUCH:
-            dep = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(d, np.float32)))
-            col = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(np.clip(rgb, 0, 1), np.float32)))
-            Kt, E = T.Tensor(K), T.Tensor(np.ascontiguousarray(cam["viewmat"], np.float64))
-            try:
-                blocks = vbg.compute_unique_block_coordinates(dep, Kt, E, 1.0, 1e6, trunc)
-                vbg.integrate(blocks, dep, col, Kt, Kt, E, 1.0, 1e6, trunc)
-                used += 1
-            except RuntimeError as e:
-                if "No block is touched" not in str(e):
-                    raise
-        if progress:
-            progress(i + 1, len(cams), time.time() - t0)
-    if not used:
-        raise RuntimeError("Nė viena kamera nemato paviršiaus pasirinktoje srityje – padidinkite atstumą arba rinkitės visą projektą")
-    tot = max(1, stats[1] + stats[2])
-    log("Suliejimas: modelis %.0f %%, splatai %.0f %% (vokselis %.1f cm)" % (100 * stats[1] / tot, 100 * stats[2] / tot, voxel * 100))
-    stage = stage or (lambda m: None)
-    nblocks = vbg.hashmap().size()
-    # Išgaunant paviršių atmintis dar išauga (išmatuota ~0,36 MB blokui) – geriau aiški klaida nei nutrauktas procesas
-    need, avail = nblocks * 0.36e6, mem_available()
-    log("TSDF blokų: %d, atminties naudota iki šiol: %.1f GB, laisva: %s" % (nblocks, max_rss_gb(), "%.1f GB" % (avail / GB) if avail else "?"))
-    if avail and need > 0.9 * avail:
-        raise RuntimeError("Per mažai atminties paviršiui išgauti (reikia ~%.0f GB, laisva %.0f GB) – sumažinkite atstumą"
-                           % (need / GB, avail / GB))
-    stage("Išgaunamas paviršius")
-    tmesh = vbg.extract_triangle_mesh(weight_threshold=min_views)
-    del vbg
-    log("Išgauta trikampių: %d (atmintis iki šiol %.1f GB)" % (tmesh.triangle.indices.shape[0], max_rss_gb()))
-    mesh = tmesh.to_legacy()
-    del tmesh
-    stage("Valomi smulkūs gabalai")
-    # Sritis ir smulkūs atskiri gabalai
-    box = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
-    mesh = mesh.crop(box)
-    if len(mesh.triangles):
-        cl, n, _ = mesh.cluster_connected_triangles()
-        cl, n = np.asarray(cl), np.asarray(n)
-        mesh.remove_triangles_by_mask(n[cl] < max(50, 0.002 * len(cl)))
-        mesh.remove_unreferenced_vertices()
-    if not len(mesh.triangles):
+        del m
+    import shutil
+    import tempfile
+    work = tempfile.mkdtemp(prefix="fuse_", dir=work_dir)
+    try:
+        # 1. Kiekviena kamera atvaizduojama vieną kartą: sujungtas gylis ir spalva → laikinas failas diske
+        frames = []
+        stats = np.zeros(3, np.int64)
+        t0 = time.time()
+        for i, cam in enumerate(cams):
+            s = min(1.0, max_size / max(cam["width"], cam["height"]))
+            W, H = max(1, round(cam["width"] * s)), max(1, round(cam["height"] * s))
+            K = cam["K"].copy()
+            K[0] *= W / cam["width"]
+            K[1] *= H / cam["height"]
+            rgb, d_s, a = render_fn(cam, W, H, K)
+            d_m = mesh_depth(scene, cam, W, H, K) if scene is not None else np.full((H, W), np.inf, np.float32)
+            d, src = fuse_depth(d_m, d_s, a)
+            d[~np.isfinite(d)] = 0
+            P = world_points(d, cam, K)
+            ok = (d > 0) & np.all((P >= lo - margin) & (P <= hi + margin), -1)
+            d[~ok], src[~ok] = 0, 0
+            stats += np.bincount(src.ravel(), minlength=3)[:3]
+            if ok.sum() >= MIN_TOUCH:
+                f = os.path.join(work, "%05d.npz" % i)
+                np.savez(f, d=d.astype(np.float32), rgb=np.round(np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+                xy = P[ok][:, :2]
+                frames.append({"cam": cam, "K": K, "file": f, "lo": xy.min(0), "hi": xy.max(0)})
+            del rgb, d_s, a, d_m, P
+            if progress:
+                progress(i + 1, len(cams), time.time() - t0)
+        if not frames:
+            raise RuntimeError("Nė viena kamera nemato paviršiaus pasirinktoje srityje – padidinkite atstumą arba rinkitės visą projektą")
+        tot = max(1, stats[1] + stats[2])
+        log("Suliejimas: modelis %.0f %%, splatai %.0f %% (vokselis %.1f cm, kamerų %d)"
+            % (100 * stats[1] / tot, 100 * stats[2] / tot, voxel * 100, len(frames)))
+
+        # 2. Plytelėmis: kiekviena suliejama ir išgaunama atskirai – atmintis nepriklauso nuo srities dydžio
+        if tile is None:
+            tile = float(np.clip(np.sqrt(tile_triangles(avail) * voxel ** 2 / 5.0), 5.0, 200.0))
+        nx = max(1, int(np.ceil((hi[0] - lo[0]) / tile)))
+        ny = max(1, int(np.ceil((hi[1] - lo[1]) / tile)))
+        parts, used = [], set()
+        for k, (ix, iy) in enumerate([(ix, iy) for iy in range(ny) for ix in range(nx)]):
+            stage("Išgaunamas paviršius", k + 1, nx * ny)
+            tlo = np.array([lo[0] + ix * (hi[0] - lo[0]) / nx, lo[1] + iy * (hi[1] - lo[1]) / ny, lo[2]])
+            thi = np.array([lo[0] + (ix + 1) * (hi[0] - lo[0]) / nx, lo[1] + (iy + 1) * (hi[1] - lo[1]) / ny, hi[2]])
+            # Trikampių riba dalies plotui: visas modelis ≤ MAX_TRIANGLES be didelio galutinio supaprastinimo,
+            # kuris pats sunaudotų daug atminties (24 mln. → 6 mln. – > 15 GB)
+            cap = int(MAX_TRIANGLES * np.prod(thi[:2] - tlo[:2]) / max(1e-9, np.prod(hi[:2] - lo[:2])))
+            V, F, C, n = _fuse_tile(o3d, frames, tlo, thi, voxel, margin, min_views, used, cap)
+            if len(F):
+                parts.append((V, F, C))
+            if nx * ny > 1:
+                log("Dalis %d/%d: kamerų %d, trikampių %d, atmintis iki šiol %.1f GB" % (k + 1, nx * ny, n, len(F), max_rss_gb()))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    if not parts:
         raise RuntimeError("Suliejus paviršius neliko (per mažai kamerų mato tą pačią vietą) – padidinkite atstumą")
-    if len(mesh.triangles) > MAX_TRIANGLES:
+    off = np.cumsum([0] + [len(p[0]) for p in parts[:-1]])
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(np.concatenate([p[0] for p in parts])),
+                                     o3d.utility.Vector3iVector(np.concatenate([p[1] + o for p, o in zip(parts, off)])))
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.concatenate([p[2] for p in parts]))
+    del parts
+    if len(mesh.triangles) > 1.2 * MAX_TRIANGLES:
         log("Supaprastinama: %d → %d trikampių" % (len(mesh.triangles), MAX_TRIANGLES))
         stage("Supaprastinama")
         mesh = mesh.simplify_quadric_decimation(MAX_TRIANGLES)
@@ -229,8 +234,62 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
     import trimesh
     tm = trimesh.Trimesh(V, F, vertex_colors=np.c_[C, np.full(len(C), 255, np.uint8)], process=False)
     tm.export(out_glb)
-    log("Sujungtas modelis: %d trikampių (naudota kamerų: %d iš %d, atminties daugiausia %.1f GB)" % (len(F), used, len(cams), max_rss_gb()))
-    return {"triangles": int(len(F)), "voxel": voxel, "from_mesh": float(stats[1] / tot), "from_splats": float(stats[2] / tot)}
+    log("Sujungtas modelis: %d trikampių (kamerų: %d iš %d, dalių: %d, atminties daugiausia %.1f GB)"
+        % (len(F), len(used), len(cams), nx * ny, max_rss_gb()))
+    return {"triangles": int(len(F)), "voxel": voxel, "tiles": nx * ny,
+            "from_mesh": float(stats[1] / tot), "from_splats": float(stats[2] / tot)}
+
+
+def _fuse_tile(o3d, frames, tlo, thi, voxel, margin, min_views, used, cap=None):
+    """Viena plytelė: TSDF iš kadrų, matančių plytelę (su paraštėmis), išgavimas, smulkių gabalų šalinimas ir
+    apkirpimas tiksliai iki plytelės ribų (gretimos plytelės susiglaudžia)."""
+    T = o3d.core
+    blo, bhi = tlo - margin, thi + margin
+    vbg = o3d.t.geometry.VoxelBlockGrid(attr_names=("tsdf", "weight", "color"), attr_dtypes=(T.float32, T.float32, T.float32),
+                                        attr_channels=(1, 1, 3), voxel_size=voxel, block_resolution=16,
+                                        block_count=BLOCKS, device=T.Device("CPU:0"))
+    n = 0
+    for fr in frames:
+        if np.any(fr["hi"] < blo[:2]) or np.any(fr["lo"] > bhi[:2]):
+            continue
+        z = np.load(fr["file"])
+        d, rgb = z["d"], z["rgb"]
+        P = world_points(d, fr["cam"], fr["K"])
+        d = np.where((d > 0) & np.all((P >= blo) & (P <= bhi), -1), d, 0).astype(np.float32)
+        del P
+        # Open3D blokus parenka tik iš kas STRIDE-ojo pikselio ir be jų nutraukia darbą
+        if (d[::STRIDE, ::STRIDE] > 0).sum() < MIN_TOUCH:
+            continue
+        dep = o3d.t.geometry.Image(T.Tensor(d))
+        col = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(rgb.astype(np.float32) / 255.0)))
+        Kt, E = T.Tensor(fr["K"]), T.Tensor(np.ascontiguousarray(fr["cam"]["viewmat"], np.float64))
+        try:
+            blocks = vbg.compute_unique_block_coordinates(dep, Kt, E, 1.0, 1e6, 4.0)
+            vbg.integrate(blocks, dep, col, Kt, Kt, E, 1.0, 1e6, 4.0)
+            n += 1
+            used.add(fr["file"])
+        except RuntimeError as e:
+            if "No block is touched" not in str(e):
+                raise
+    empty = (np.zeros((0, 3)), np.zeros((0, 3), np.int64), np.zeros((0, 3)), n)
+    if not n:
+        return empty
+    tm = vbg.extract_triangle_mesh(weight_threshold=min_views)
+    del vbg
+    if not tm.triangle.indices.shape[0]:
+        return empty
+    mesh = tm.to_legacy()
+    del tm
+    # Smulkūs atskiri gabalai („debesėliai“) – su paraštėmis, kad prie ribos nukirsti tikri paviršiai neišnyktų
+    cl, cnt, _ = mesh.cluster_connected_triangles()
+    cl, cnt = np.asarray(cl), np.asarray(cnt)
+    mesh.remove_triangles_by_mask(cnt[cl] < max(50, 0.002 * len(cl)))
+    mesh.remove_unreferenced_vertices()
+    mesh = mesh.crop(o3d.geometry.AxisAlignedBoundingBox(np.r_[tlo[:2], tlo[2] - margin], np.r_[thi[:2], thi[2] + margin]))
+    if cap and len(mesh.triangles) > cap:
+        # Kraštai (dalių sandūros) išlaikomi, kad gretimos dalys susiglaustų
+        mesh = mesh.simplify_quadric_decimation(cap, boundary_weight=1000.0)
+    return np.asarray(mesh.vertices), np.asarray(mesh.triangles), np.asarray(mesh.vertex_colors), n
 
 
 # ---------------------------------------------------------------- paleidimas (splat paslauga, su GPU)
@@ -317,8 +376,10 @@ def main():
         out = os.path.join(a.out_dir, "fused.glb")
         status(state="fusing", step=0, steps=len(cams), message="Suliejama")
         res = fuse(cams, render, mesh, (lo, hi), out + ".tmp.glb", a.max_size, a.voxel, log=lambda m: print(m, flush=True),
+                   work_dir=a.out_dir,
                    progress=lambda i, n, el: (i % 10 == 0 or i == n) and status(step=i, steps=n, eta=round(el / i * (n - i))),
-                   stage=lambda m: (print(m, flush=True), status(state="finishing", message=m)))
+                   stage=lambda m, part=None, parts=None: (print(m, part or "", parts or "", flush=True),
+                                                           status(state="finishing", message=m, part=part, parts=parts)))
         os.replace(out + ".tmp.glb", out)
         coords = os.path.join(a.task_dir, "odm_georeferencing", "coords.txt")
         if os.path.isfile(coords):
