@@ -141,3 +141,30 @@ def test_fuse_api(tmp_path, monkeypatch):
     assert calls[0][-6:] == ["--radius", "40.0", "--cx", "1.5", "--cy", "-2.0"]
     assert c.post("/fuse", json={"uuid": uid}).status_code == 409                  # vienu metu – vienas darbas
     assert c.post("/fuse", json={"uuid": "../x"}).status_code == 400
+
+
+def test_camera_seeing_region_edge_only_is_skipped(tmp_path):
+    """Kamera, kuri sritį mato tik keliais pikseliais (ne kas 4-uoju), neturi nutraukti suliejimo (Open3D „No block is touched“)."""
+    full = _building(hole=False)
+    base = _fake_splats(full)
+    cams = _cams()
+
+    def render(cam, W, H, K):
+        rgb, d, a = base(cam, W, H, K)
+        if cam is cams[0]:  # tik keli nelyginiai pikseliai
+            m = np.zeros_like(a)
+            m[61:72:4, 81:92:4] = 1  # vaizdo centre (pastatas), bet ne ant kas 4-ojo pikselio
+            assert (d * m > 0).sum() == 9
+            d, a = d * m, a * m
+        return rgb, d, a
+
+    cams[0] = dict(cams[0])
+    out = str(tmp_path / "fused.glb")
+    res = fuse.fuse(cams, render, None, ((-12, -12, -1), (12, 12, 10)), out, max_size=160, voxel=0.15, log=lambda m: None)
+    assert res["triangles"] > 1000
+
+
+def test_no_surface_in_region_gives_clear_error(tmp_path):
+    render = _fake_splats(_building(hole=False))
+    with pytest.raises(RuntimeError, match="padidinkite"):
+        fuse.fuse(_cams(), render, None, ((50, 50, 0), (60, 60, 5)), str(tmp_path / "f.glb"), max_size=160, voxel=0.15, log=lambda m: None)
