@@ -411,9 +411,20 @@ async def odm_restart(request: Request):
     kw = {"status": QUEUED, "errorMessage": None, "committed": True}
     if f.get("options"):
         try:
-            kw["options"] = json.loads(f["options"])
+            opts = json.loads(f["options"])
         except ValueError:
             return {"success": False, "error": "Neteisingos parinktys"}
+        # „rerun-all“ – visi etapai iš naujo (kitaip tęsiama nuo paskutinio atlikto etapo)
+        if any(o.get("name") in ("rerun-all", "rerun-from") for o in opts):
+            work = os.path.join(_tdir(uuid), "work")
+            for n in os.listdir(work) if os.path.isdir(work) else []:
+                if n.startswith(".done_"):
+                    os.remove(os.path.join(work, n))
+            try:
+                os.remove(os.path.join(_tdir(uuid), "progress.json"))
+            except OSError:
+                pass
+        kw["options"] = [o for o in opts if o.get("name") not in ("rerun-all", "rerun-from", "rerun")]
     _update_task(uuid, **kw)
     JOBS.add("pipeline", uuid)
     return {"success": True}

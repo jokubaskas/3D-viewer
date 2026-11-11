@@ -48,7 +48,10 @@ export function detachSplatLayer() {
  * Prijungia realistišką sluoksnį prie dabar atidaryto (ODM) modelio.
  * @param {string} url scene.spz
  */
-export async function attachSplatLayer(url) {
+/**
+ * @param {string|File|Blob} src – adresas (…/scene.spz) arba failas (pvz. iš portalo kartu su 3D modeliu)
+ */
+export async function attachSplatLayer(src) {
   detachSplatLayer();
   const model = viewer.model;
   if (!model) return false;
@@ -64,7 +67,7 @@ export async function attachSplatLayer(url) {
     if (viewer.model !== model) return false;
     const spark = new SparkRenderer({ renderer: viewer.renderer });
     viewer.scene.add(spark);
-    const mesh = new SplatMesh({ url });
+    const mesh = typeof src === 'string' ? new SplatMesh({ url: src }) : new SplatMesh({ fileBytes: new Uint8Array(await src.arrayBuffer()), fileName: src.name || 'scene.spz' });
     mesh.matrixAutoUpdate = false;
     mesh.matrix.copy(M);
     model.add(mesh);

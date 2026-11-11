@@ -8,46 +8,45 @@ export const HEIGHT_MODES = {
   normal: 'Jau normaliniai (LAS07)',
 };
 
+// Režimai. „Greitas“ ir „Aukšta kokybė“ – Atea variklis (deploy/engine, GPU): 3D modelis, taškų debesis, ortofoto,
+// DSM / DTM; „Aukšta kokybė“ – ir realistiškas vaizdas (splatai), automatiškai prijungiamas prie 3D modelio.
+// „Tik ortofoto“ – ODM greitas 2D žemėlapis (be 3D).
 export const PRESETS = {
-  orthoOnly: {
-    label: 'Tik ortofoto',
-    desc: 'Greitas 2D žemėlapis be 3D modelio: kelis kartus greičiau ir mažai RAM. DSM / DTM – apytiksliai. Geriausia statmenoms (−90°) nuotraukoms.',
-    options: { 'fast-orthophoto': true, 'skip-3dmodel': true, 'feature-quality': 'high', 'orthophoto-resolution': 2, 'dem-resolution': 10 },
-  },
   fast: {
     label: 'Greitas',
-    desc: 'Peržiūrai lauke. Mažesnis taškų tankis, ~2× greičiau.',
-    // Be geometrinio gylio žemėlapių tikslinimo (OpenMVS) ir be PDF ataskaitos – tankinimas ~2× greitesnis
-    options: { 'feature-quality': 'medium', 'pc-quality': 'low', 'pc-skip-geometric': true, 'skip-report': true, 'mesh-size': 150000, 'orthophoto-resolution': 5, 'dem-resolution': 10 },
-  },
-  standard: {
-    label: 'Standartinis',
-    desc: 'Rekomenduojama tūriams ir plotams.',
-    options: { 'feature-quality': 'high', 'pc-quality': 'medium', 'mesh-size': 300000, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    engine: true,
+    desc: 'Greita peržiūra lauke: 3D modelis, ortofoto ir DSM / DTM. Kelis kartus greičiau, detalumas mažesnis.',
   },
   high: {
     label: 'Aukšta kokybė',
-    desc: 'Didžiausias detalumas. Ilgai, reikia daug RAM.',
-    options: { 'feature-quality': 'high', 'pc-quality': 'high', 'mesh-size': 600000, 'mesh-octree-depth': 12, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
+    engine: true,
+    desc: 'Didžiausias detalumas: tikslus 3D modelis su nuotraukų tekstūra, ortofoto, DSM / DTM ir realistiškas vaizdas (stiklas, medžiai, atspindžiai) – jis automatiškai prijungiamas prie 3D modelio ir kartu atiduodamas klientui.',
   },
-  objects3d: {
-    label: '3D objektai',
-    desc: 'Įstrižoms (pvz. 5 krypčių) nuotraukoms: aštresni pastatai, mašinos, sienos. Ilgiausiai, reikia daugiausia RAM.',
-    // Daugiau požymių – patikimiau susiejamos statmenos ir įstrižos nuotraukos; griežtesnis taškų filtras (σ 3 vietoj 5) –
-    // mažiau „plaukiojančių“ taškų debesėlių, iš kurių tinkle atsiranda gumbai ant pastatų ir mašinų
-    // ignore-gsd: ODM tekstūroms ir tankinimui naudoja nuotraukas, sumažintas pagal ortofoto raišką – įstrižose
-    // nuotraukose fasadai nufotografuoti smulkiau, todėl be šios parinkties jų tekstūros neryškios
-    // sky-removal: įstrižose nuotraukose (ODM – tik > 20° nuo statmens) dangus užmaskuojamas AI – mažiau „dangaus“
-    // taškų ant pastatų kraštų ir stiklo, kuriame atsispindi dangus. Statmenoms nuotraukoms netaikoma.
-    options: { 'feature-quality': 'high', 'min-num-features': 15000, 'pc-quality': 'high', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
-  },
-  max: {
-    label: 'Maksimali',
-    desc: 'Geriausia, ką gali ODM: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis (ultra), tikslus 3D tinklas. Labai ilgai ir daug RAM – galingam kompiuteriui su GPU.',
-    // ultra: gylio žemėlapiai ½ nuotraukos raiškos (high – ¼, medium – ⅛); požymiai pilna raiška; 3 mln. viršūnių
-    options: { 'feature-quality': 'ultra', 'min-num-features': 20000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 3000000, 'mesh-octree-depth': 13, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 1, 'dem-resolution': 2 },
+  orthoOnly: {
+    label: 'Tik ortofoto',
+    desc: 'Greitas 2D žemėlapis be 3D modelio (OpenDroneMap): kelis kartus greičiau ir mažai RAM. DSM / DTM – apytiksliai. Geriausia statmenoms (−90°) nuotraukoms.',
+    options: { 'fast-orthophoto': true, 'skip-3dmodel': true, 'feature-quality': 'high', 'orthophoto-resolution': 2, 'dem-resolution': 10 },
   },
 };
+/** Senų projektų (ODM režimų) pavadinimai sąraše. */
+export const LEGACY_PRESET_LABELS = { standard: 'Standartinis (ODM)', objects3d: '3D objektai (ODM)', max: 'Maksimali (ODM)' };
+export const presetLabel = (k) => PRESETS[k]?.label || LEGACY_PRESET_LABELS[k] || '';
+export const isEnginePreset = (k) => !!PRESETS[k]?.engine;
+
+/** Atea variklio adresas pagal ODM adresą (tas pats serveris): „./odm/“ → „./engine/“. */
+export function engineBase(odmUrl) {
+  const u = String(odmUrl || '');
+  return /\/?odm\/?$/.test(u) ? u.replace(/odm\/?$/, 'engine/') : null;
+}
+export const isEngineUrl = (u) => /\/?engine\/?$/.test(String(u || ''));
+
+/** Variklio parinktys (NodeODM formatu). */
+export const engineOptions = (presetKey) => [{ name: 'quality', value: presetKey === 'fast' ? 'fast' : 'high' }];
+
+/** Apytikslis variklio RAM poreikis (GB): tankinimas ir tinklas dalimis, daugiausia – tekstūra ir ortofoto. */
+export function estimateEngineRamGB(presetKey, n, mp = 20) {
+  return presetKey === 'fast' ? 4 + n * (mp / 20) * 0.006 : 8 + n * (mp / 20) * 0.02;
+}
 
 /**
  * Kameros su eilutiniu sensoriaus nuskaitymu (rolling shutter) – ODM 3.6.2 opendm/rollingshutter.py duomenų bazė
@@ -316,6 +315,20 @@ export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = tru
 /** ODM etapai eilės tvarka (--rerun-from reikšmės). */
 export const ODM_STAGES = ['dataset', 'split', 'merge', 'opensfm', 'openmvs', 'odm_filterpoints', 'odm_meshing', 'mvs_texturing', 'odm_georeferencing', 'odm_dem', 'odm_orthophoto', 'odm_report', 'odm_postprocess'];
 const STAGE_LABELS = {
+  // Atea variklis (deploy/engine/pipeline.py)
+  features: 'požymių paieška',
+  matching: 'nuotraukų porų derinimas',
+  sfm: 'kamerų padėtys (SfM)',
+  georef: 'georeferencija',
+  undistort: 'nuotraukų ištiesinimas',
+  dense: 'gylio žemėlapiai (GPU)',
+  fusion: 'tankus taškų debesis',
+  filter: 'taškų debesies valymas',
+  mesh: '3D tinklas',
+  texture: 'tekstūra',
+  export: 'rezultatų įrašymas',
+  ortho: 'ortofoto ir DSM / DTM',
+  // ODM
   dataset: 'nuotraukų nuskaitymas',
   opensfm: 'nuotraukų sujungimas (OpenSfM)',
   openmvs: 'taškų debesies tankinimas (OpenMVS)',

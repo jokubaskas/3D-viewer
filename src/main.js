@@ -558,6 +558,10 @@ async function openFiles(fileList, opts = {}) {
     });
     res.warnings.forEach((w) => toast(w, /perskaičiuot/.test(w) ? 'info' : 'error', 7000));
     lastOpenedFiles = opts.remote ? null : files;
+    // Realistiškas vaizdas kartu su modeliu (pvz. portale: 3D modelis + scene.spz) – prijungiamas automatiškai
+    const spz = files.find((f) => /\.spz$/i.test(f.name));
+    if (spz && viewer.hasModel && (await attachSplatLayer(spz)))
+      toast(tr('Rodomas realistiškas vaizdas. Matavimai – ant 3D modelio. Perjungti: G arba skydelis „Modelis“.'), 'info', 7000);
   } catch (err) {
     console.error(err);
     toast(tr('Nepavyko atidaryti: {e}', { e: err.message || err }), 'error', 7000);
@@ -944,35 +948,6 @@ const odmUI = createOdmUI({
     closePages();
     return splatUI.open(o);
   },
-  /** „Sujungtas modelis“ (splatai + ODM modelis, deploy/splat/fuse.py): GLB ODM vietinėmis koordinatėmis + coords.txt. */
-  async openFused(project) {
-    tools.deactivate();
-    setLoading(true, 'Atsisiunčiami rezultatai…', 0);
-    try {
-      const get = async (url, name) => {
-        const r = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-        if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
-        return new File([await r.blob()], name);
-      };
-      const files = [await get(project.glbUrl, 'fused.glb')];
-      try {
-        files.push(await get(project.coordsUrl, 'coords.txt'));
-      } catch {
-        /* be georeferencijos – modelis rodomas vietinėmis koordinatėmis */
-      }
-      setLoading(false);
-      await openFiles(files, { heightSystem: project.heightSystem, name: `${project.name} – ${tr('sujungtas')}` });
-      if (viewer.hasModel) {
-        state.odmProject = project;
-        syncSaveCard();
-      }
-      return viewer.hasModel;
-    } catch (e) {
-      setLoading(false);
-      toast(tr('Nepavyko atidaryti rezultatų: {e}', { e: e.message }), 'error', 8000);
-      return false;
-    }
-  },
   async openResult(project, kind) {
     tools.deactivate();
     setLoading(true, 'Atsisiunčiami rezultatai…', 0);
@@ -992,8 +967,17 @@ const odmUI = createOdmUI({
         state.odmProject = project;
         syncSaveCard();
         // Realistiškas sluoksnis (splatai), jei šiam projektui apmokytas – rodomas iš karto, matavimai ant modelio
-        if (kind !== 'points' && project.splatUrl && (await attachSplatLayer(project.splatUrl)))
+        if (kind !== 'points' && project.splatUrl && (await attachSplatLayer(project.splatUrl))) {
           toast(tr('Rodomas realistiškas vaizdas. Matavimai – ant 3D modelio. Perjungti: G arba skydelis „Modelis“.'), 'info', 7000);
+          // Įkeliant šį modelį klientui (portale „Įkelti dabar atidarytą modelį“) – kartu ir realistiškas vaizdas
+          const opened = lastOpenedFiles;
+          fetch(project.splatUrl, { credentials: 'same-origin' })
+            .then((r) => (r.ok ? r.blob() : null))
+            .then((b) => {
+              if (b && opened && lastOpenedFiles === opened) opened.push(new File([b], 'scene.spz'));
+            })
+            .catch(() => {});
+        }
       }
     } catch (e) {
       setLoading(false);
