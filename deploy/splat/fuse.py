@@ -29,14 +29,50 @@ def _o3d():
     return o3d
 
 
-BLOCKS = 150_000    # TSDF blokų (16³ vokselių, ~80 kB) biudžetas – ~12 GB RAM
+BLOCKS = 60_000      # pradinė TSDF blokų (16³ vokselių) talpa; prireikus Open3D ją padidina
+TRI_BUDGET = 8_000_000  # suliejamo paviršiaus trikampių riba (atmintis: ~1,1 GB / 1 mln.; žr. mem_budget)
+GB = 1024 ** 3
 
 
-def auto_voxel(lo, hi, blocks=BLOCKS):
-    """Vokselio dydis pagal srities plotą, kad tilptų į atmintį: paviršius ≈ 2,5 × plotas, ~3 blokų storio sluoksnis.
-    Pastatas su aplinka (60×60 m) – ~2,5 cm, visas 200×200 m projektas – ~9 cm."""
+def mem_available():
+    """Laisva atmintis baitais: mažesnė iš /proc/meminfo MemAvailable ir konteinerio (cgroup) ribos likučio."""
+    avail = None
+    try:
+        for line in open("/proc/meminfo"):
+            if line.startswith("MemAvailable:"):
+                avail = int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    try:
+        lim = open("/sys/fs/cgroup/memory.max").read().strip()
+        if lim != "max":
+            used = int(open("/sys/fs/cgroup/memory.current").read())
+            left = int(lim) - used
+            avail = left if avail is None else min(avail, left)
+    except (OSError, ValueError):
+        pass
+    return avail
+
+
+def max_rss_gb():
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
+
+
+def tri_budget(avail=None):
+    """Kiek trikampių galima sulieti: išmatuota ~1,1 GB atminties milijonui (suliejimas, išgavimas, valymas,
+    supaprastinimas), imama pusė laisvos atminties, ne daugiau TRI_BUDGET."""
+    avail = mem_available() if avail is None else avail
+    if not avail:
+        return TRI_BUDGET
+    return int(np.clip(0.5 * avail / (1.1 * GB) * 1e6, 1e6, TRI_BUDGET))
+
+
+def auto_voxel(lo, hi, triangles=TRI_BUDGET):
+    """Vokselio dydis pagal srities plotą: paviršius ≈ 2,5 × plotas, ~2 trikampiai vienam vokselio kvadratui.
+    8 mln. trikampių: 40×40 m – ~3 cm, 80×80 m – ~6 cm, 200×200 m – ~15 cm."""
     area = max(1.0, float(hi[0] - lo[0]) * float(hi[1] - lo[1]))
-    return float(np.clip(np.sqrt(7.5 * area / blocks) / 16.0, 0.02, 0.15))
+    return float(np.clip(np.sqrt(2 * 2.5 * area / triangles), 0.02, 0.15))
 
 
 def sees_region(cam, lo, hi):
@@ -91,7 +127,8 @@ def fuse_depth(d_mesh, d_splat, alpha, tol=TOL):
     return d, src
 
 
-def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None, min_views=3.0, log=print, progress=None):
+def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None, min_views=3.0, log=print, progress=None,
+         stage=None):
     """
     cams – splat_io.load_cameras(); render_fn(cam, W, H, K) → (rgb H×W×3 0..1, gylis H×W, nepermatomumas H×W);
     mesh_path – ODM tinklas (gali nebūti); bounds – (lo[3], hi[3]) suliejimo sritis.
@@ -99,7 +136,9 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
     o3d = _o3d()
     lo, hi = np.asarray(bounds[0], float), np.asarray(bounds[1], float)
     if voxel is None:
-        voxel = auto_voxel(lo, hi)
+        avail = mem_available()
+        voxel = auto_voxel(lo, hi, tri_budget(avail))
+        log("Laisva atmintis: %s, vokselis %.1f cm" % ("%.1f GB" % (avail / GB) if avail else "nežinoma", voxel * 100))
     cams = [c for c in cams if sees_region(c, lo, hi)]
     if not cams:
         raise RuntimeError("Nė viena kamera nemato pasirinktos srities")
@@ -150,7 +189,21 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
         raise RuntimeError("Nė viena kamera nemato paviršiaus pasirinktoje srityje – padidinkite atstumą arba rinkitės visą projektą")
     tot = max(1, stats[1] + stats[2])
     log("Suliejimas: modelis %.0f %%, splatai %.0f %% (vokselis %.1f cm)" % (100 * stats[1] / tot, 100 * stats[2] / tot, voxel * 100))
-    mesh = vbg.extract_triangle_mesh(weight_threshold=min_views).to_legacy()
+    stage = stage or (lambda m: None)
+    nblocks = vbg.hashmap().size()
+    # Išgaunant paviršių atmintis dar išauga (išmatuota ~0,36 MB blokui) – geriau aiški klaida nei nutrauktas procesas
+    need, avail = nblocks * 0.36e6, mem_available()
+    log("TSDF blokų: %d, atminties naudota iki šiol: %.1f GB, laisva: %s" % (nblocks, max_rss_gb(), "%.1f GB" % (avail / GB) if avail else "?"))
+    if avail and need > 0.9 * avail:
+        raise RuntimeError("Per mažai atminties paviršiui išgauti (reikia ~%.0f GB, laisva %.0f GB) – sumažinkite atstumą"
+                           % (need / GB, avail / GB))
+    stage("Išgaunamas paviršius")
+    tmesh = vbg.extract_triangle_mesh(weight_threshold=min_views)
+    del vbg
+    log("Išgauta trikampių: %d (atmintis iki šiol %.1f GB)" % (tmesh.triangle.indices.shape[0], max_rss_gb()))
+    mesh = tmesh.to_legacy()
+    del tmesh
+    stage("Valomi smulkūs gabalai")
     # Sritis ir smulkūs atskiri gabalai
     box = o3d.geometry.AxisAlignedBoundingBox(lo, hi)
     mesh = mesh.crop(box)
@@ -163,7 +216,9 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
         raise RuntimeError("Suliejus paviršius neliko (per mažai kamerų mato tą pačią vietą) – padidinkite atstumą")
     if len(mesh.triangles) > MAX_TRIANGLES:
         log("Supaprastinama: %d → %d trikampių" % (len(mesh.triangles), MAX_TRIANGLES))
+        stage("Supaprastinama")
         mesh = mesh.simplify_quadric_decimation(MAX_TRIANGLES)
+    stage("Įrašoma")
     mesh.compute_vertex_normals()
     V = np.asarray(mesh.vertices)
     F = np.asarray(mesh.triangles)
@@ -174,7 +229,7 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
     import trimesh
     tm = trimesh.Trimesh(V, F, vertex_colors=np.c_[C, np.full(len(C), 255, np.uint8)], process=False)
     tm.export(out_glb)
-    log("Sujungtas modelis: %d trikampių (naudota kamerų: %d iš %d)" % (len(F), used, len(cams)))
+    log("Sujungtas modelis: %d trikampių (naudota kamerų: %d iš %d, atminties daugiausia %.1f GB)" % (len(F), used, len(cams), max_rss_gb()))
     return {"triangles": int(len(F)), "voxel": voxel, "from_mesh": float(stats[1] / tot), "from_splats": float(stats[2] / tot)}
 
 
@@ -262,7 +317,8 @@ def main():
         out = os.path.join(a.out_dir, "fused.glb")
         status(state="fusing", step=0, steps=len(cams), message="Suliejama")
         res = fuse(cams, render, mesh, (lo, hi), out + ".tmp.glb", a.max_size, a.voxel, log=lambda m: print(m, flush=True),
-                   progress=lambda i, n, el: (i % 10 == 0 or i == n) and status(step=i, steps=n, eta=round(el / i * (n - i))))
+                   progress=lambda i, n, el: (i % 10 == 0 or i == n) and status(step=i, steps=n, eta=round(el / i * (n - i))),
+                   stage=lambda m: (print(m, flush=True), status(state="finishing", message=m)))
         os.replace(out + ".tmp.glb", out)
         coords = os.path.join(a.task_dir, "odm_georeferencing", "coords.txt")
         if os.path.isfile(coords):

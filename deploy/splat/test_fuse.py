@@ -105,9 +105,22 @@ def test_region_and_voxel():
     pts = np.random.default_rng(0).uniform([-100, -100, 0], [100, 100, 20], (20000, 3))
     lo, hi = fuse.region(pts, np.array([[10.0, 0, 50], [30.0, 0, 50]]), radius=30)
     assert np.allclose(lo[:2], [-10, -30]) and np.allclose(hi[:2], [50, 30])
-    assert 0.02 <= fuse.auto_voxel(lo, hi) < 0.04            # pastatas su aplinka – ~2–3 cm
+    assert 0.04 <= fuse.auto_voxel(lo, hi) < 0.05             # 60×60 m, 8 mln. trikampių – ~4,7 cm
+    lo, hi = fuse.region(pts, np.zeros((1, 3)), radius=15)
+    assert 0.02 <= fuse.auto_voxel(lo, hi) < 0.03             # 30×30 m – ~2,4 cm
     lo, hi = fuse.region(pts, np.zeros((1, 3)))
-    assert fuse.auto_voxel(lo, hi) > 0.07                      # visas 200×200 m projektas – stambiau
+    assert fuse.auto_voxel(lo, hi) == 0.15                     # visas 200×200 m projektas – stambiau
+    # Mažai atminties – mažiau trikampių, stambesnis vokselis
+    assert fuse.tri_budget(64 * fuse.GB) == fuse.TRI_BUDGET
+    assert fuse.tri_budget(8 * fuse.GB) < 4_000_000
+    assert fuse.auto_voxel(lo, hi, fuse.tri_budget(4 * fuse.GB)) == 0.15
+
+
+def test_low_memory_gives_clear_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(fuse, "mem_available", lambda: 1_000_000)  # 1 MB – „neužteks“
+    with pytest.raises(RuntimeError, match="Per mažai atminties"):
+        fuse.fuse(_cams(), _fake_splats(_building(hole=False)), None, ((-12, -12, -1), (12, 12, 10)), str(tmp_path / "f.glb"),
+                  max_size=160, voxel=0.15, log=lambda m: None)
 
 
 def test_fuse_api(tmp_path, monkeypatch):
@@ -168,3 +181,24 @@ def test_no_surface_in_region_gives_clear_error(tmp_path):
     render = _fake_splats(_building(hole=False))
     with pytest.raises(RuntimeError, match="padidinkite"):
         fuse.fuse(_cams(), render, None, ((50, 50, 0), (60, 60, 5)), str(tmp_path / "f.glb"), max_size=160, voxel=0.15, log=lambda m: None)
+
+
+def test_fuse_killed_by_oom_message(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    import app as appmod
+    uid = "12345678-1234-1234-1234-123456789abc"
+    monkeypatch.setattr(appmod, "DATA", str(tmp_path))
+    (tmp_path / uid).mkdir()
+    (tmp_path / uid / "fuse_status.json").write_text('{"state": "finishing", "message": "Išgaunamas paviršius"}')
+
+    class Dead:
+        returncode = -9
+
+        def poll(self):
+            return -9
+
+    monkeypatch.setitem(appmod._proc, "p", Dead())
+    monkeypatch.setitem(appmod._proc, "uuid", uid)
+    monkeypatch.setitem(appmod._proc, "kind", "fuse")
+    st = appmod._fuse_status(uid)
+    assert st["state"] == "error" and "pritrūko atminties (etapas: Išgaunamas paviršius)" in st["message"]

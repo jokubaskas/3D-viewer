@@ -105,7 +105,7 @@ export function createOdmUI(app) {
     }
   }
   const splatRunning = (j) => j && ['preparing', 'training', 'exporting'].includes(j.state);
-  const fuseRunning = (f) => f && ['preparing', 'fusing'].includes(f.state);
+  const fuseRunning = (f) => f && ['preparing', 'fusing', 'finishing'].includes(f.state);
   const splatBusy = (j) => splatRunning(j) || fuseRunning(j?.fuse);
   // „Sujungtas modelis“: realistiško vaizdo spalvos ir užpildytos skylės + 3D modelio geometrija → vienas GLB
   function fuseRow(j) {
@@ -114,6 +114,7 @@ export function createOdmUI(app) {
     if (fuseRunning(f)) {
       const pct = f.steps ? Math.round((100 * (f.step || 0)) / f.steps) : 0;
       const eta = f.eta ? ` · ${t('liko ~{m} min.', { m: Math.max(1, Math.round(f.eta / 60)) })}` : '';
+      if (f.state === 'finishing') return `<div class="odm-splat small"><span>${t('Sujungtas modelis: {s}…', { s: esc(t(f.message || '')) })}</span><div class="progress"><div class="progress-bar" style="width:100%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
       return `<div class="odm-splat small"><span>${t('Sujungtas modelis: suliejama')} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
     }
     if (f.state === 'error') return `<div class="odm-splat small bad">${t('Sujungtas modelis nepavyko: {e}', { e: esc(f.message || '') })} <button class="btn btn-sm btn-ghost" data-pact="fuse">${t('Bandyti dar kartą')}</button></div>`;
@@ -131,7 +132,7 @@ export function createOdmUI(app) {
       alert(t('Realistiško vaizdo paslauga serveryje – senos versijos (be „Sujungto modelio“): po atnaujinimo ji nebuvo perkurta, greičiausiai nepavyko jos sukurti.') + '\n\n' + t('Aplanke deploy paleiskite: docker compose build splat – ir pažiūrėkite klaidą pabaigoje. Pavykus: docker compose up -d splat'));
       return;
     }
-    const r = prompt(t('Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 40 – kvadratas 80 × 80 m. Kuo mažesnė sritis, tuo smulkesnės detalės (iki 2 cm). 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.', { n: p.name }), '40');
+    const r = prompt(t('Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 20 – kvadratas 40 × 40 m. Kuo mažesnė sritis, tuo smulkesnės detalės: 15 m – ~2,5 cm, 20 m – ~3 cm, 40 m – ~6 cm. 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.', { n: p.name }), '20');
     if (r === null) return;
     const radius = Number(String(r).replace(',', '.'));
     if (!Number.isFinite(radius) || radius < 0) return alert(t('Neteisingas atstumas'));
