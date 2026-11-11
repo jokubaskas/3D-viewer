@@ -19,6 +19,8 @@ import numpy as np
 
 TOL = 0.5          # m – kiek arčiau turi būti splatas, kad būtų laikomas modelyje trūkstama dalimi (+ 2 % atstumo)
 MAX_TRIANGLES = 6_000_000  # naršyklei (~150 MB GLB)
+STRIDE = 4         # Open3D DepthTouch žingsnis (pikseliais)
+MIN_TOUCH = 16     # mažiausiai tiek tinkamų pikselių (kas STRIDE-ojo), kad kadras būtų suliejamas
 ALPHA_MIN = 0.9    # splato nepermatomumas, nuo kurio jo gylis patikimas
 
 
@@ -114,6 +116,7 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
                                         attr_channels=(1, 1, 3), voxel_size=voxel, block_resolution=16,
                                         block_count=BLOCKS, device=dev)
     stats = np.zeros(3, np.int64)
+    used = 0
     t0 = time.time()
     for i, cam in enumerate(cams):
         s = min(1.0, max_size / max(cam["width"], cam["height"]))
@@ -124,18 +127,27 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
         rgb, d_s, a = render_fn(cam, W, H, K)
         d_m = mesh_depth(scene, cam, W, H, K) if scene is not None else np.full((H, W), np.inf, np.float32)
         d, src = fuse_depth(d_m, d_s, a)
+        d[~np.isfinite(d)] = 0
         out = (d > 0) & ~in_region(d, cam, K, lo - margin, hi + margin)
         d[out], src[out] = 0, 0
         stats += np.bincount(src.ravel(), minlength=3)[:3]
-        if not (d > 0).any():
-            continue
-        dep = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(d, np.float32)))
-        col = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(np.clip(rgb, 0, 1), np.float32)))
-        Kt, E = T.Tensor(K), T.Tensor(np.ascontiguousarray(cam["viewmat"], np.float64))
-        blocks = vbg.compute_unique_block_coordinates(dep, Kt, E, 1.0, 1e6, trunc)
-        vbg.integrate(blocks, dep, col, Kt, Kt, E, 1.0, 1e6, trunc)
+        # Open3D blokus parenka tik iš kas STRIDE-ojo pikselio ir be jų nutraukia darbą – kameros, kurios sritį mato
+        # tik keliais pikseliais (kraštu), praleidžiamos
+        if (d[::STRIDE, ::STRIDE] > 0).sum() >= MIN_TOUCH:
+            dep = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(d, np.float32)))
+            col = o3d.t.geometry.Image(T.Tensor(np.ascontiguousarray(np.clip(rgb, 0, 1), np.float32)))
+            Kt, E = T.Tensor(K), T.Tensor(np.ascontiguousarray(cam["viewmat"], np.float64))
+            try:
+                blocks = vbg.compute_unique_block_coordinates(dep, Kt, E, 1.0, 1e6, trunc)
+                vbg.integrate(blocks, dep, col, Kt, Kt, E, 1.0, 1e6, trunc)
+                used += 1
+            except RuntimeError as e:
+                if "No block is touched" not in str(e):
+                    raise
         if progress:
             progress(i + 1, len(cams), time.time() - t0)
+    if not used:
+        raise RuntimeError("Nė viena kamera nemato paviršiaus pasirinktoje srityje – padidinkite atstumą arba rinkitės visą projektą")
     tot = max(1, stats[1] + stats[2])
     log("Suliejimas: modelis %.0f %%, splatai %.0f %% (vokselis %.1f cm)" % (100 * stats[1] / tot, 100 * stats[2] / tot, voxel * 100))
     mesh = vbg.extract_triangle_mesh(weight_threshold=min_views).to_legacy()
@@ -147,6 +159,8 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
         cl, n = np.asarray(cl), np.asarray(n)
         mesh.remove_triangles_by_mask(n[cl] < max(50, 0.002 * len(cl)))
         mesh.remove_unreferenced_vertices()
+    if not len(mesh.triangles):
+        raise RuntimeError("Suliejus paviršius neliko (per mažai kamerų mato tą pačią vietą) – padidinkite atstumą")
     if len(mesh.triangles) > MAX_TRIANGLES:
         log("Supaprastinama: %d → %d trikampių" % (len(mesh.triangles), MAX_TRIANGLES))
         mesh = mesh.simplify_quadric_decimation(MAX_TRIANGLES)
@@ -160,7 +174,7 @@ def fuse(cams, render_fn, mesh_path, bounds, out_glb, max_size=1024, voxel=None,
     import trimesh
     tm = trimesh.Trimesh(V, F, vertex_colors=np.c_[C, np.full(len(C), 255, np.uint8)], process=False)
     tm.export(out_glb)
-    log("Sujungtas modelis: %d trikampių" % len(F))
+    log("Sujungtas modelis: %d trikampių (naudota kamerų: %d iš %d)" % (len(F), used, len(cams)))
     return {"triangles": int(len(F)), "voxel": voxel, "from_mesh": float(stats[1] / tot), "from_splats": float(stats[2] / tot)}
 
 
