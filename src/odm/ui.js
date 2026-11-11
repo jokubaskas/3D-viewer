@@ -2,7 +2,7 @@
 import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
-import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, PRESETS, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
+import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, estimateEngineRamGB, PRESETS, presetLabel, isEnginePreset, engineBase, isEngineUrl, engineOptions, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS } from './nodeodm.js';
 import { splatBase } from '../splat/ui.js';
 import { PhotoPreview } from './preview.js';
@@ -37,6 +37,7 @@ const uuidv4 = () => {
 
 /** Vietinis Atea serveris (deploy/): „./odm/“ arba http://localhost:PRIEVADAS/odm/. */
 const isLocalOdm = (u) => /^(\.\/odm\/?|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/odm\/?)$/i.test(String(u || '').trim());
+const isLocalEngine = (u) => /^(\.\/engine\/?|https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/engine\/?)$/i.test(String(u || '').trim());
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const nf = (v, d = 0) => (v == null || !isFinite(v) ? '—' : new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v));
@@ -63,7 +64,9 @@ export function createOdmUI(app) {
   let projects = ls.get(LS_PROJECTS, []);
   let client = new NodeODM(server.url, server.token);
   /** Projekto serveris: vietiniam serveriui – dabartinis adresas (prievadas galėjo pasikeisti). */
-  const serverFor = (p) => (isLocalOdm(p.server) ? server.url : p.server);
+  // Vietinis serveris – pagal dabartinį adresą (pvz. pasikeitus prievadui); 3D projektai – Atea variklis tame pačiame serveryje
+  const serverFor = (p) => (isLocalOdm(p.server) ? server.url : isLocalEngine(p.server) ? engineBase(server.url) || p.server : p.server);
+  const isEngineProject = (p) => isEngineUrl(p.server);
   // Realistiškas vaizdas (Gaussian Splatting, deploy/splat – tik su NVIDIA GPU): paslaugos būsena ir mokymai
   const splat = { available: false, gpu: null, jobs: {}, error: null };
   async function splatApi(path, body) {
@@ -81,17 +84,10 @@ export function createOdmUI(app) {
       splat.available = true;
       splat.error = null;
       splat.gpu = h.gpu;
-      splat.fuse = !!h.fuse; // senesnė paslauga (neperkurta po atnaujinimo) „Sujungto modelio“ neturi
       const prev = splat.jobs;
       splat.jobs = Object.fromEntries((await splatApi('jobs')).map((j) => [j.uuid, j]));
       for (const [uuid, j] of Object.entries(splat.jobs)) {
         const name = projects.find((p) => p.uuid === uuid)?.name || uuid.slice(0, 8);
-        if (fuseRunning(prev[uuid]?.fuse) && !fuseRunning(j.fuse)) {
-          if (j.fuse?.state === 'done') {
-            app.toast(t('Sujungtas modelis „{n}“ paruoštas!', { n: name }), 'info', 8000);
-            notify(t('Sujungtas modelis „{n}“ paruoštas', { n: name }));
-          } else if (j.fuse?.state === 'error') app.toast(t('Sujungtas modelis „{n}“ nepavyko: {e}', { n: name, e: j.fuse.message || '' }), 'error', 10000);
-        }
         if (!splatRunning(prev[uuid])) continue;
         if (j.state === 'done') {
           app.toast(t('Realistiškas vaizdas „{n}“ paruoštas!', { n: name }), 'info', 8000);
@@ -104,79 +100,24 @@ export function createOdmUI(app) {
       splat.jobs = {};
     }
   }
-  const splatRunning = (j) => j && ['preparing', 'training', 'exporting'].includes(j.state);
-  const fuseRunning = (f) => f && ['preparing', 'fusing', 'finishing'].includes(f.state);
-  const splatBusy = (j) => splatRunning(j) || fuseRunning(j?.fuse);
-  // „Sujungtas modelis“: realistiško vaizdo spalvos ir užpildytos skylės + 3D modelio geometrija → vienas GLB
-  function fuseRow(j) {
-    const f = j?.fuse;
-    if (!f) return '';
-    if (fuseRunning(f)) {
-      const pct = f.steps ? Math.round((100 * (f.step || 0)) / f.steps) : 0;
-      const eta = f.eta ? ` · ${t('liko ~{m} min.', { m: Math.max(1, Math.round(f.eta / 60)) })}` : '';
-      if (f.state === 'finishing') {
-        const part = f.parts > 1 ? ` ${f.part} / ${f.parts}` : '';
-        const w = f.parts > 1 ? Math.round((100 * (f.part - 1)) / f.parts) : 100;
-        return `<div class="odm-splat small"><span>${t('Sujungtas modelis: {s}…', { s: esc(t(f.message || '')) })}${part}</span><div class="progress"><div class="progress-bar" style="width:${w}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
-      }
-      return `<div class="odm-splat small"><span>${t('Sujungtas modelis: suliejama')} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
-    }
-    if (f.state === 'error') return `<div class="odm-splat small bad">${t('Sujungtas modelis nepavyko: {e}', { e: esc(f.message || '') })} <button class="btn btn-sm btn-ghost" data-pact="fuse">${t('Bandyti dar kartą')}</button></div>`;
-    if (f.has_result) return `<div class="odm-splat small muted">${t('Sujungtas modelis paruoštas')}${f.triangles ? ` (${t('{n} trikampių', { n: nf(f.triangles, 0) })}, ${t('užpildyta iš realistiško vaizdo {p} %', { p: nf(100 * (f.from_splats || 0), 0) })})` : ''} · <button class="btn btn-sm btn-ghost" data-pact="fuse">${t('Sulieti iš naujo')}</button><button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Mokyti iš naujo')}</button></div>`;
-    return '';
-  }
-  function fuseButton(p) {
-    const j = splat.jobs[p.uuid];
-    if (!splat.available || !j?.has_result || splatBusy(j)) return '';
-    const has = j.fuse?.has_result;
-    return `<button class="btn btn-sm ${has ? 'btn-outline' : 'btn-ghost'}" data-pact="${has ? 'fused' : 'fuse'}" title="${esc(t(has ? 'Atidaryti sujungtą modelį: 3D modelio geometrija su realistiško vaizdo spalvomis ir užpildytomis skylėmis' : 'Sulieti realistišką vaizdą ir 3D modelį į vieną tikrovišką 3D modelį (GLB): skylės užpildomos, atspindžiai stikluose ignoruojami'))}">${icon('cube')}${t('Sujungtas modelis')}</button>`;
-  }
-  async function fuseStart(p) {
-    if (!splat.fuse) {
-      alert(t('Realistiško vaizdo paslauga serveryje – senos versijos (be „Sujungto modelio“): po atnaujinimo ji nebuvo perkurta, greičiausiai nepavyko jos sukurti.') + '\n\n' + t('Aplanke deploy paleiskite: docker compose build splat – ir pažiūrėkite klaidą pabaigoje. Pavykus: docker compose up -d splat'));
-      return;
-    }
-    const r = prompt(t('Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 20 – kvadratas 40 × 40 m. Kuo mažesnė sritis, tuo smulkesnės detalės: 20 m – ~2 cm, 40 m – ~4,5 cm, 60 m – ~7 cm. 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.', { n: p.name }), '20');
-    if (r === null) return;
-    const radius = Number(String(r).replace(',', '.'));
-    if (!Number.isFinite(radius) || radius < 0) return alert(t('Neteisingas atstumas'));
-    splat.jobs[p.uuid] = await splatApi('fuse', { uuid: p.uuid, radius });
-    app.toast(t('Suliejimas pradėtas'), 'info');
-  }
+  const splatRunning = (j) => j && ['queued', 'preparing', 'training', 'exporting'].includes(j.state);
+  const splatBusy = (j) => splatRunning(j);
   function splatRow(p) {
     if (!splat.available || p.statusCode !== STATUS.COMPLETED || p.preset === 'orthoOnly') return '';
     const j = splat.jobs[p.uuid];
     if (splatRunning(j)) {
       const pct = j.steps ? Math.round((100 * (j.step || 0)) / j.steps) : 0;
       const eta = j.eta ? ` · ${t('liko ~{m} min.', { m: Math.max(1, Math.round(j.eta / 60)) })}` : '';
-      return `<div class="odm-splat small"><span>${t('Realistiškas vaizdas: {s}', { s: esc(t(j.state === 'training' ? 'mokoma' : j.state === 'exporting' ? 'įrašoma' : 'ruošiama')) })} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
+      return `<div class="odm-splat small"><span>${t('Realistiškas vaizdas: {s}', { s: esc(t(j.state === 'training' ? 'mokoma' : j.state === 'exporting' ? 'įrašoma' : j.state === 'queued' ? 'eilėje' : 'ruošiama')) })} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
     }
     if (j?.state === 'error') return `<div class="odm-splat small bad">${t('Realistiškas vaizdas nepavyko: {e}', { e: esc(j.message || '') })} <button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Bandyti dar kartą')}</button></div>`;
-    if (j?.has_result && j.fuse && (fuseRunning(j.fuse) || j.fuse.state === 'error' || j.fuse.has_result)) return fuseRow(j);
-    if (j?.has_result) return `<div class="odm-splat small muted">${t('Realistiškas vaizdas paruoštas')}${j.splats ? ` (${t('{n} splatų', { n: nf(j.splats, 0) })})` : ''} · <button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Mokyti iš naujo')}</button></div>`;
+    if (j?.has_result) return `<div class="odm-splat small muted">${t('Realistiškas vaizdas paruoštas – rodomas kartu su 3D modeliu')}${j.splats ? ` (${t('{n} splatų', { n: nf(j.splats, 0) })})` : ''}</div>`;
     return '';
   }
-  function splatButton(p) {
-    if (p.preset === 'orthoOnly' || splatBusy(splat.jobs[p.uuid])) return '';
-    // Paslauga nepasiekiama – mygtukas vis tiek rodomas, paspaudus paaiškinama priežastis
-    if (!splat.available) return `<button class="btn btn-sm btn-ghost" data-pact="splat-why" title="${esc(t('Realistiško vaizdo paslauga nepasiekiama'))}" style="opacity:.6">${icon('magic')}${t('Realistiškas vaizdas')}</button>`;
-    const has = splat.jobs[p.uuid]?.has_result;
-    return `<button class="btn btn-sm ${has ? 'btn-outline' : 'btn-ghost'}" data-pact="${has ? 'splat' : 'splat-train'}" title="${esc(t(has ? 'Atidaryti realistišką vaizdą (Gaussian Splatting)' : 'Apmokyti realistišką vaizdą (Gaussian Splatting): stiklas, atspindžiai ir medžiai – kaip nuotraukose'))}">${icon('magic')}${t('Realistiškas vaizdas')}</button>`;
-  }
   async function splatTrain(p) {
-    const busy = serverTasks.some((x) => x.status?.code === STATUS.RUNNING);
-    const msg = t('Apmokyti realistišką vaizdą projektui „{n}“? Naudojamos jau serveryje esančios nuotraukos ir ODM skaičiavimai; užtrunka apie 30–90 min., vaizdo plokštė tuo metu užimta.', { n: p.name })
-      + (busy ? '\n\n' + t('Dėmesio: šiuo metu apdorojamas kitas ODM projektas – abu kartu gali pritrūkti vaizdo plokštės atminties.') : '');
-    if (!confirm(msg)) return;
+    if (!confirm(t('Apmokyti realistišką vaizdą projektui „{n}“ dar kartą? Užtrunka apie 30–90 min., vaizdo plokštė tuo metu užimta.', { n: p.name }))) return;
     splat.jobs[p.uuid] = await splatApi('train', { uuid: p.uuid });
     app.toast(t('Realistiško vaizdo mokymas pradėtas'), 'info');
-  }
-  async function splatOpen(p) {
-    const base = splatBase(server.url);
-    const files = `${base}files/${p.uuid}/`;
-    const meta = await fetch(files + 'meta.json', { credentials: 'same-origin', cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const safe = p.name.replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 60) || 'projektas';
-    await app.openSplat?.({ url: files + 'scene.spz', name: p.name, meta, downloads: [{ href: files + 'scene.ply', name: `${safe}_splat.ply`, label: 'Atsisiųsti PLY' }] });
   }
   let analysis = null;
   let serverInfo = null;
@@ -242,16 +183,11 @@ export function createOdmUI(app) {
               <div class="row" style="align-items:flex-start;flex-direction:column;gap:6px">
                 <span>Kokybė</span>
                 <div class="seg" id="odm-preset" style="width:100%">
-                  ${Object.entries(PRESETS).map(([k, p]) => `<button data-preset="${k}" class="${k === 'standard' ? 'active' : ''}">${p.label}</button>`).join('')}
+                  ${Object.entries(PRESETS).map(([k, p]) => `<button data-preset="${k}" class="${k === 'high' ? 'active' : ''}">${p.label}</button>`).join('')}
                 </div>
-                <span class="muted small" id="odm-preset-desc">${PRESETS.standard.desc}</span>
+                <span class="muted small" id="odm-preset-desc">${PRESETS.high.desc}</span>
               </div>
-              <label class="row check" id="odm-mvsmesh-row" title="OpenMVS: tinklas pagal tai, iš kurių nuotraukų matytas kiekvienas taškas, ir patikslintas pagal pačias nuotraukas. Nepavykus – automatiškai įprastas (Poisson)."><input type="checkbox" id="odm-mvsmesh" /> Tikslus 3D tinklas (OpenMVS) – aštresnės briaunos, ilgiau</label>
-              <label class="row check"><input type="checkbox" id="odm-dsm" checked /> Paviršiaus modelis (DSM)</label>
-              <label class="row check"><input type="checkbox" id="odm-dtm" checked /> Reljefo modelis (DTM, be augmenijos)</label>
-              <label class="row check"><input type="checkbox" id="odm-ortho" checked /> Ortofotonuotrauka</label>
               <label class="row check"><input type="checkbox" id="odm-onlyfix" /> Naudoti tik RTK FIX nuotraukas</label>
-              <label class="row check" id="odm-split-row"><input type="checkbox" id="odm-split" /> Skaidyti į dalis (mažiau RAM; 3D tekstūruotas modelis nebus sujungtas)</label>
             </div>
             <div>
               <label class="row">Nuotraukų aukščiai
@@ -332,6 +268,13 @@ export function createOdmUI(app) {
       $('#odm-server-info').innerHTML = `NodeODM ${esc(i.version)} · ODM ${esc(i.engineVersion || '')}<br>
         ${t('CPU branduolių: {c} · Laisva RAM: {f} / {tot}', { c: esc(i.cpuCores), f: i.availableMemory ? fmtBytes(i.availableMemory) : '—', tot: i.totalMemory ? fmtBytes(i.totalMemory) : '—' })}<br>
         ${t('Eilėje užduočių: {n}', { n: esc(i.taskQueueCount) })}${i.maxImages ? ` · ${t('Maks. nuotraukų: {n}', { n: esc(i.maxImages) })}` : ''}`;
+      // Atea variklis (3D režimai) – tame pačiame serveryje, tik su NVIDIA GPU
+      const eb = engineBase(server.url);
+      if (eb)
+        new NodeODM(eb, server.token)
+          .info()
+          .then((e) => $('#odm-server-info').insertAdjacentHTML('beforeend', `<br><span class="ok">● ${esc(t('3D variklis: {g}', { g: e.gpu || t('be GPU') }))}</span> · ${esc(t('eilėje: {n}', { n: e.taskQueueCount }))}`))
+          .catch(() => $('#odm-server-info').insertAdjacentHTML('beforeend', `<br><span class="bad">● ${esc(t('3D variklis nepasiekiamas – „Greitas“ ir „Aukšta kokybė“ veikia tik kompiuteryje su NVIDIA vaizdo plokšte'))}</span>`));
       return i;
     } catch (e) {
       st.textContent = /rakt|token/i.test(e.message) ? t('● Raktas netinka') : /paleidžiamas|starting/.test(e.message) ? t('● Serveris paleidžiamas') : t('● Nepavyko prisijungti');
@@ -384,10 +327,8 @@ export function createOdmUI(app) {
   function reanalyze() {
     if (!metas.length) return;
     analysis = analyzePhotos(metas, { onlyFix: $('#odm-onlyfix').checked });
-    if (!presetTouched) setPreset(analysis.oblique / Math.max(1, analysis.used.length) >= 0.2 ? 'objects3d' : 'standard');
     renderAnalysis();
     $('#odm-step-settings').hidden = false;
-    $('#odm-split-row').hidden = analysis.used.length < 500;
     updateHeightPreview();
   }
   $('#odm-onlyfix').addEventListener('change', reanalyze);
@@ -499,48 +440,37 @@ export function createOdmUI(app) {
     }
   });
 
-  let preset = 'standard';
-  let presetTouched = false; // vartotojas pats pasirinko – automatiškai nebekeičiama
+  let preset = 'high';
   function setPreset(k) {
     preset = k;
-    // „Tik ortofoto“ – ortofoto privalomas
-    $('#odm-ortho').disabled = k === 'orthoOnly';
-    if (k === 'orthoOnly') $('#odm-ortho').checked = true;
     page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x.dataset.preset === k));
     $('#odm-preset-desc').textContent = PRESETS[preset].desc;
-    // Tikslus tinklas – numatytai „3D objektams“; „Tik ortofoto“ 3D modelio nekuria
-    $('#odm-mvsmesh-row').hidden = k === 'orthoOnly';
-    $('#odm-mvsmesh').checked = k === 'objects3d' || k === 'max';
     updateStartSummary();
   }
   page.querySelectorAll('#odm-preset button').forEach((b) =>
-    b.addEventListener('click', () => {
-      presetTouched = true;
-      setPreset(b.dataset.preset);
-    }),
+    b.addEventListener('click', () => setPreset(b.dataset.preset)),
   );
 
   /** Apytikslis RAM poreikis dabartiniams nustatymams ir pasirinktoms nuotraukoms. */
   function ramNeed(photos) {
-    const options = buildOdmOptions(preset, { split: $('#odm-split').checked });
-    return estimateRamGB(options, photos.length, analysis?.megapixels || 20);
+    if (isEnginePreset(preset)) return estimateEngineRamGB(preset, photos.length, analysis?.megapixels || 20);
+    return estimateRamGB(buildOdmOptions(preset, {}), photos.length, analysis?.megapixels || 20);
   }
-  $('#odm-split').addEventListener('change', () => updateStartSummary());
 
   function updateStartSummary() {
     if (!analysis) return;
     const photos = preview?.hasSelection ? preview.selectedPhotos() : analysis.used;
     const n = photos.length;
     const bytes = photos.reduce((s, m) => s + m.size, 0);
-    // Labai apytikslis laikas (8 branduolių serveris, standartinė kokybė): ~6–10 s nuotraukai
-    const perImg = { orthoOnly: 2, fast: 4, standard: 8, high: 18, objects3d: 30, max: 60 }[preset];
+    // Labai apytikslis laikas nuotraukai (Atea variklis su GPU; „Tik ortofoto“ – ODM)
+    const perImg = { orthoOnly: 2, fast: 3, high: 12 }[preset] || 8;
     const need = ramNeed(photos);
     const have = serverInfo?.totalMemory ? serverInfo.totalMemory / 2 ** 30 : null;
     const ram = have
       ? `<br><span class="${need > have * 1.5 ? 'bad' : need > have ? 'warn' : ''}">${esc(t('Apytikslis RAM poreikis: ~{n} GB (serveriui skirta {m} GB).', { n: nf(need, 0), m: nf(have, 1) }))}${need > have ? ` ${esc(t('Gali pritrūkti atminties: rinkitės žemesnę kokybę, mažesnę sritį ar skaidymą į dalis, arba skirkite Docker daugiau RAM (%UserProfile%\\.wslconfig → memory=…, po to wsl --shutdown). Pritrūkus programa pasiūlys pakartoti su mažesne kokybe.'))}` : ''}</span>`
       : `<br>${esc(t('Apytikslis RAM poreikis: ~{n} GB.', { n: nf(need, 0) }))}`;
     const area = preview?.hasSelection ? ` · ${t('sritis {a} ha', { a: nf(preview.areaM2 / 1e4, 2) })}` : '';
-    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })}${n < analysis.used.length ? ` ${t('iš {n}', { n: nf(analysis.used.length) })}` : ''} (${fmtBytes(bytes)})${area} · ${t(PRESETS[preset].label)} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}${ram}`;
+    $('#odm-start-summary').innerHTML = `${t('{n} nuotr.', { n: nf(n) })}${n < analysis.used.length ? ` ${t('iš {n}', { n: nf(analysis.used.length) })}` : ''} (${fmtBytes(bytes)})${area} · ${t(presetLabel(preset))} · ${t('aukščiai:')} ${esc(t(heightSystem()))}<br>${t('Apytikslė trukmė: {a} – {b} (priklauso nuo serverio)', { a: fmtDur(n * perImg * 1000), b: fmtDur(n * perImg * 2500) })}${ram}`;
   }
 
   // ------------------------------------------------------------------ Paleidimas
@@ -552,8 +482,13 @@ export function createOdmUI(app) {
     const presetUuid = boundary ? uuidv4() : undefined;
     if (photos.length < 5) return app.toast('Pasirinktą sritį dengia per mažai nuotraukų – padidinkite sritį', 'error');
     if (uploading) return app.toast('Jau vyksta įkėlimas', 'error');
-    const info = await checkServer(true);
-    if (!info) return app.toast('Apdorojimo serveris nepasiekiamas', 'error');
+    const engine = isEnginePreset(preset);
+    // 3D režimai – Atea variklis (GPU) tame pačiame serveryje; „Tik ortofoto“ – ODM
+    const eBase = engine ? engineBase(server.url) : null;
+    if (engine && !eBase) return app.toast(t('3D režimams reikia šios programos serverio (adresas …/odm/). Kitam NodeODM serveriui galima tik „Tik ortofoto“.'), 'error', 9000);
+    const c = engine ? new NodeODM(eBase, server.token) : client;
+    const info = engine ? await c.info().catch(() => null) : await checkServer(true);
+    if (!info) return app.toast(engine ? t('3D variklis nepasiekiamas – jis veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps engine ir docker compose logs --tail 50 engine') : t('Apdorojimo serveris nepasiekiamas'), 'error', 10000);
     if (info.maxImages && photos.length > info.maxImages) return app.toast(t('Serveris priima iki {n} nuotraukų', { n: info.maxImages }), 'error');
     const need = ramNeed(photos);
     const have = info.totalMemory ? info.totalMemory / 2 ** 30 : null;
@@ -565,21 +500,18 @@ export function createOdmUI(app) {
     const name = $('#odm-name').value.trim() || 'Projektas';
     const entries = uniqueUploadNames(photos);
     const geoTxt = buildGeoTxt(entries, $('#odm-hmode').value, geoidFn());
-    const options = buildOdmOptions(preset, {
-      dsm: $('#odm-dsm').checked, dtm: $('#odm-dtm').checked, ortho: $('#odm-ortho').checked, split: $('#odm-split').checked,
-      boundary: boundary ? boundaryPath(presetUuid) : null,
-      photos: photos.length,
-      mvsMesh: $('#odm-mvsmesh').checked,
-      rollingShutter: !!analysis?.rollingShutter,
-    });
+    // Variklis sritį ir aukščius ima iš kartu įkeliamų failų (boundary.geojson, geo.txt), kontrolinius taškus – iš gcp_list.txt
+    const options = engine
+      ? engineOptions(preset)
+      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
     if (boundary) items.push({ name: 'boundary.geojson', file: new Blob([JSON.stringify(boundary)], { type: 'application/geo+json' }) });
     for (const f of extraFiles) items.push({ name: f.name, file: f });
 
     const project = {
-      uuid: null, name, server: server.url, created: Date.now(), photos: entries.length,
-      rtkFix: photos.filter((m) => m.rtkFlag === 50).length, preset, ortho: $('#odm-ortho').checked, area: boundary ? Math.round(preview.areaM2) : null, heightSystem: heightSystem(), status: 'uploading', progress: 0,
+      uuid: null, name, server: engine ? eBase : server.url, created: Date.now(), photos: entries.length,
+      rtkFix: photos.filter((m) => m.rtkFlag === 50).length, preset, ortho: true, area: boundary ? Math.round(preview.areaM2) : null, heightSystem: heightSystem(), status: 'uploading', progress: 0,
     };
     const ctrl = new AbortController();
     uploading = { abort: () => ctrl.abort(), project };
@@ -591,17 +523,17 @@ export function createOdmUI(app) {
       <div class="progress big"><div class="progress-bar" id="odm-up-bar"></div></div>
       <div class="pane-actions" style="margin-top:10px"><button class="btn btn-sm btn-ghost danger" data-act="abort-upload">Nutraukti įkėlimą</button></div>`;
     try {
-      project.uuid = await client.init(name, options, ODM_OUTPUTS, presetUuid);
+      project.uuid = await c.init(name, options, engine ? null : ODM_OUTPUTS, presetUuid);
       saveProject(project);
       const t0 = performance.now();
-      await client.upload(project.uuid, items, (sent, total, done) => {
+      await c.upload(project.uuid, items, (sent, total, done) => {
         const p = sent / total;
         const el = (performance.now() - t0) / 1000;
         const speed = sent / Math.max(el, 0.1);
         $('#odm-up-bar').style.width = `${(p * 100).toFixed(1)}%`;
         $('#odm-up-text').textContent = `${nf(p * 100, 1)} % · ${fmtBytes(sent)} / ${fmtBytes(total)} · ${nf(speed / 1e6, 1)} MB/s · ${t('liko ~{t}', { t: fmtDur(((total - sent) / Math.max(speed, 1)) * 1000) })} · ${t('{a}/{b} failų', { a: done, b: items.length })}`;
       }, { signal: ctrl.signal });
-      await client.commit(project.uuid);
+      await c.commit(project.uuid);
       project.status = 'queued';
       saveProject(project);
       app.toast('Nuotraukos įkeltos – apdorojimas pradėtas. Galite uždaryti šį langą.');
@@ -611,7 +543,7 @@ export function createOdmUI(app) {
     } catch (e) {
       if (e.name === 'AbortError') app.toast('Įkėlimas nutrauktas', 'error');
       else app.toast(t('Klaida: {e}', { e: e.message }), 'error', 8000);
-      if (project.uuid) client.remove(project.uuid).catch(() => {});
+      if (project.uuid) c.remove(project.uuid).catch(() => {});
       removeProject(project.uuid);
       run.innerHTML = `<p class="bad">${t('Nepavyko: {e}', { e: esc(e.message) })}</p>`;
     } finally {
@@ -665,15 +597,21 @@ export function createOdmUI(app) {
   /** Kodėl užduotis laukia: kas dabar vykdoma serveryje. */
   function queueWhy(p) {
     if (serverError) return t('Serverio eilės nepavyko patikrinti.');
-    const running = serverTasks.filter((x) => x.status?.code === STATUS.RUNNING);
-    const queued = serverTasks.filter((x) => x.status?.code === STATUS.QUEUED).sort((a, b) => (a.dateCreated || 0) - (b.dateCreated || 0));
+    // Atskiros eilės: Atea variklis (3D) ir ODM (tik ortofoto)
+    const engine = isEngineProject(p);
+    const same = serverTasks.filter((x) => (x.engine === 'atea') === engine);
+    const running = same.filter((x) => x.status?.code === STATUS.RUNNING);
+    const queued = same.filter((x) => x.status?.code === STATUS.QUEUED).sort((a, b) => (a.dateCreated || 0) - (b.dateCreated || 0));
     const pos = queued.findIndex((x) => x.uuid === p.uuid);
     if (running.length) {
       const r = running[0];
       const mine = projects.find((x) => x.uuid === r.uuid);
       return t('Laukia, kol baigsis: „{n}“ ({p} %){o}. Vieta eilėje: {k}.', { n: esc(mine?.name || r.name || r.uuid.slice(0, 8)), p: nf(r.progress, 0), o: mine ? '' : ` – ${t('šios užduoties nėra jūsų sąraše, žr. žemiau')}`, k: pos + 1 || '—' });
     }
-    if (serverTasks.length) return t('Serveris šiuo metu nieko neapdoroja, bet užduotis nepradedama – NodeODM greičiausiai užstrigo. Perkraukite jį: aplanke deploy paleiskite „docker compose restart nodeodm“ (užduotys neprarandamos).');
+    if (same.length)
+      return engine
+        ? t('3D variklis šiuo metu nieko neapdoroja, bet užduotis nepradedama. Perkraukite jį: aplanke deploy paleiskite „docker compose restart engine“ (užduotis tęsiama nuo paskutinio etapo).')
+        : t('Serveris šiuo metu nieko neapdoroja, bet užduotis nepradedama – NodeODM greičiausiai užstrigo. Perkraukite jį: aplanke deploy paleiskite „docker compose restart nodeodm“ (užduotys neprarandamos).');
     return '';
   }
 
@@ -699,7 +637,8 @@ export function createOdmUI(app) {
     // Serverio užduotis → projektų sąrašas (pvz. perkėlus serverį į kitą kompiuterį ar atidarius kitoje naršyklėje)
     const adopt = (x) => {
       const opt = (n) => (x.options || []).find((o) => o.name === n)?.value;
-      saveProject({ uuid: x.uuid, name: x.name || x.uuid.slice(0, 8), server: server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset: opt('fast-orthophoto') || opt('skip-3dmodel') ? 'orthoOnly' : '', ortho: !opt('skip-orthophoto'), status: 'server', statusCode: x.status.code, progress: x.progress });
+      const preset = x.engine === 'atea' ? (opt('quality') === 'fast' ? 'fast' : 'high') : opt('fast-orthophoto') || opt('skip-3dmodel') ? 'orthoOnly' : '';
+      saveProject({ uuid: x.uuid, name: x.name || x.uuid.slice(0, 8), server: x._server || server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset, ortho: !opt('skip-orthophoto'), status: 'server', statusCode: x.status.code, progress: x.progress });
     };
     box.querySelectorAll('[data-sact]').forEach((b) =>
       b.addEventListener('click', async () => {
@@ -713,9 +652,9 @@ export function createOdmUI(app) {
           if (b.dataset.sact === 'adopt') {
             adopt(x);
           } else if (b.dataset.sact === 'remove') {
-            if (confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: x.name || uuid }))) await client.remove(uuid);
+            if (confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: x.name || uuid }))) await new NodeODM(x._server || server.url, server.token).remove(uuid);
           } else if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: x.name || uuid }))) {
-            await client.cancel(uuid);
+            await new NodeODM(x._server || server.url, server.token).cancel(uuid);
           }
         } catch (e) {
           app.toast(e.message, 'error');
@@ -738,7 +677,7 @@ export function createOdmUI(app) {
         (p) => `
       <div class="odm-proj" data-uuid="${esc(p.uuid)}">
         <div class="odm-proj-head"><b>${esc(p.name)}</b>${statusChip(p)}</div>
-        <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(PRESETS[p.preset]?.label || ''))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
+        <div class="small muted">${new Date(p.created).toLocaleString(locale())} · ${t('{n} nuotr.', { n: nf(p.photos) })} · ${esc(t(presetLabel(p.preset)))}${p.processingTime ? ` · ${fmtDur(p.processingTime)}` : ''}</div>
         ${p.statusCode === STATUS.RUNNING ? `<div class="progress"><div class="progress-bar" style="width:${p.progress || 0}%"></div></div>` : ''}
         ${p.statusCode === STATUS.FAILED && (p.diag || p.error) ? `<div class="small bad">${esc(p.diag?.text || p.error)}</div>${p.diag?.line ? `<div class="small muted odm-errline" title="${esc(p.diag.line)}">${esc(p.diag.line)}</div>` : ''}` : ''}
         ${splatRow(p)}
@@ -751,9 +690,6 @@ export function createOdmUI(app) {
             <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>`}
             ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
             <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>
-            ${p.preset === 'orthoOnly' ? '' : `<button class="btn btn-sm btn-ghost" data-pact="remesh" title="Perdaryti tik 3D tinklą ir tekstūrą kitu būdu (Poisson ↔ OpenMVS) – nuotraukų sujungimas ir tankinimas nekartojami">${icon('refresh')}Kitas 3D tinklas</button>`}
-            ${splatButton(p)}
-            ${fuseButton(p)}
             <button class="btn btn-sm btn-ghost" data-pact="redo" title="Apdoroti visą projektą iš naujo su dabartiniais programos nustatymais (nuotraukos jau serveryje – iš naujo kelti nereikia)">${icon('play')}Perdaryti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
@@ -785,31 +721,14 @@ export function createOdmUI(app) {
         if (await app.openOrtho({ ...p, downloadUrl: c.downloadUrl(uuid), orthoUrl: `${c.filesUrl(uuid)}odm_orthophoto/odm_orthophoto.tif` })) close();
       } else if (act === 'cancel') {
         if (confirm(t('Atšaukti „{n}“ apdorojimą?', { n: p.name }))) await c.cancel(uuid);
-      } else if (act === 'remesh') {
-        await remesh(p, c);
       } else if (act === 'restart') {
         await openRestart(p, c);
       } else if (act === 'redo') {
         await redo(p, c);
-      } else if (act === 'splat') {
-        await splatOpen(p);
-        close();
-        return;
-      } else if (act === 'splat-why') {
-        await splatRefresh();
-        if (splat.available) renderProjects();
-        else alert(t('Realistiško vaizdo paslauga nepasiekiama: {e}', { e: splat.error || '—' }) + '\n\n' + t('Ji veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps splat ir docker compose logs --tail 50 splat'));
-        return;
-      } else if (act === 'fuse') {
-        await fuseStart(p);
-      } else if (act === 'fused') {
-        const files = `${splatBase(server.url)}files/${uuid}/`;
-        if (await app.openFused?.({ ...p, glbUrl: files + 'fused.glb', coordsUrl: files + 'coords.txt' })) close();
-        return;
       } else if (act === 'splat-train') {
         await splatTrain(p);
       } else if (act === 'splat-cancel') {
-        if (confirm(t(fuseRunning(splat.jobs[p.uuid]?.fuse) ? 'Atšaukti suliejimą?' : 'Atšaukti realistiško vaizdo mokymą?'))) await splatApi('cancel', { uuid: p.uuid });
+        if (confirm(t('Atšaukti realistiško vaizdo mokymą?'))) await splatApi('cancel', { uuid: p.uuid });
       } else if (act === 'delete') {
         if (!confirm(t('Pašalinti projektą „{n}“ ir jo rezultatus serveryje?', { n: p.name }))) return;
         try {
@@ -851,10 +770,15 @@ export function createOdmUI(app) {
    * ruošiniui: sritis, DSM / DTM, ortofoto, skaidymas, tikslus tinklas, rolling shutter ir kt.
    */
   async function redo(p, c) {
+    const engine = isEngineProject(p);
+    if (!engine && p.preset !== 'orthoOnly') {
+      alert(t('Šis projektas sukurtas senuoju ODM 3D režimu. 3D modelius dabar kuria Atea variklis – įkelkite nuotraukas iš naujo ir pasirinkite „Greitas“ arba „Aukšta kokybė“.'));
+      return;
+    }
     const info = await c.taskInfo(p.uuid);
-    const presetKeys = new Set(Object.values(PRESETS).flatMap((x) => Object.keys(x.options)));
+    const presetKeys = new Set(Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})));
     const keep = (info.options || []).filter((o) => !presetKeys.has(o.name) && !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
-    const choices = Object.entries(PRESETS).filter(([k]) => (p.preset === 'orthoOnly') === (k === 'orthoOnly'));
+    const choices = Object.entries(PRESETS).filter(([k]) => (engine ? isEnginePreset(k) : k === 'orthoOnly'));
     const preset = await new Promise((resolve) => {
       const d = document.createElement('dialog');
       d.className = 'dialog';
@@ -869,8 +793,8 @@ export function createOdmUI(app) {
       d.showModal();
     });
     if (!preset) return;
-    const opts = Object.entries(PRESETS[preset].options).map(([name, value]) => ({ name, value }));
-    await c.restart(p.uuid, keep.concat(opts, { name: 'rerun-all', value: true }));
+    const opts = engine ? engineOptions(preset) : Object.entries(PRESETS[preset].options).map(([name, value]) => ({ name, value }));
+    await c.restart(p.uuid, (engine ? [] : keep).concat(opts, { name: 'rerun-all', value: true }));
     Object.assign(p, { preset, statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: t('viskas iš naujo') });
     ls.set(LS_PROJECTS, projects);
     renderProjects();
@@ -878,41 +802,9 @@ export function createOdmUI(app) {
     app.toast(t('Projektas perdaromas iš naujo'), 'info');
   }
 
-  /** Baigtas projektas: 3D tinklas perdaromas kitu būdu (nuo tinklo etapo – sujungimas ir tankinimas nekartojami). */
-  async function remesh(p, c) {
-    if (!(await c.supports('mesh-method'))) {
-      app.toast(t('Šis apdorojimo serveris tikslaus 3D tinklo (OpenMVS) nepalaiko – atnaujinkite programą ir paleiskite deploy\\start-windows.bat.'), 'error', 9000);
-      return;
-    }
-    const info = await c.taskInfo(p.uuid);
-    const base = (info.options || []).filter((o) => !['rerun-from', 'rerun-all', 'rerun', 'mesh-method'].includes(o.name));
-    const now = (info.options || []).find((o) => o.name === 'mesh-method')?.value || 'poisson';
-    const label = (m) => t(m === 'openmvs' ? 'tikslus (OpenMVS)' : 'įprastas (Poisson)');
-    // Pasirinkimas mygtukais (ne „perjungimas“): ankstesnis OpenMVS bandymas galėjo baigtis Poisson atsarginiu keliu
-    const next = await new Promise((resolve) => {
-      const d = document.createElement('dialog');
-      d.className = 'dialog';
-      d.innerHTML = `<form method="dialog">
-        <h2>${esc(t('Kitas 3D tinklas'))}</h2>
-        <p class="small">${esc(t('„{n}“: kartojami tik etapai nuo 3D tinklo (tekstūra, ortofoto, DSM / DTM) – nuotraukų sujungimas ir tankinimas ne. Dabartinis 3D modelis bus pakeistas – jei norite palyginti, pirma jį atsisiųskite („Atsisiųsti“ → 3D modelis).', { n: p.name }))}</p>
-        <p class="small muted">${esc(t('Paskutinį kartą pasirinkta: {m}. Ar tikslus tinklas pavyko, matyti žurnale (eilutės „Atea:“).', { m: label(now) }))}</p>
-        <menu><button class="btn btn-ghost" value="">${esc(t('Atšaukti'))}</button><button class="btn btn-outline" value="poisson">${esc(label('poisson'))}</button><button class="btn btn-primary" value="openmvs">${esc(label('openmvs'))}</button></menu>
-      </form>`;
-      document.body.append(d);
-      d.addEventListener('close', () => (resolve(d.returnValue), d.remove()), { once: true });
-      d.showModal();
-    });
-    if (!next) return;
-    await c.restart(p.uuid, base.concat({ name: 'mesh-method', value: next }, { name: 'rerun-from', value: 'odm_meshing' }));
-    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: t('3D tinklas: {m}', { m: label(next) }) });
-    ls.set(LS_PROJECTS, projects);
-    renderProjects();
-    poll();
-    app.toast(t('3D tinklas perdaromas: {m}', { m: label(next) }), 'info');
-  }
-
   /** „Kartoti“: tais pačiais nustatymais, su mažesniu RAM poreikiu, be srities ribos arba viską iš naujo. */
   async function openRestart(p, c) {
+    if (isEngineProject(p)) return openRestartEngine(p, c);
     const info = await c.taskInfo(p.uuid);
     const none = { kind: 'other', stage: null, text: '' };
     const diag = info.status?.code === STATUS.CANCELED ? none : (await diagnose(c, p.uuid, info.options)) || p.diag || none;
@@ -960,6 +852,37 @@ export function createOdmUI(app) {
     Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: ch.id === 'low' ? low.changes.join('; ') : ch.id === 'nob' ? t('be srities ribos') : ch.id === 'all' ? t('viskas iš naujo') : ch.id === 'cpu' ? t('be GPU') : '' });
     ls.set(LS_PROJECTS, projects);
     renderProjects();
+    app.toast('Užduotis paleista iš naujo', 'info');
+  }
+
+  /** Atea variklio projektas: tęsiama nuo nutrūkusio etapo (atlikti etapai nekartojami) arba viskas iš naujo. */
+  async function openRestartEngine(p, c) {
+    const info = await c.taskInfo(p.uuid);
+    const none = { kind: 'other', stage: null, text: '' };
+    const diag = info.status?.code === STATUS.CANCELED ? none : (await diagnose(c, p.uuid, info.options)) || p.diag || none;
+    const base = (info.options || []).filter((o) => !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
+    const choices = [
+      { id: 'same', title: t('Tęsti nuo nutrūkusios vietos'), desc: t('Jau atlikti etapai nekartojami. Tinka, jei klaida buvo atsitiktinė (pvz. serveris buvo perkrautas).'), options: base },
+      { id: 'all', title: t('Viską iš naujo'), desc: t('Visi etapai kartojami nuo pradžių (ilgiausia).'), options: base.concat({ name: 'rerun-all', value: true }) },
+    ];
+    dlgRestart.querySelector('.rs-name').textContent = p.name;
+    dlgRestart.querySelector('.rs-diag').innerHTML = diag.text || info.status?.errorMessage
+      ? `<div class="odm-warn"><li class="error">${esc(diag.text || '')}${diag.line || info.status?.errorMessage ? `<br><code class="small">${esc(info.status?.errorMessage || diag.line)}</code>` : ''}</li></div>`
+      : '';
+    dlgRestart.querySelector('.rs-opts').innerHTML = choices
+      .map((ch) => `<label class="rs-opt"><input type="radio" name="rs" value="${ch.id}" ${ch.id === 'same' ? 'checked' : ''}><span><b>${esc(ch.title)}</b><span class="small muted">${esc(ch.desc)}</span></span></label>`)
+      .join('');
+    const res = await new Promise((resolve) => {
+      dlgRestart.addEventListener('close', () => resolve(dlgRestart.returnValue), { once: true });
+      dlgRestart.showModal();
+    });
+    if (res !== 'ok') return;
+    const ch = choices.find((x) => x.id === dlgRestart.querySelector('input[name=rs]:checked')?.value) || choices[0];
+    await c.restart(p.uuid, ch.options);
+    Object.assign(p, { statusCode: STATUS.QUEUED, error: null, diag: null, _polledFailed: false, progress: 0, retryNote: ch.id === 'all' ? t('viskas iš naujo') : '' });
+    ls.set(LS_PROJECTS, projects);
+    renderProjects();
+    poll();
     app.toast('Užduotis paleista iš naujo', 'info');
   }
 
@@ -1014,15 +937,23 @@ export function createOdmUI(app) {
     }
     // Visa serverio eilė (ir užduotys, kurių nėra šiame sąraše) – kad būtų aišku, kodėl užduotis laukia
     if (active || projects.some((p) => p.statusCode === STATUS.QUEUED) || !page.hidden) {
-      try {
-        const list = await client.list();
-        const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 100).map((x) => client.taskInfo(x.uuid).catch(() => null)));
-        serverTasks = infos.filter(Boolean);
-        serverError = null;
-        if (serverTasks.some((x) => x.status?.code === STATUS.RUNNING || x.status?.code === STATUS.QUEUED)) active = true;
-      } catch (e) {
-        serverError = e.message;
+      // ODM ir Atea variklis (tame pačiame serveryje); variklio gali nebūti (be NVIDIA GPU) – tada tik ODM
+      const sources = [[client, server.url, true]];
+      const eb = engineBase(server.url);
+      if (eb) sources.push([new NodeODM(eb, server.token), eb, false]);
+      const all = [];
+      for (const [c, base, main] of sources) {
+        try {
+          const list = await c.list();
+          const infos = await Promise.all((Array.isArray(list) ? list : []).slice(0, 100).map((x) => c.taskInfo(x.uuid).catch(() => null)));
+          all.push(...infos.filter(Boolean).map((x) => ({ ...x, _server: base })));
+          if (main) serverError = null;
+        } catch (e) {
+          if (main) serverError = e.message;
+        }
       }
+      serverTasks = all;
+      if (serverTasks.some((x) => x.status?.code === STATUS.RUNNING || x.status?.code === STATUS.QUEUED)) active = true;
     } else serverTasks = [];
     ls.set(LS_PROJECTS, projects);
     if (!page.hidden) renderProjects();

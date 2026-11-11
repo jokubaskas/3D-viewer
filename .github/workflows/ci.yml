@@ -39,13 +39,13 @@ jobs:
           python-version: "3.12"
       - run: pip install "fastapi==0.115.*" "uvicorn==0.32.*" httpx pytest
       - run: PORTAL_NO_BG=1 pytest -q deploy/portal
-      - name: Realistiško vaizdo (splat) duomenys, „Sujungtas modelis“ ir API (be GPU)
+      - name: Atea variklis – visa grandinė su sintetiniu rinkiniu, API, realistiškas vaizdas (be GPU)
         run: |
-          dpkg -s libegl1 libgl1 >/dev/null 2>&1 || (sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1)
-          pip install numpy scipy pillow open3d-cpu==0.20.0 trimesh
-          pytest -q deploy/splat
+          dpkg -s libegl1 libgl1 libusb-1.0-0 libsm6 libice6 >/dev/null 2>&1 || (sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libusb-1.0-0 libsm6 libice6)
+          pip install numpy scipy pillow open3d-cpu==0.20.0 trimesh pycolmap==4.2.1 pyproj "laspy[lazrs]" rasterio python-multipart
+          pytest -q deploy/engine
       - name: Python sintaksė (ai, odm, relay)
-        run: python -m py_compile deploy/ai/*.py deploy/odm/*.py deploy/splat/*.py
+        run: python -m py_compile deploy/ai/*.py deploy/odm/*.py deploy/engine/*.py
 
   odm:
     name: ODM pakeitimai
