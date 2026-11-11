@@ -1631,8 +1631,8 @@ export const EN = {
   'užpildyta iš realistiško vaizdo {p} %': '{p} % filled from the realistic view',
   'Sulieti iš naujo': 'Fuse again',
   'Sujungtas modelis': 'Merged model',
-  'Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 40 – kvadratas 80 × 80 m. Kuo mažesnė sritis, tuo smulkesnės detalės (iki 2 cm). 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.':
-    'Merged model for project “{n}”.\n\nWhich area should be fused? Enter the distance in metres from the project centre (the building in an orbit mission), e.g. 40 – an 80 × 80 m square. The smaller the area, the finer the detail (down to 2 cm). 0 – the whole project (coarser, up to 15 cm).\n\nTakes about 10–40 min; the graphics card is busy meanwhile.',
+  'Sujungtas modelis projektui „{n}“.\n\nKokią sritį sulieti? Įveskite atstumą metrais nuo projekto centro (orbitos misijoje – pastato), pvz. 20 – kvadratas 40 × 40 m. Kuo mažesnė sritis, tuo smulkesnės detalės: 15 m – ~2,5 cm, 20 m – ~3 cm, 40 m – ~6 cm. 0 – visas projektas (stambiau, iki 15 cm).\n\nUžtrunka apie 10–40 min., vaizdo plokštė tuo metu užimta.':
+    'Merged model for project “{n}”.\n\nWhich area should be fused? Enter the distance in metres from the project centre (the building in an orbit mission), e.g. 20 – a 40 × 40 m square. The smaller the area, the finer the detail: 15 m – ~2.5 cm, 20 m – ~3 cm, 40 m – ~6 cm. 0 – the whole project (coarser, up to 15 cm).\n\nTakes about 10–40 min; the graphics card is busy meanwhile.',
   'Neteisingas atstumas': 'Invalid distance',
   'Suliejimas pradėtas': 'Fusion started',
   'Atšaukti suliejimą?': 'Cancel the fusion?',
@@ -1641,4 +1641,9 @@ export const EN = {
   'Sulieti realistišką vaizdą ir 3D modelį į vieną tikrovišką 3D modelį (GLB): skylės užpildomos, atspindžiai stikluose ignoruojami': 'Fuse the realistic view and the 3D model into one realistic 3D model (GLB): holes are filled, reflections in glass are ignored',
   'Realistiško vaizdo paslauga serveryje – senos versijos (be „Sujungto modelio“): po atnaujinimo ji nebuvo perkurta, greičiausiai nepavyko jos sukurti.': 'The realistic view service on the server is an old version (without “Merged model”): it was not rebuilt after the update – most likely building it failed.',
   'Aplanke deploy paleiskite: docker compose build splat – ir pažiūrėkite klaidą pabaigoje. Pavykus: docker compose up -d splat': 'In the deploy folder run: docker compose build splat – and check the error at the end. If it succeeds: docker compose up -d splat',
+  'Sujungtas modelis: {s}…': 'Merged model: {s}…',
+  'Išgaunamas paviršius': 'Extracting the surface',
+  'Valomi smulkūs gabalai': 'Removing small pieces',
+  'Supaprastinama': 'Simplifying',
+  'Įrašoma': 'Saving',
 };

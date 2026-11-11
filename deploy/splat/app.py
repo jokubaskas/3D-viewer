@@ -53,10 +53,23 @@ def _fuse_status(uuid):
         st = json.load(open(os.path.join(DATA, uuid, "fuse_status.json")))
     except (OSError, ValueError):
         return None
-    running = _proc["uuid"] == uuid and _proc["kind"] == "fuse" and _proc["p"] is not None and _proc["p"].poll() is None
-    if st.get("state") in ("preparing", "fusing") and not running:
+    p = _proc["p"] if _proc["uuid"] == uuid and _proc["kind"] == "fuse" else None
+    running = p is not None and p.poll() is None
+    if st.get("state") in ("preparing", "fusing", "finishing") and not running:
         st["state"] = "error"
-        st["message"] = "Suliejimas nutrūko (paslauga perkrauta arba pritrūko atminties)"
+        code = p.returncode if p is not None else None
+        where = (" (etapas: %s)" % st["message"]) if st.get("message") else ""
+        st["message"] = ("Suliejimas nutrūko – pritrūko atminties%s. Sumažinkite atstumą (pvz. 20–30 m) arba "
+                         "padidinkite Docker atmintį (WSL2: .wslconfig → memory)" % where if code in (-9, 137)
+                         else "Suliejimas nutrūko%s (paslauga perkrauta arba pritrūko atminties)" % where)
+        try:
+            with open(os.path.join(DATA, uuid, "fuse.log"), encoding="utf-8", errors="replace") as f:
+                tail = [l.strip() for l in f.readlines()[-40:] if l.strip()]
+            err = next((l for l in reversed(tail) if "Error" in l or "error" in l), None)
+            if err:
+                st["message"] += ": " + err[:300]
+        except OSError:
+            pass
     st["has_result"] = os.path.isfile(os.path.join(DATA, uuid, "fused.glb"))
     return st
 
