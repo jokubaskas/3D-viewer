@@ -122,6 +122,7 @@ def test_app_train_status(tmp_path, monkeypatch):
     _fake_task(task_root / uuid)
     monkeypatch.setenv("ODM_DATA", str(task_root))
     monkeypatch.setenv("SPLAT_DATA", str(tmp_path / "out"))
+    monkeypatch.setenv("ENGINE_DATA", str(tmp_path / "engine"))
     import importlib
     import app as splat_app
     importlib.reload(splat_app)
@@ -130,7 +131,10 @@ def test_app_train_status(tmp_path, monkeypatch):
     assert c.post("/train", json={"uuid": "bbbbbbbb-1111-2222-3333-444444444444"}).status_code == 400
     r = c.post("/train", json={"uuid": uuid, "steps": 1000})
     assert r.status_code == 200, r.text
-    splat_app._proc["p"].wait(120)
+    import time
+    t0 = time.time()
+    while splat_app.JOBS.busy() and time.time() - t0 < 120:
+        time.sleep(0.2)
     jobs = c.get("/jobs").json()
     assert len(jobs) == 1 and jobs[0]["uuid"] == uuid
     assert jobs[0]["state"] == "error" and jobs[0]["message"]  # be gsplat / GPU

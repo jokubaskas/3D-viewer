@@ -13,11 +13,12 @@ services:
               count: all
               capabilities: [gpu]
 
-  # „Realistiškas vaizdas“ (Gaussian Splatting) – tik su NVIDIA GPU (deploy/splat)
-  splat:
-    build: ./splat
+  # Atea variklis – nuotraukos → 3D modelis, ortofoto, DSM / DTM ir realistiškas vaizdas (deploy/engine). Tik su NVIDIA GPU.
+  engine:
+    build: ./engine
     restart: unless-stopped
     volumes:
+      - engine-data:/engine-data
       - nodeodm-data:/odm-data:ro
       - splat-data:/data
     expose:

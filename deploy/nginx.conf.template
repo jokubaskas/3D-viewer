@@ -14,7 +14,7 @@ server {
   set $odm_upstream nodeodm:3000;
   set $live_upstream mediamtx;
   set $portal_upstream portal:8000;
-  set $splat_upstream splat:8000;
+  set $engine_upstream engine:8000;
   server_name _;
   root /usr/share/nginx/html;
   index index.html;
@@ -98,7 +98,7 @@ server {
   }
 
   # Realistiškas vaizdas (Gaussian Splatting): rezultatai iš splat tomo ir mokymo API – tik administratoriui
-  location ~ "^/splat/files/(?<splat_task>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/(?<splat_file>scene\.spz|scene\.ply|meta\.json|fused\.glb|coords\.txt)$" {
+  location ~ "^/splat/files/(?<splat_task>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/(?<splat_file>scene\.spz|scene\.ply|meta\.json)$" {
     auth_request /_auth;
     alias /splat-data/$splat_task/$splat_file;
     default_type application/octet-stream;
@@ -110,7 +110,7 @@ server {
   location /splat/ {
     auth_request /_auth;
     rewrite ^/splat/(.*)$ /$1 break;
-    proxy_pass http://$splat_upstream;
+    proxy_pass http://$engine_upstream;
     proxy_http_version 1.1;
     proxy_read_timeout 120s;
     proxy_set_header Host $host;
@@ -129,6 +129,29 @@ server {
     proxy_send_timeout 3600s;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  # Atea variklis (nuotraukos → 3D, GPU): rezultatai tiesiai iš variklio tomo ir NodeODM suderinamas API – tik
+  # administratoriui (ADMIN_ONLY /engine/). Failai – tik rezultatų katalogai (ne nuotraukos ir ne darbiniai failai).
+  location ~ "^/engine/files/(?<eng_task>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/(?<eng_file>odm_texturing/odm_textured_model_geo(_map_[0-9]+\.jpg|\.glb|\.obj|\.mtl)|odm_georeferencing/coords\.txt|odm_georeferencing/odm_georeferenced_model\.laz|odm_orthophoto/odm_orthophoto\.tif|odm_dem/dsm\.tif|odm_dem/dtm\.tif)$" {
+    auth_request /_auth;
+    alias /engine-data/$eng_task/$eng_file;
+    default_type application/octet-stream;
+    add_header Cache-Control "private, no-cache" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header X-Frame-Options SAMEORIGIN always;
+  }
+  location /engine/ {
+    auth_request /_auth;
+    rewrite ^/engine/(.*)$ /nodeodm/$1 break;
+    proxy_pass http://$engine_upstream;
+    proxy_http_version 1.1;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    proxy_set_header Host $host;
   }
 
   # Tiesioginės transliacijos (MediaMTX). API – tik šaltinio užregistravimas ir sąrašas.

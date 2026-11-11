@@ -82,7 +82,7 @@ def test_auth_check_rules(env):
     def chk(c, uri):
         return c.get("/api/auth/check", headers={"X-Original-URI": uri}).status_code
 
-    for uri in ["/odm/info", "/splat/train", "/splat/files/aaaaaaaa-1111-2222-3333-444444444444/scene.spz", "/live/api/v3/paths/list", "/ai/train", "/ai/models/delete", "/ext/diab/atea.diab.app/x"]:
+    for uri in ["/odm/info", "/splat/train", "/splat/files/aaaaaaaa-1111-2222-3333-444444444444/scene.spz", "/engine/task/list", "/engine/files/aaaaaaaa-1111-2222-3333-444444444444/odm_texturing/odm_textured_model_geo.glb", "/live/api/v3/paths/list", "/ai/train", "/ai/models/delete", "/ext/diab/atea.diab.app/x"]:
         assert chk(ca, uri) == 403, uri
         assert chk(adm, uri) == 204, uri
     assert chk(ca, f"/live/webrtc/item-{s['id']}/whep") == 204

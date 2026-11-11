@@ -131,6 +131,8 @@ services:
       - nodeodm-data:/odm-data:ro
       # Realistiško vaizdo (Gaussian Splatting) rezultatai – tik skaityti
       - splat-data:/splat-data:ro
+      # Atea variklio projektai (3D modelis, ortofoto, DSM) – tik skaityti
+      - engine-data:/engine-data:ro
     environment:
       # nginx prideda raktą prie /odm/ užklausų – programoje jo vesti nereikia
       - NODEODM_TOKEN=${NODEODM_TOKEN}
@@ -151,5 +153,6 @@ networks:
 volumes:
   nodeodm-data:
   splat-data:
+  engine-data:
   ai-models:
   portal-data:
