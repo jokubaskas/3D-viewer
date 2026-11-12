@@ -40,7 +40,7 @@ QUALITY = {
         "texture_size": 2048,                                  # ištiesintų nuotraukų dydis (tekstūrai)
         "pm_size": 1024, "pm_iters": 3, "pm_samples": 10, "pm_window_step": 2,   # ODM pc-quality: medium (¼)
         "fusion_min_pixels": 3,
-        "mesh_res": 0.08, "mesh_faces": 400_000,               # Poisson gylis pagal ~8 cm, ≤ 0,4 mln. trikampių
+        "mesh_res": 0.12, "mesh_faces": 300_000, "max_pages": 4,  # tinklas ~12 cm, detales perteikia tekstūra
         "point_spacing": 0.05, "ortho_gsd": 0.05, "page_size": 4096,
     },
     "high": {
@@ -50,7 +50,9 @@ QUALITY = {
         "texture_size": 4096,
         "pm_size": 2000, "pm_iters": 5, "pm_samples": 15, "pm_window_step": 1,   # ODM pc-quality: high (½)
         "fusion_min_pixels": 5,
-        "mesh_res": 0.025, "mesh_faces": 1_500_000,
+        # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
+        # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
+        "mesh_res": 0.05, "mesh_faces": 1_000_000, "max_pages": 12,
         "point_spacing": 0.015, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
     },
 }
@@ -523,7 +525,7 @@ class Pipeline:
         import texturing
         texturing.texture(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
                           self.out("odm_texturing", "odm_textured_model_geo"), work=self.work,
-                          page_size=self.q["page_size"], log=self.log)
+                          page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log)
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):

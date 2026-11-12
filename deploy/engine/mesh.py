@@ -49,7 +49,7 @@ def clean(mesh, points, spacing, log=print):
     return mesh
 
 
-def build(points_ply, out_ply, res, max_faces, spacing, work, log=print):
+def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_iters=20):
     import open3d as o3d
     pc = o3d.io.read_point_cloud(points_ply)
     P = np.asarray(pc.points)
@@ -69,6 +69,9 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print):
     box = o3d.geometry.AxisAlignedBoundingBox(lo - 1.0, hi + np.array([1.0, 1.0, 5.0]))
     m = m.crop(box)
     m = clean(m, P, spacing, log)
+    # Išlyginimas (Taubin – nemažina tūrio ir nesuapvalina pastatų kaip paprastas vidurkinimas): pašalina taškų
+    # debesies triukšmo „raukšles“ – lygesnis paviršius, tekstūra be trikampių raštų
+    m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     if len(m.triangles) > max_faces:
         n = len(m.triangles)
         m = m.simplify_quadric_decimation(max_faces)
