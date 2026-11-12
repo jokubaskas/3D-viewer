@@ -201,6 +201,42 @@ class Pipeline:
         ro.camera_model = self.q["camera_model"]
         pycolmap.extract_features(self.db, self.images, image_names=names, camera_mode=pycolmap.CameraMode.AUTO,
                                   reader_options=ro, extraction_options=eo, device=self._device())
+        self._set_camera_priors()
+
+    def _set_camera_priors(self):
+        """Kamerų pradiniai parametrai iš nuotraukų metaduomenų (žr. geo.camera_prior)."""
+        import pycolmap
+        photos = {p["name"]: p for p in self._photos()}
+        db = pycolmap.Database.open(self.db)
+        fixed, out = True, []
+        try:
+            first = {}
+            for im in db.read_all_images():
+                first.setdefault(im.camera_id, im.name)
+            for cam in db.read_all_cameras():
+                info = photos.get(first.get(cam.camera_id))
+                pr = geo.camera_prior(info) if info else None
+                if not pr or info["width"] != cam.width or info["height"] != cam.height:
+                    fixed = False
+                    self.log("Kamera %d: židinys nežinomas – bus įvertintas derinant" % cam.camera_id)
+                    continue
+                prm = list(cam.params)
+                if cam.model_name == "OPENCV":
+                    prm[:4] = [pr["f"], pr["f"], pr["cx"], pr["cy"]]
+                    if pr["k"]:
+                        prm[4:8] = pr["k"]
+                elif cam.model_name in ("SIMPLE_RADIAL", "RADIAL"):
+                    prm[:3] = [pr["f"], pr["cx"], pr["cy"]]
+                    if pr["k"] and cam.model_name == "SIMPLE_RADIAL":
+                        prm[3] = pr["k"][0]
+                cam.params = prm
+                cam.has_prior_focal_length = True
+                db.update_camera(cam)
+                self.log("Kamera %d (%dx%d): židinys %.1f px (%s)" % (cam.camera_id, cam.width, cam.height, pr["f"], pr["source"]))
+                out.append({"camera_id": cam.camera_id, **pr})
+        finally:
+            db.close()
+        json.dump({"fixed_focal": fixed, "cameras": out}, open(os.path.join(self.work, "cameras.json"), "w"))
 
     # ---------------------------------------------------------------- 3. porų derinimas
     def stage_matching(self):
@@ -233,16 +269,20 @@ class Pipeline:
         import pycolmap
         shutil.rmtree(self.sparse, ignore_errors=True)
         os.makedirs(self.sparse)
+        # Židinys – iš kameros duomenų ir nekeičiamas (statmenose plokščios vietovės nuotraukose jis nenustatomas: laisvai
+        # derinant „nuplaukia“ ~10–15 %, modelis skyla į dalis, suspaudžiami aukščiai ir išlinksta paviršius)
+        fixed = self._fixed_focal()
         if self.q["sfm"] == "global":
             opts = pycolmap.GlobalPipelineOptions()
+            opts.mapper.bundle_adjustment.refine_focal_length = not fixed
             recs = pycolmap.global_mapping(self.db, self.images, self.sparse, opts)
+            if not recs or max(r.num_reg_images() for r in recs.values()) < 0.8 * len(self._photos()):
+                self.log("Globalus derinimas nepavyko visoms nuotraukoms – naudojamas nuoseklus")
+                shutil.rmtree(self.sparse, ignore_errors=True)
+                os.makedirs(self.sparse)
+                recs = pycolmap.incremental_mapping(self.db, self.images, self.sparse, self._incremental_options(fixed))
         else:
-            opts = pycolmap.IncrementalPipelineOptions()
-            opts.multiple_models = True
-            # GPS – kaip papildomi ribojimai derinant (ODM: GPS svoriai OpenSfM derinime)
-            opts.use_prior_position = self._load_frame() is not None
-            opts.use_robust_loss_on_prior_position = True
-            recs = pycolmap.incremental_mapping(self.db, self.images, self.sparse, opts)
+            recs = pycolmap.incremental_mapping(self.db, self.images, self.sparse, self._incremental_options(fixed))
         if not recs:
             raise RuntimeError("Nepavyko sujungti nuotraukų (per mažai bendrų taškų). Patikrinkite persidengimą (≥ 70 %).")
         best = max(recs.values(), key=lambda r: r.num_reg_images())
@@ -256,6 +296,23 @@ class Pipeline:
         shutil.rmtree(out, ignore_errors=True)
         os.makedirs(out)
         best.write(out)
+
+    def _fixed_focal(self):
+        try:
+            return bool(json.load(open(os.path.join(self.work, "cameras.json")))["fixed_focal"])
+        except (OSError, ValueError, KeyError):
+            return False
+
+    def _incremental_options(self, fixed):
+        import pycolmap
+        o = pycolmap.IncrementalPipelineOptions()
+        o.multiple_models = True
+        o.ba_refine_focal_length = not fixed
+        o.mapper.abs_pose_refine_focal_length = not fixed
+        # Kol iškraipymas dar neįvertintas (pirmos nuotraukos) – leidžiama didesnė reprojekcijos paklaida
+        o.mapper.abs_pose_max_error = 24.0
+        o.mapper.filter_max_reproj_error = 8.0
+        return o
 
     # ---------------------------------------------------------------- 5. georeferencija
     def _triangulate(self, rec, obs):
@@ -281,16 +338,18 @@ class Pipeline:
             return None
         return np.linalg.solve(A, b)
 
-    def stage_georef(self):
+    def _align(self, rec, quiet=False):
+        """Sim3 į vietinį UTM rėmą: pagal kontrolinius taškus (gcp_list.txt) arba GPS (RANSAC pagal tikslumą)."""
         import pycolmap
-        rec = pycolmap.Reconstruction(os.path.join(self.work, "sfm"))
+        log = (lambda m: None) if quiet else self.log
         frame = self._load_frame()
+        if frame is None:
+            return None
         gcp_file = self._extra_file("gcp*.txt")
-        sim = None
-        if gcp_file and frame is not None:
+        if gcp_file:
             gcps = geo.parse_gcp(open(gcp_file, encoding="utf-8", errors="replace").read(), frame)
             src, dst = [], []
-            for name, g in gcps.items():
+            for g in gcps.values():
                 p = self._triangulate(rec, g["obs"])
                 if p is not None:
                     src.append(p)
@@ -299,35 +358,93 @@ class Pipeline:
                 sim = pycolmap.estimate_sim3d(np.array(src), np.array(dst))
                 if sim is not None:
                     res = np.linalg.norm(np.array([sim * p for p in src]) - np.array(dst), axis=1)
-                    self.log("Kontroliniai taškai: %d, liekamoji paklaida vid. %.3f m, didž. %.3f m" % (len(src), res.mean(), res.max()))
+                    log("Kontroliniai taškai: %d, liekamoji paklaida vid. %.3f m, didž. %.3f m" % (len(src), res.mean(), res.max()))
+                    return sim
             else:
-                self.log("Kontrolinių taškų per mažai (%d, reikia ≥ 3 su ≥ 2 matymais) – naudojamas GPS" % len(src))
-        if sim is None and frame is not None:
-            photos = {p["name"]: p for p in self._photos()}
-            names, locs, acc = [], [], []
-            for im in rec.images.values():
-                p = photos.get(im.name)
-                if im.has_pose and p and p.get("gps"):
-                    names.append(im.name)
-                    locs.append(frame.to_local(*p["gps"]))
-                    if p.get("acc"):
-                        acc.append(max(p["acc"]))
-                    elif p.get("xmp", {}).get("RtkFlag") == 50.0:
-                        acc.append(0.05)
-                    else:
-                        acc.append(3.0)
-            ro = pycolmap.RANSACOptions()
-            # RANSAC riba pagal GPS tikslumą (RTK FIX – ~5 cm, be RTK – ~3 m)
-            ro.max_error = float(np.clip(2.0 * np.median(acc), 0.1, 6.0)) if acc else 3.0
-            sim = pycolmap.align_reconstruction_to_locations(rec, names, np.array(locs), 3, ro)
+                log("Kontrolinių taškų per mažai (%d, reikia ≥ 3 su ≥ 2 matymais) – naudojamas GPS" % len(src))
+        photos = {p["name"]: p for p in self._photos()}
+        names, locs, acc = [], [], []
+        for im in rec.images.values():
+            p = photos.get(im.name)
+            if im.has_pose and p and p.get("gps"):
+                names.append(im.name)
+                locs.append(frame.to_local(*p["gps"]))
+                if p.get("acc"):
+                    acc.append(max(p["acc"]))
+                elif p.get("xmp", {}).get("RtkFlag") == 50.0:
+                    acc.append(0.05)
+                else:
+                    acc.append(3.0)
+        if len(names) < 3:
+            return None
+        ro = pycolmap.RANSACOptions()
+        # RANSAC riba pagal GPS tikslumą (RTK FIX – ~5 cm, be RTK – ~3 m)
+        ro.max_error = float(np.clip(2.0 * np.median(acc), 0.1, 6.0)) if acc else 3.0
+        sim = pycolmap.align_reconstruction_to_locations(rec, names, np.array(locs), 3, ro)
+        if sim is not None:
+            by = {im.name: im for im in rec.images.values()}
+            err = [np.linalg.norm(sim * by[n].projection_center() - l) for n, l in zip(names, locs)]
+            log("Georeferencija pagal GPS (%s): %d nuotraukų, paklaida mediana %.2f m"
+                % ("RTK" if ro.max_error < 0.5 else "be RTK", len(names), float(np.median(err))))
+        return sim
+
+    def _observability(self, rec):
+        """Ar židinį galima nustatyti iš pačių nuotraukų: įstrižų nuotraukų dalis (> 15° nuo statmens) ir reljefas –
+        kiek skiriasi taškų atstumai nuo kameros vienoje nuotraukoje (pastatai, šlaitai). Plokščia + statmenos – ne."""
+        imgs = [im for im in rec.images.values() if im.has_pose]
+        if not imgs:
+            return 0.0, 0.0
+        obl = float(np.mean([abs(im.viewing_direction()[2]) < np.cos(np.radians(15)) for im in imgs]))
+        rel = []
+        P = {pid: p.xyz for pid, p in rec.points3D.items()}
+        for im in imgs[:: max(1, len(imgs) // 60)]:
+            ids = [q.point3D_id for q in im.points2D if q.has_point3D()]
+            if len(ids) < 30:
+                continue
+            X = np.array([P[i] for i in ids])
+            T = im.cam_from_world()
+            z = (X @ T.rotation.matrix().T + T.translation)[:, 2]
+            z = z[z > 0]
+            if len(z) > 30:
+                rel.append((np.percentile(z, 95) - np.percentile(z, 5)) / np.median(z))
+        return obl, float(np.median(rel)) if rel else 0.0
+
+    def _refine_focal(self, rec):
+        """Su įstrižomis nuotraukomis ar reljefu židinys patikslinamas bendru derinimu ir modelis georeferencuojamas
+        iš naujo; neįtikėtinas pokytis (> 8 %) atmetamas. Vien statmenos plokščios vietovės – lieka kameros židinys."""
+        import pycolmap
+        import tempfile
+        obl, rel = self._observability(rec)
+        if obl < 0.1 and rel < 0.12:
+            self.log("Židinys – iš kameros duomenų (statmenos nuotraukos, reljefas %.0f %%)" % (100 * rel))
+            return
+        f0 = {c: rec.cameras[c].mean_focal_length() for c in rec.cameras}
+        backup = tempfile.mkdtemp(dir=self.work)
+        rec.write(backup)
+        o = pycolmap.BundleAdjustmentOptions()
+        o.refine_focal_length = True
+        o.refine_extra_params = True
+        pycolmap.bundle_adjustment(rec, o)
+        f1 = {c: rec.cameras[c].mean_focal_length() for c in rec.cameras}
+        change = max(abs(f1[c] / f0[c] - 1) for c in f0)
+        desc = ", ".join("%.1f → %.1f px" % (f0[c], f1[c]) for c in f0)
+        if change > 0.08:
+            self.log("Židinio patikslinimas atmestas (%s – per didelis pokytis)" % desc)
+            rec.read(backup)
+        else:
+            self.log("Židinys patikslintas (įstrižų %.0f %%, reljefas %.0f %%): %s" % (100 * obl, 100 * rel, desc))
+            sim = self._align(rec)
             if sim is not None:
-                c = np.array([rec.images[i].projection_center() for i in rec.images if rec.images[i].name in names])
-                after = np.array([sim * x for x in c])
-                err = np.linalg.norm(after - np.array(locs)[:len(after)], axis=1)
-                self.log("Georeferencija pagal GPS (%s): %d nuotraukų, paklaida mediana %.2f m"
-                         % ("RTK" if ro.max_error < 0.5 else "be RTK", len(names), float(np.median(err))))
+                rec.transform(sim)
+        shutil.rmtree(backup, ignore_errors=True)
+
+    def stage_georef(self):
+        import pycolmap
+        rec = pycolmap.Reconstruction(os.path.join(self.work, "sfm"))
+        sim = self._align(rec)
         if sim is not None:
             rec.transform(sim)
+            self._refine_focal(rec)
         else:
             self.log("Dėmesio: nėra GPS – modelis be georeferencijos ir be mastelio")
         out = os.path.join(self.work, "sfm_geo")
