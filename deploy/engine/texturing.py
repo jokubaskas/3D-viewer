@@ -278,7 +278,7 @@ class Packer:
         return p
 
 
-def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=90, log=print):
+def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=90, max_pages=6, log=print):
     """Tekstūruoja tinklą. Rezultatas: <out_prefix>.obj/.mtl, _<n>.jpg lapai, .glb; work/texture_uv.npz – ortofoto."""
     import open3d as o3d
     from PIL import Image
@@ -320,8 +320,8 @@ def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=
     # Didesni – pirma (geresnis pakavimas)
     info.sort(key=lambda t: -t[5])
     total_px = sum(w * h for *_, w, h in info)
-    # Jei viskas netilptų į ~6 lapus – visos iškarpos proporcingai sumažinamos
-    scale = float(min(1.0, np.sqrt(6 * 0.8 * page_size ** 2 / max(total_px, 1))))
+    # Jei viskas netilptų į max_pages lapus – visos iškarpos proporcingai sumažinamos
+    scale = float(min(1.0, np.sqrt(max_pages * 0.8 * page_size ** 2 / max(total_px, 1))))
     if scale < 1:
         log("Tekstūros raiška sumažinta iki %.0f %% (didelis plotas)" % (100 * scale))
     packer = Packer(page_size)
@@ -398,6 +398,7 @@ def write_glb(path, V, F, face_uv, face_page, page_paths):
     import trimesh
     from PIL import Image
     scene = trimesh.Scene()
+    normals = trimesh.Trimesh(V, F, process=False).vertex_normals  # viršūnių normalės iš viso tinklo – be siūlių
     for p, img_path in enumerate(page_paths):
         sel = np.flatnonzero(face_page == p)
         if not len(sel):
@@ -407,5 +408,6 @@ def write_glb(path, V, F, face_uv, face_page, page_paths):
         img.format = "JPEG"
         mat = trimesh.visual.material.PBRMaterial(baseColorTexture=img, metallicFactor=0.0, roughnessFactor=1.0)
         vis = trimesh.visual.TextureVisuals(uv=np.c_[uv[:, 0], 1.0 - uv[:, 1]], material=mat)
-        scene.add_geometry(trimesh.Trimesh(V[vid], tri, visual=vis, process=False), geom_name="page%d" % p)
-    scene.export(path)
+        tm = trimesh.Trimesh(V[vid], tri, visual=vis, vertex_normals=normals[vid], process=False)
+        scene.add_geometry(tm, geom_name="page%d" % p)
+    scene.export(path, include_normals=True)
