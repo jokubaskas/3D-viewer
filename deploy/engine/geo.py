@@ -7,7 +7,8 @@ import re
 import numpy as np
 
 XMP_KEYS = ("RelativeAltitude", "AbsoluteAltitude", "GimbalPitchDegree", "GimbalYawDegree", "FlightYawDegree", "RtkFlag",
-            "RtkStdLon", "RtkStdLat", "RtkStdHgt")
+            "RtkStdLon", "RtkStdLat", "RtkStdHgt", "CalibratedFocalLength", "CalibratedOpticalCenterX",
+            "CalibratedOpticalCenterY", "DewarpData", "DewarpFlag")
 
 
 def _num(v):
@@ -76,6 +77,36 @@ def read_photo(path):
         info["gps"] = [lat, lon, alt if alt is not None else 0.0]
     info["xmp"] = read_xmp(path)
     return info
+
+
+def camera_prior(info):
+    """Kameros pradiniai parametrai (pikseliais): DJI gamyklinė kalibracija (XMP DewarpData / CalibratedFocalLength),
+    kitaip – iš 35 mm ekvivalento (apibrėžtas pagal įstrižainę 43,27 mm), kitaip – None.
+    Statmenoms plokščios vietovės nuotraukoms židinio iš pačių nuotraukų nustatyti neįmanoma (matomas tik santykis
+    „židinys / atstumas“) – nuo jo tikslumo priklauso aukščiai, todėl jis imamas iš kameros duomenų ir derinant nekeičiamas.
+    Grąžina {"f": .., "cx": .., "cy": .., "k": [k1, k2, p1, p2] | None, "source": ..}."""
+    w, h = info["width"], info["height"]
+    x = info.get("xmp") or {}
+    dw = x.get("DewarpData")
+    if isinstance(dw, str) and ";" in dw:
+        try:
+            v = [float(t) for t in dw.split(";", 1)[1].split(",")]
+            if len(v) >= 8 and v[0] > 100:
+                # DJI: fx, fy, cx, cy (poslinkis nuo centro), k1, k2, p1, p2, k3 – OpenCV konvencija.
+                # DewarpFlag = 1 – nuotrauka jau ištiesinta kameroje (iškraipymo nebetaikyti)
+                k = None if x.get("DewarpFlag") == 1.0 else v[4:8]
+                return {"f": (v[0] + v[1]) / 2, "cx": w / 2 + v[2], "cy": h / 2 + v[3], "k": k, "source": "DJI DewarpData"}
+        except ValueError:
+            pass
+    cf = x.get("CalibratedFocalLength")
+    if isinstance(cf, float) and cf > 100:
+        cx, cy = x.get("CalibratedOpticalCenterX"), x.get("CalibratedOpticalCenterY")
+        return {"f": cf, "cx": cx if isinstance(cx, float) and cx > 0 else w / 2,
+                "cy": cy if isinstance(cy, float) and cy > 0 else h / 2, "k": None, "source": "DJI CalibratedFocalLength"}
+    f35 = info.get("focal35")
+    if f35 and f35 > 0:
+        return {"f": f35 / 43.2666 * float(np.hypot(w, h)), "cx": w / 2, "cy": h / 2, "k": None, "source": "EXIF 35 mm"}
+    return None
 
 
 def utm_zone(lat, lon):

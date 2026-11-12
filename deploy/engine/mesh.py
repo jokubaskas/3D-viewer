@@ -1,7 +1,7 @@
 # Atea variklis – 3D tinklas iš tankaus taškų debesies: Screened Poisson (PoissonRecon per COLMAP, MIT) ir valymas:
 #   • Poisson gylis pagal norimą raišką ir srities dydį (ODM mesh-octree-depth logika);
 #   • tankio apkirpimas (COLMAP trim) – pašalinami „ekstrapoliuoti“ paviršiai be taškų;
-#   • trikampiai toliau nei keli taškų tarpai nuo artimiausio taško – Poisson „burbulai“ ir užlaidos;
+#   • tik labai toli (> 25 m) nuo bet kurio taško nutolę dariniai (mažai taškų turinčios vietos – stogai, asfaltas – lieka);
 #   • smulkūs atskiri gabalai; supaprastinimas iki trikampių ribos (ODM mesh-size).
 import math
 import os
@@ -13,7 +13,7 @@ def poisson_depth(extent, res):
     return int(np.clip(math.ceil(math.log2(max(extent, 1.0) / max(res, 1e-3))), 8, 13))
 
 
-def poisson(points_ply, out_ply, depth, trim=7.0):
+def poisson(points_ply, out_ply, depth, trim=5.0):
     import pycolmap
     o = pycolmap.PoissonMeshingOptions()
     o.depth = depth
@@ -32,7 +32,9 @@ def clean(mesh, points, spacing, log=print):
     F = np.asarray(mesh.triangles)
     tree = cKDTree(points)
     d, _ = tree.query(V[F].mean(1), k=1, workers=-1)
-    far = d > max(6 * spacing, 0.15)
+    # Tik labai toli nuo bet kurio taško nutolę Poisson dariniai. Vienspalviai stogai, asfaltas, vanduo turi mažai taškų
+    # (plataus stogo vidurys – dešimtys metrų nuo artimiausio taško) – ten paviršius paliekamas, apkerpa tik Poisson tankis
+    far = d > max(100 * spacing, 25.0)
     mesh.remove_triangles_by_mask(far)
     mesh.remove_unreferenced_vertices()
     if len(mesh.triangles):
@@ -51,7 +53,9 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print):
     import open3d as o3d
     pc = o3d.io.read_point_cloud(points_ply)
     P = np.asarray(pc.points)
+    # Plotas – be pavienių tolimų taškų (procentiliai), aukštis – visas (aukščiausi stogai neturi būti nupjauti)
     lo, hi = np.percentile(P, 0.5, axis=0), np.percentile(P, 99.5, axis=0)
+    lo[2], hi[2] = np.percentile(P[:, 2], 0.01), P[:, 2].max()
     extent = float(np.max(hi - lo))
     depth = poisson_depth(extent, res)
     raw = os.path.join(work, "poisson.ply")
@@ -61,7 +65,8 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print):
     if not len(m.triangles):
         raise RuntimeError("Nepavyko sukurti 3D tinklo (Poisson)")
     # Sritis – pagal taškus (Poisson apgaubia visą erdvę)
-    box = o3d.geometry.AxisAlignedBoundingBox(lo - 1.0, hi + 1.0)
+    # Viršuje – daugiau vietos: kur taškų nėra (vienspalvis stogas), Poisson paviršius išsilenkia virš aukščiausio taško
+    box = o3d.geometry.AxisAlignedBoundingBox(lo - 1.0, hi + np.array([1.0, 1.0, 5.0]))
     m = m.crop(box)
     m = clean(m, P, spacing, log)
     if len(m.triangles) > max_faces:

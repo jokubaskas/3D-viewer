@@ -69,7 +69,7 @@ def _dms(v):
     return (_rational(d), _rational(m), _rational(round(s, 4)))
 
 
-def save_jpeg(path, rgb, lat, lon, alt, focal_px, W):
+def save_jpeg(path, rgb, lat, lon, alt, focal_px, W, calibrated=False):
     img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
     ex = Image.Exif()
     ex[0x010F] = "DJI"
@@ -78,7 +78,8 @@ def save_jpeg(path, rgb, lat, lon, alt, focal_px, W):
     sensor_w = 13.2
     f_mm = focal_px * sensor_w / W
     sub[0x920A] = _rational(f_mm)
-    sub[0xA405] = int(round(f_mm * 36.0 / sensor_w))
+    # 35 mm ekvivalentas apibrėžtas pagal įstrižainę (43,27 mm), kaip tikrose kamerose; DJI XMP – tiksli kalibracija
+    sub[0xA405] = int(round(f_mm * 43.2666 / (sensor_w * np.hypot(W, rgb.shape[0]) / W)))
     gps = ex.get_ifd(0x8825)
     gps[1] = "N" if lat >= 0 else "S"
     gps[2] = _dms(lat)
@@ -86,10 +87,33 @@ def save_jpeg(path, rgb, lat, lon, alt, focal_px, W):
     gps[4] = _dms(lon)
     gps[5] = b"\x00"
     gps[6] = _rational(round(alt, 3))
-    img.save(path, quality=95, exif=ex)
+    xmp = None
+    if calibrated:
+        xmp = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+               '<rdf:Description xmlns:drone-dji="http://www.dji.com/drone-dji/1.0/" drone-dji:CalibratedFocalLength="%.3f" '
+               'drone-dji:RelativeAltitude="+%.2f"/></rdf:RDF></x:xmpmeta>' % (focal_px, alt - ORIGIN[2])).encode()
+    img.save(path, quality=95, exif=ex, **({"xmp": xmp} if xmp else {}))
 
 
-def make_dataset(out_dir, W=800, H=600, focal=640.0, alt=55.0, step=14.0, oblique=False, gps_noise=0.0, seed=1):
+def distorted_rays(K, V, W, H, k1, k2=0.0):
+    """Spinduliai iškraipytos (radialinis k1, k2 – kaip tikras objektyvas) kameros pikseliams."""
+    u, v = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    xd, yd = (u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1]
+    xu, yu = xd.copy(), yd.copy()
+    for _ in range(20):  # atvirkštinis iškraipymas (iteracijos)
+        r2 = xu * xu + yu * yu
+        f = 1 + k1 * r2 + k2 * r2 * r2
+        xu, yu = xd / f, yd / f
+    d_cam = np.stack([xu, yu, np.ones_like(xu)], -1)
+    R, t = V[:3, :3], V[:3, 3]
+    C = -R.T @ t
+    d = d_cam @ R  # R.T @ d_cam
+    d /= np.linalg.norm(d, axis=-1, keepdims=True)
+    return np.concatenate([np.broadcast_to(C, d.shape), d], -1).astype(np.float32)
+
+
+def make_dataset(out_dir, W=800, H=600, focal=640.0, alt=55.0, step=14.0, oblique=False, gps_noise=0.0, seed=1, k1=0.0,
+                 extent=42.0, calibrated=False):
     """Grąžina kamerų sąrašą (name, viewmat, K, center) ir įrašo JPEG su EXIF GPS į out_dir."""
     import open3d as o3d
     os.makedirs(out_dir, exist_ok=True)
@@ -98,14 +122,15 @@ def make_dataset(out_dir, W=800, H=600, focal=640.0, alt=55.0, step=14.0, obliqu
     K = np.array([[focal, 0, W / 2], [0, focal, H / 2], [0, 0, 1]])
     rng = np.random.default_rng(seed)
     cams = []
-    xs = np.arange(-42, 42.1, step)
+    xs = np.arange(-extent, extent + 0.1, step)
     i = 0
-    for yi, y in enumerate(np.arange(-42, 42.1, step)):
+    for yi, y in enumerate(np.arange(-extent, extent + 0.1, step)):
         for x in (xs if yi % 2 == 0 else xs[::-1]):
             eye = np.array([x, y, alt])
             tgt = np.array([x + (8 if oblique and i % 2 else 0), y + 0.5, 0.0])
             V = look(eye, tgt)
-            rays = o3d.t.geometry.RaycastingScene.create_rays_pinhole(o3d.core.Tensor(K), o3d.core.Tensor(V), W, H).numpy()
+            rays = (distorted_rays(K, V, W, H, k1) if k1 else
+                    o3d.t.geometry.RaycastingScene.create_rays_pinhole(o3d.core.Tensor(K), o3d.core.Tensor(V), W, H).numpy())
             t = sc.cast_rays(o3d.core.Tensor(rays))["t_hit"].numpy()
             P = rays[..., :3] + rays[..., 3:] * np.where(np.isfinite(t), t, 0)[..., None]
             n = sc.cast_rays(o3d.core.Tensor(rays))["primitive_normals"].numpy()
@@ -114,7 +139,7 @@ def make_dataset(out_dir, W=800, H=600, focal=640.0, alt=55.0, step=14.0, obliqu
             name = "DJI_%04d_W.JPG" % (i + 1)
             g = eye + rng.normal(0, gps_noise, 3) if gps_noise else eye
             lat, lon, a = local_to_wgs84(*g)
-            save_jpeg(os.path.join(out_dir, name), rgb, lat, lon, a, focal, W)
+            save_jpeg(os.path.join(out_dir, name), rgb, lat, lon, a, focal, W, calibrated)
             cams.append({"name": name, "viewmat": V, "K": K, "center": eye})
             i += 1
     return cams
