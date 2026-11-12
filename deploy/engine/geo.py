@@ -94,8 +94,11 @@ def camera_prior(info):
             if len(v) >= 8 and v[0] > 100:
                 # DJI: fx, fy, cx, cy (poslinkis nuo centro), k1, k2, p1, p2, k3 – OpenCV konvencija.
                 # DewarpFlag = 1 – nuotrauka jau ištiesinta kameroje (iškraipymo nebetaikyti)
-                k = None if x.get("DewarpFlag") == 1.0 else v[4:8]
-                return {"f": (v[0] + v[1]) / 2, "cx": w / 2 + v[2], "cy": h / 2 + v[3], "k": k, "source": "DJI DewarpData"}
+                # Gamyklinė kalibracija – iškraipymas žinomas ir derinant nekeičiamas („dewarping“); DewarpFlag = 1 –
+                # nuotrauka jau ištiesinta kameroje, iškraipymas 0
+                k = [0.0, 0.0, 0.0, 0.0] if x.get("DewarpFlag") == 1.0 else v[4:8]
+                return {"f": (v[0] + v[1]) / 2, "cx": w / 2 + v[2], "cy": h / 2 + v[3], "k": k, "source": "DJI DewarpData",
+                        "calibrated": True}
         except ValueError:
             pass
     cf = x.get("CalibratedFocalLength")
