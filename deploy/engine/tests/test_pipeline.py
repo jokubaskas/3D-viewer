@@ -252,7 +252,7 @@ def test_nadir_planar_distorted_flight(tmp_path):
     logs = []
     pl._log = logs.append
     pl.run(until="georef")
-    assert any("CalibratedFocalLength" in l for l in logs), logs
+    assert any("DJI DewarpData" in l for l in logs) and any("nekeičiamas (dewarping)" in l for l in logs), logs
     rec = pycolmap.Reconstruction(os.path.join(task, "work", "sfm_geo"))
     assert rec.num_reg_images() == 49
     P = np.array([q.xyz for q in rec.points3D.values()]) - _gt_offset(task)
@@ -273,7 +273,7 @@ def test_dji_camera_prior():
     assert p["source"] == "DJI DewarpData" and abs(p["f"] - 3713.29) < 0.01 and abs(p["cx"] - 2647.02) < 0.01 and p["k"][0] == -0.112
     p = geo.camera_prior(dict(base, xmp={"DewarpData": "2022-06-08;3713.29,3713.29,7.02,-8.72,-0.112,0.0149,-0.00027,0.00021,-0.0057",
                                        "DewarpFlag": 1.0}))
-    assert p["k"] is None
+    assert p["k"] == [0.0, 0.0, 0.0, 0.0] and p["calibrated"]
     p = geo.camera_prior(dict(base, xmp={}))
     assert p["source"] == "EXIF 35 mm" and abs(p["f"] - 24 / 43.2666 * np.hypot(5280, 3956)) < 0.1
     assert geo.camera_prior(dict(base, focal35=None, xmp={})) is None

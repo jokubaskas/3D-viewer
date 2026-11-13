@@ -201,6 +201,9 @@ class Pipeline:
         eo.sift.max_num_features = self.q["max_features"]
         ro = pycolmap.ImageReaderOptions()
         ro.camera_model = self.q["camera_model"]
+        # Visos nuotraukos su DJI gamykline kalibracija – OPENCV modelis (k1, k2, p1, p2 kaip DewarpData) abiem režimais
+        if all((geo.camera_prior(p) or {}).get("calibrated") for p in self._photos()):
+            ro.camera_model = "OPENCV"
         pycolmap.extract_features(self.db, self.images, image_names=names, camera_mode=pycolmap.CameraMode.AUTO,
                                   reader_options=ro, extraction_options=eo, device=self._device())
         self._set_camera_priors()
@@ -210,7 +213,7 @@ class Pipeline:
         import pycolmap
         photos = {p["name"]: p for p in self._photos()}
         db = pycolmap.Database.open(self.db)
-        fixed, out = True, []
+        fixed, calibrated, out = True, True, []
         try:
             first = {}
             for im in db.read_all_images():
@@ -219,7 +222,7 @@ class Pipeline:
                 info = photos.get(first.get(cam.camera_id))
                 pr = geo.camera_prior(info) if info else None
                 if not pr or info["width"] != cam.width or info["height"] != cam.height:
-                    fixed = False
+                    fixed = calibrated = False
                     self.log("Kamera %d: židinys nežinomas – bus įvertintas derinant" % cam.camera_id)
                     continue
                 prm = list(cam.params)
@@ -231,6 +234,8 @@ class Pipeline:
                     prm[:3] = [pr["f"], pr["cx"], pr["cy"]]
                     if pr["k"] and cam.model_name == "SIMPLE_RADIAL":
                         prm[3] = pr["k"][0]
+                if not pr.get("calibrated") or cam.model_name != "OPENCV":
+                    calibrated = False
                 cam.params = prm
                 cam.has_prior_focal_length = True
                 db.update_camera(cam)
@@ -238,7 +243,9 @@ class Pipeline:
                 out.append({"camera_id": cam.camera_id, **pr})
         finally:
             db.close()
-        json.dump({"fixed_focal": fixed, "cameras": out}, open(os.path.join(self.work, "cameras.json"), "w"))
+        self.log("Objektyvo iškraipymas: %s" % ("DJI gamyklinė kalibracija – nekeičiamas (dewarping)" if calibrated else
+                 "nežinomas – vertinamas derinant (plokščioje vietovėje be įstrižų nuotraukų modelis gali išlinkti)"))
+        json.dump({"fixed_focal": fixed, "calibrated": calibrated, "cameras": out}, open(os.path.join(self.work, "cameras.json"), "w"))
 
     # ---------------------------------------------------------------- 3. porų derinimas
     def stage_matching(self):
@@ -277,6 +284,7 @@ class Pipeline:
         if self.q["sfm"] == "global":
             opts = pycolmap.GlobalPipelineOptions()
             opts.mapper.bundle_adjustment.refine_focal_length = not fixed
+            opts.mapper.bundle_adjustment.refine_extra_params = not self._calibrated()
             recs = pycolmap.global_mapping(self.db, self.images, self.sparse, opts)
             if not recs or max(r.num_reg_images() for r in recs.values()) < 0.8 * len(self._photos()):
                 self.log("Globalus derinimas nepavyko visoms nuotraukoms – naudojamas nuoseklus")
@@ -299,6 +307,12 @@ class Pipeline:
         os.makedirs(out)
         best.write(out)
 
+    def _calibrated(self):
+        try:
+            return bool(json.load(open(os.path.join(self.work, "cameras.json"))).get("calibrated"))
+        except (OSError, ValueError):
+            return False
+
     def _fixed_focal(self):
         try:
             return bool(json.load(open(os.path.join(self.work, "cameras.json")))["fixed_focal"])
@@ -311,6 +325,9 @@ class Pipeline:
         o.multiple_models = True
         o.ba_refine_focal_length = not fixed
         o.mapper.abs_pose_refine_focal_length = not fixed
+        # Gamyklinė kalibracija – iškraipymas nekeičiamas (kitaip plokščioje vietovėje jis „nuplaukia“ ir modelis išlinksta)
+        o.ba_refine_extra_params = not self._calibrated()
+        o.mapper.abs_pose_refine_extra_params = not self._calibrated()
         # Kol iškraipymas dar neįvertintas (pirmos nuotraukos) – leidžiama didesnė reprojekcijos paklaida
         o.mapper.abs_pose_max_error = 24.0
         o.mapper.filter_max_reproj_error = 8.0
@@ -425,7 +442,7 @@ class Pipeline:
         rec.write(backup)
         o = pycolmap.BundleAdjustmentOptions()
         o.refine_focal_length = True
-        o.refine_extra_params = True
+        o.refine_extra_params = not self._calibrated()
         pycolmap.bundle_adjustment(rec, o)
         f1 = {c: rec.cameras[c].mean_focal_length() for c in rec.cameras}
         change = max(abs(f1[c] / f0[c] - 1) for c in f0)

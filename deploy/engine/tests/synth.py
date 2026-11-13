@@ -69,7 +69,7 @@ def _dms(v):
     return (_rational(d), _rational(m), _rational(round(s, 4)))
 
 
-def save_jpeg(path, rgb, lat, lon, alt, focal_px, W, calibrated=False):
+def save_jpeg(path, rgb, lat, lon, alt, focal_px, W, calibrated=False, k1=0.0):
     img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
     ex = Image.Exif()
     ex[0x010F] = "DJI"
@@ -91,7 +91,8 @@ def save_jpeg(path, rgb, lat, lon, alt, focal_px, W, calibrated=False):
     if calibrated:
         xmp = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
                '<rdf:Description xmlns:drone-dji="http://www.dji.com/drone-dji/1.0/" drone-dji:CalibratedFocalLength="%.3f" '
-               'drone-dji:RelativeAltitude="+%.2f"/></rdf:RDF></x:xmpmeta>' % (focal_px, alt - ORIGIN[2])).encode()
+               'drone-dji:DewarpData="2024-01-01;%.3f,%.3f,0,0,%.5f,0,0,0,0" drone-dji:DewarpFlag="0" '
+               'drone-dji:RelativeAltitude="+%.2f"/></rdf:RDF></x:xmpmeta>' % (focal_px, focal_px, focal_px, k1, alt - ORIGIN[2])).encode()
     img.save(path, quality=95, exif=ex, **({"xmp": xmp} if xmp else {}))
 
 
@@ -139,7 +140,7 @@ def make_dataset(out_dir, W=800, H=600, focal=640.0, alt=55.0, step=14.0, obliqu
             name = "DJI_%04d_W.JPG" % (i + 1)
             g = eye + rng.normal(0, gps_noise, 3) if gps_noise else eye
             lat, lon, a = local_to_wgs84(*g)
-            save_jpeg(os.path.join(out_dir, name), rgb, lat, lon, a, focal, W, calibrated)
+            save_jpeg(os.path.join(out_dir, name), rgb, lat, lon, a, focal, W, calibrated, k1)
             cams.append({"name": name, "viewmat": V, "K": K, "center": eye})
             i += 1
     return cams
