@@ -8,7 +8,7 @@ import numpy as np
 
 XMP_KEYS = ("RelativeAltitude", "AbsoluteAltitude", "GimbalPitchDegree", "GimbalYawDegree", "FlightYawDegree", "RtkFlag",
             "RtkStdLon", "RtkStdLat", "RtkStdHgt", "CalibratedFocalLength", "CalibratedOpticalCenterX",
-            "CalibratedOpticalCenterY", "DewarpData", "DewarpFlag")
+            "CalibratedOpticalCenterY", "DewarpData", "DewarpFlag", "UTCAtExposure")
 
 
 def _num(v):
@@ -32,7 +32,7 @@ def _dms(v, ref):
 
 
 def read_xmp(path, limit=256 * 1024):
-    """DJI XMP laukai (drone-dji:…) iš JPEG pradžios."""
+    """Drono XMP laukai (DJI „drone-dji:…“, Anzu ir kt. „drone:…“) iš JPEG pradžios."""
     try:
         with open(path, "rb") as f:
             head = f.read(limit)
@@ -45,7 +45,9 @@ def read_xmp(path, limit=256 * 1024):
     xmp = head[i:j if j > 0 else None].decode("utf-8", "replace")
     out = {}
     for k in XMP_KEYS:
-        m = re.search(r'drone-dji:%s\s*=\s*"([^"]*)"' % k, xmp) or re.search(r"<drone-dji:%s>([^<]*)<" % k, xmp)
+        # DJI – „drone-dji:“, Anzu Raptor ir kt. – „drone:“
+        m = (re.search(r'drone(?:-dji)?:%s\s*=\s*"([^"]*)"' % k, xmp)
+             or re.search(r"<drone(?:-dji)?:%s>([^<]*)<" % k, xmp))
         if m:
             try:
                 out[k] = float(m.group(1))
@@ -68,6 +70,7 @@ def read_photo(path):
     info["focal_mm"] = _num(sub.get(0x920A))
     info["focal35"] = _num(sub.get(0xA405))
     info["time"] = str(sub.get(0x9003, "") or ex.get(0x0132, "") or "")
+    info["subsec"] = str(sub.get(0x9291, "") or "")
     lat = _dms(gps.get(2), gps.get(1))
     lon = _dms(gps.get(4), gps.get(3))
     alt = _num(gps.get(6))
@@ -76,7 +79,28 @@ def read_photo(path):
     if lat is not None and lon is not None and (abs(lat) > 1e-6 or abs(lon) > 1e-6):
         info["gps"] = [lat, lon, alt if alt is not None else 0.0]
     info["xmp"] = read_xmp(path)
+    info["timestamp"] = photo_timestamp(info)
     return info
+
+
+def photo_timestamp(info):
+    """Fotografavimo momentas (s): XMP UTCAtExposure (Anzu, DJI Enterprise – ms tikslumu), kitaip EXIF
+    DateTimeOriginal + SubSecTimeOriginal. None – nežinomas."""
+    from datetime import datetime, timezone
+    u = (info.get("xmp") or {}).get("UTCAtExposure")
+    if isinstance(u, str) and u:
+        try:
+            d = datetime.fromisoformat(u.replace("Z", ""))
+            return d.replace(tzinfo=d.tzinfo or timezone.utc).timestamp()
+        except ValueError:
+            pass
+    t = info.get("time") or ""
+    try:
+        d = datetime.strptime(t.strip("\x00 "), "%Y:%m:%d %H:%M:%S")
+        sub = (info.get("subsec") or "").strip("\x00 ")
+        return d.replace(tzinfo=timezone.utc).timestamp() + (float("0." + sub) if sub.isdigit() else 0.0)
+    except ValueError:
+        return None
 
 
 def camera_prior(info):

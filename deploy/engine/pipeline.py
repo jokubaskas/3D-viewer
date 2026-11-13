@@ -387,7 +387,10 @@ class Pipeline:
             p = photos.get(im.name)
             if im.has_pose and p and p.get("gps"):
                 names.append(im.name)
-                locs.append(frame.to_local(*p["gps"]))
+                loc = frame.to_local(*p["gps"])
+                if getattr(self, "time_offset", 0.0) and im.name in getattr(self, "_vel", {}):
+                    loc = loc + self._vel[im.name] * self.time_offset
+                locs.append(loc)
                 if p.get("acc"):
                     acc.append(max(p["acc"]))
                 elif p.get("xmp", {}).get("RtkFlag") == 50.0:
@@ -457,12 +460,139 @@ class Pipeline:
                 rec.transform(sim)
         shutil.rmtree(backup, ignore_errors=True)
 
+    def _gps_velocities(self):
+        """Drono greitis (m/s, vietinis rėmas) kiekvienai nuotraukai iš gretimų padėčių ir fotografavimo laikų."""
+        frame = self._load_frame()
+        ph = [p for p in self._photos() if p.get("gps") and p.get("timestamp")]
+        if frame is None or len(ph) < 5:
+            return {}
+        ph.sort(key=lambda p: p["timestamp"])
+        T = np.array([p["timestamp"] for p in ph])
+        G = np.array([frame.to_local(*p["gps"]) for p in ph])
+        out = {}
+        for i, p in enumerate(ph):
+            a, b = max(0, i - 1), min(len(ph) - 1, i + 1)
+            dt = T[b] - T[a]
+            if 0.2 < dt < 6.0:
+                out[p["name"]] = (G[b] - G[a]) / dt
+        return out
+
+    def _time_offset(self, rec):
+        """Laiko poslinkis tarp kadro ir GPS / RTK padėties (s): kamerų centrai po Sim3 sistemingai pasislinkę išilgai
+        skrydžio krypties (fotografuojant skrendant). Įvertinamas iš duomenų; 0 – neaptiktas."""
+        import pycolmap
+        frame, vel = self._load_frame(), self._gps_velocities()
+        photos = {p["name"]: p for p in self._photos()}
+        rows = []
+        for im in rec.images.values():
+            v = vel.get(im.name)
+            if im.has_pose and v is not None and np.linalg.norm(v[:2]) > 2.0:
+                rows.append((im.projection_center(), frame.to_local(*photos[im.name]["gps"]), v))
+        if len(rows) < 10:
+            return 0.0
+        C, G, V = (np.array(x) for x in zip(*rows))
+        if self.time_offset:
+            G = G + V * self.time_offset  # likęs poslinkis – prie jau taikomo pridedamas
+        d = C - G
+        sp = np.linalg.norm(V[:, :2], axis=1)
+        along = (d[:, :2] * V[:, :2]).sum(1) / sp
+        # Mažiausi kvadratai: išilginis poslinkis = Δt · greitis; priimamas, jei aiškiai didesnis už triukšmą
+        dt = float((along * sp).sum() / (sp * sp).sum())
+        se = float(np.sqrt(((along - dt * sp) ** 2).sum() / max(1, len(sp) - 1) / (sp * sp).sum()))
+        if abs(dt) < max(0.01, 4 * se):
+            return 0.0
+        return float(np.clip(self.time_offset + dt, -1.0, 1.0))
+
+    def _rtk_adjust(self, rec):
+        """Derinimas su griežtais GPS / RTK padėčių ribojimais: plokščioje vietovėje iš pačių nuotraukų išlinkimo
+        („dubens“) neatskirsi nuo objektyvo iškraipymo – abu variantai nuotraukas atitinka vienodai, tik padėtys
+        pasako, kuris teisingas (kaip Pix4D / Metashape / ODM su RTK)."""
+        import pycolmap
+        frame = self._load_frame()
+        photos = {p["name"]: p for p in self._photos()}
+        vel = self._gps_velocities()
+        dt = self.time_offset
+        pri, acc = [], []
+        for im in rec.images.values():
+            p = photos.get(im.name)
+            if not (im.has_pose and p and p.get("gps")):
+                continue
+            pos = np.asarray(frame.to_local(*p["gps"]), float)
+            if dt and im.name in vel:
+                pos = pos + vel[im.name] * dt
+            if p.get("acc"):
+                a = max(p["acc"])
+            elif (p.get("xmp") or {}).get("RtkFlag") == 50.0:
+                x = p["xmp"]
+                a = max(x.get("RtkStdLon", 0.02), x.get("RtkStdLat", 0.02), x.get("RtkStdHgt", 0.03), 0.01)
+            else:
+                a = 3.0
+            acc.append(a)
+            # Tūkstančiai nuotraukų taškų „nusveria“ kelias dešimtis padėčių – ribojimas sugriežtinamas (išmatuota:
+            # σ = 3 mm RTK atveju išgaubimą pašalina, nuotraukų reprojekcijos paklaida nepakinta)
+            s = float(np.clip(0.15 * a, 0.003, 0.5))
+            pri.append(pycolmap.PosePrior(position=pos, position_covariance=np.eye(3) * s * s,
+                                          coordinate_system=pycolmap.PosePriorCoordinateSystem.CARTESIAN, corr_data_id=im.data_id))
+        if len(pri) < max(5, 0.8 * rec.num_reg_images()):
+            return False
+        before = rec.compute_mean_reprojection_error()
+        for _ in range(2):
+            bo = pycolmap.BundleAdjustmentOptions()
+            bo.refine_focal_length = False
+            bo.refine_extra_params = not self._calibrated()
+            cfg = pycolmap.BundleAdjustmentConfig()
+            for iid in rec.reg_image_ids():
+                cfg.add_image(iid)
+            pycolmap.create_pose_prior_bundle_adjuster(bo, pycolmap.PosePriorBundleAdjustmentOptions(), cfg, pri, rec).solve()
+        self.log("Derinimas su %s padėtimis (%d nuotr.): reprojekcijos paklaida %.2f → %.2f px"
+                 % ("RTK" if np.median(acc) < 0.2 else "GPS", len(pri), before, rec.compute_mean_reprojection_error()))
+        return True
+
+    def _report_georef(self, rec):
+        frame = self._load_frame()
+        photos = {p["name"]: p for p in self._photos()}
+        vel = getattr(self, "_vel", {})
+        d = []
+        for im in rec.images.values():
+            p = photos.get(im.name)
+            if im.has_pose and p and p.get("gps"):
+                g = frame.to_local(*p["gps"]) + (vel.get(im.name, 0) * self.time_offset if self.time_offset else 0)
+                d.append(im.projection_center() - g)
+        if d:
+            d = np.array(d)
+            self.log("Kamerų padėtys prieš GPS / RTK: XY mediana %.3f m, Z mediana %.3f m"
+                     % (np.median(np.linalg.norm(d[:, :2], axis=1)), np.median(np.abs(d[:, 2]))))
+
     def stage_georef(self):
         import pycolmap
         rec = pycolmap.Reconstruction(os.path.join(self.work, "sfm"))
+        self.time_offset = 0.0
         sim = self._align(rec)
         if sim is not None:
             rec.transform(sim)
+            # Fotografuojant skrendant – laiko poslinkis tarp kadro ir GPS / RTK padėties (pvz. 0,14 s × 8 m/s = 1,1 m):
+            # įvertinamas iš duomenų, padėtys pataisomos; tada derinimas su RTK / GPS padėtimis (pašalina išlinkimą) ir
+            # poslinkis patikslinamas iš jau lygaus modelio
+            adjusted = False
+            for k in range(3):
+                dt = self._time_offset(rec)
+                if dt and abs(dt - self.time_offset) > 0.005:
+                    self.time_offset = dt
+                    self._vel = self._gps_velocities()
+                    self.log("Laiko poslinkis tarp kadro ir GPS padėties: %.3f s – padėtys pataisytos pagal skrydžio greitį" % dt)
+                    sim = self._align(rec, quiet=True)
+                    if sim is not None:
+                        rec.transform(sim)
+                elif adjusted:
+                    break
+                if not self._rtk_adjust(rec):
+                    break
+                adjusted = True
+                sim = self._align(rec, quiet=True)
+                if sim is not None:
+                    rec.transform(sim)
+            if adjusted:
+                self._report_georef(rec)
             self._refine_focal(rec)
         else:
             self.log("Dėmesio: nėra GPS – modelis be georeferencijos ir be mastelio")

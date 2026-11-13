@@ -277,3 +277,19 @@ def test_dji_camera_prior():
     p = geo.camera_prior(dict(base, xmp={}))
     assert p["source"] == "EXIF 35 mm" and abs(p["f"] - 24 / 43.2666 * np.hypot(5280, 3956)) < 0.1
     assert geo.camera_prior(dict(base, focal35=None, xmp={})) is None
+
+
+def test_anzu_xmp_and_timestamp(tmp_path):
+    """Anzu Raptor T ir kt.: XMP vardų sritis „drone:“ (ne „drone-dji:“); tikslus kadro laikas UTCAtExposure."""
+    from PIL import Image
+    xmp = (b'<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+           b'<rdf:Description drone:RelativeAltitude="+34.994" drone:GimbalPitchDegree="-89.90" drone:RtkFlag="50" '
+           b'drone:RtkStdLon="0.00977" drone:RtkStdLat="0.01555" drone:RtkStdHgt="0.02227" '
+           b'drone:UTCAtExposure="2026-10-26T07:09:45.059240"/></rdf:RDF></x:xmpmeta>')
+    p = str(tmp_path / "CAM_0001_V.JPG")
+    Image.new("RGB", (64, 48)).save(p, xmp=xmp)
+    info = geo.read_photo(p)
+    x = info["xmp"]
+    assert x["RelativeAltitude"] == 34.994 and x["RtkFlag"] == 50.0 and x["RtkStdHgt"] == 0.02227
+    from datetime import datetime, timezone
+    assert abs(info["timestamp"] - datetime(2026, 10, 26, 7, 9, 45, 59240, tzinfo=timezone.utc).timestamp()) < 1e-3
