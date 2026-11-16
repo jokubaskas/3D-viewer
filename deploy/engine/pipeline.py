@@ -38,7 +38,7 @@ QUALITY = {
         "feature_size": 2048, "max_features": 8192,           # ODM feature-quality: medium–high
         "neighbors": 16, "sfm": "global", "camera_model": "SIMPLE_RADIAL",
         "texture_size": 2048,                                  # ištiesintų nuotraukų dydis (tekstūrai)
-        "pm_size": 1024, "pm_iters": 3, "pm_samples": 10, "pm_window_step": 2,   # ODM pc-quality: medium (¼)
+        "pm_size": 1024, "pm_iters": 3, "pm_samples": 8, "pm_window_step": 2, "pm_src": 8,   # ODM pc-quality: medium (¼)
         "fusion_min_pixels": 3,
         "mesh_res": 0.12, "mesh_faces": 300_000, "max_pages": 4,  # tinklas ~12 cm, detales perteikia tekstūra
         "point_spacing": 0.05, "ortho_gsd": 0.05, "page_size": 4096,
@@ -51,12 +51,15 @@ QUALITY = {
         # Globalus derinimas (GLOMAP) – visos nuotraukos iš karto, ~2–4 × greičiau už nuoseklų; nepavykus – nuoseklus
         "neighbors": 20, "sfm": "global", "camera_model": "OPENCV",
         "texture_size": 4096,
-        "pm_size": 2000, "pm_iters": 5, "pm_samples": 15, "pm_window_step": 1,   # ODM pc-quality: high (½)
+        # Gylio žemėlapiai – ilgiausias etapas (su 144 nuotr. ir 2000 px, 5 iter., 15 pavyzdžių, langas kas 1 px – 87 min.).
+        # 1600 px (~3 cm/px iš 56 m), 4 iteracijos, 10 pavyzdžių, langas kas 2 px, 12 gretimų nuotraukų – ~5–6 × greičiau;
+        # tinklas vis tiek ~5 cm, smulkias detales perteikia tekstūra iš pilnos raiškos nuotraukų
+        "pm_size": 1600, "pm_iters": 4, "pm_samples": 10, "pm_window_step": 2, "pm_src": 12,
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
         "mesh_res": 0.05, "mesh_faces": 1_000_000, "max_pages": 12,
-        "point_spacing": 0.015, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
+        "point_spacing": 0.02, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
     },
 }
 
@@ -623,7 +626,7 @@ class Pipeline:
         uo = pycolmap.UndistortCameraOptions()
         uo.max_image_size = self.q["texture_size"]
         pycolmap.undistort_images(self.dense_dir, os.path.join(self.work, "sfm_geo"), self.images,
-                                  output_type="COLMAP", undistort_options=uo)
+                                  output_type="COLMAP", num_patch_match_src_images=self.q["pm_src"], undistort_options=uo)
 
     # ---------------------------------------------------------------- 7–8. tankus debesis
     def stage_dense(self):
