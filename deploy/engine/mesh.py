@@ -11,7 +11,8 @@ import numpy as np
 
 
 def poisson_depth(extent, res):
-    return int(np.clip(math.ceil(math.log2(max(extent, 1.0) / max(res, 1e-3))), 8, 13))
+    # Artimiausias gylis norimai raiškai (ne „lubos“: 205 m / 5 cm = 2^12,0 → 12, o ne 13 – 4 × mažiau trikampių, 2 × greičiau)
+    return int(np.clip(round(math.log2(max(extent, 1.0) / max(res, 1e-3))), 8, 13))
 
 
 def poisson(points_ply, out_ply, depth, trim=5.0):
@@ -75,6 +76,13 @@ def clean(mesh, points, spacing, log=print):
 def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_iters=20):
     import open3d as o3d
     pc = o3d.io.read_point_cloud(points_ply)
+    # Poisson įvestis – ne tankesnė nei pusė tinklo raiškos (tankesni taškai detalių neprideda, tik laiką)
+    if spacing < res / 2 and len(pc.points):
+        n0 = len(pc.points)
+        pc = pc.voxel_down_sample(res / 2)
+        points_ply = os.path.join(work, "poisson_in.ply")
+        o3d.io.write_point_cloud(points_ply, pc)
+        log("Tinklui: %d → %d taškų (%.1f cm)" % (n0, len(pc.points), 100 * res / 2))
     P = np.asarray(pc.points)
     # Plotas – be pavienių tolimų taškų (procentiliai), aukštis – visas (aukščiausi stogai neturi būti nupjauti)
     lo, hi = np.percentile(P, 0.5, axis=0), np.percentile(P, 99.5, axis=0)
