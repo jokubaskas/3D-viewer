@@ -1,18 +1,23 @@
 # Atea 3D Matuoklis – transliacijų persiuntėjas (VPS su viešu IP).
 # Jūsų kompiuteris (už mobiliojo ryšio CGNAT) į jį siunčia vieną srautą (RTSPS, šifruota), o VPS jį išdalina
 # klientams per WebRTC (mažas vėlavimas). Klientai prisijungia per jūsų programą (nginx tikrina teises),
-# todėl čia – tik vienas vartotojas „relay“ su slaptu raktu (įrašomas diegiant).
+# todėl čia – vartotojas „relay“ su slaptu raktu (įrašomas diegiant).
+# Išorinė transliacija (pvz. drono bazinė stotis): siunčia čia RTMP arba SRT su atskiru raktu (vartotojas „ingest“,
+# tik į kelius „in_…“, žiūrėti negali); jūsų kompiuteris ją pasiima šifruotu RTSPS ryšiu.
 logLevel: info
 
 # Tik šie prievadai: 8322/tcp (RTSPS iš jūsų kompiuterio), 8889/tcp (WebRTC ryšio nustatymas, HTTPS),
-# 8189/udp ir tcp (WebRTC vaizdas klientams). Valdymo API, RTMP, HLS, SRT, MoQ – išjungti.
+# 8189/udp ir tcp (WebRTC vaizdas klientams), 1935/tcp (RTMP) ir 8890/udp (SRT) – išorinei transliacijai su raktu.
+# Valdymo API, HLS, MoQ – išjungti.
 api: false
 metrics: false
 pprof: false
 playback: false
-rtmp: false
+rtmp: true
+rtmpAddress: :1935
 hls: false
-srt: false
+srt: true
+srtAddress: :8890
 moq: false
 
 rtsp: true
@@ -41,6 +46,12 @@ authInternalUsers:
     permissions:
       - action: publish
       - action: read
+  - user: ingest
+    pass: INGEST_KEY_VALUE
+    ips: []
+    permissions:
+      - action: publish
+        path: ~^in_[A-Za-z0-9_-]+$
 
 paths:
   all_others:

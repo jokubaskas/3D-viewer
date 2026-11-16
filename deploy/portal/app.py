@@ -58,6 +58,10 @@ SESSION_DAYS = float(os.environ.get("SESSION_DAYS", "14"))
 RELAY_HOST = os.environ.get("RELAY_HOST", "").strip()
 RELAY_KEY = os.environ.get("RELAY_KEY", "").strip()
 RELAY_ON = bool(RELAY_HOST and RELAY_KEY and RELAY_HOST not in ("127.0.0.1", "localhost"))
+# Išorinė transliacija per VPS (pvz. drono bazinė stotis siunčia į VPS RTMP / SRT su raktu): šis kompiuteris ją
+# pasiima šifruotu RTSPS ryšiu (tikrinama VPS sertifikato kontrolinė suma). Pavadinimai – RELAY_INGEST (kableliais).
+RELAY_FINGERPRINT = os.environ.get("RELAY_FINGERPRINT", "").strip().lower()
+RELAY_INGEST = [n for n in (x.strip() for x in os.environ.get("RELAY_INGEST", "").split(",")) if re.fullmatch(r"[A-Za-z0-9_-]{1,40}", n)]
 MEDIAMTX_RTSP = os.environ.get("MEDIAMTX_RTSP", "rtsp://mediamtx:8554")
 INVITE_DAYS = 7
 # El. laiškai (SMTP, .env): kvietimai, slaptažodžio keitimas, užsakymų ir naujų duomenų pranešimai. Be SMTP_HOST –
@@ -962,6 +966,50 @@ def _relay_reaper():
 
 if RELAY_ON:
     threading.Thread(target=_relay_reaper, daemon=True).start()
+
+
+def ingest_conf(name: str) -> dict:
+    """MediaMTX kelias, kuris išorinę transliaciją (VPS kelias in_<name>) pasiima tik tada, kai kas nors žiūri."""
+    conf = {"source": f"rtsps://relay:{RELAY_KEY}@{RELAY_HOST}:8322/in_{name}", "sourceOnDemand": True,
+            "sourceOnDemandStartTimeout": "10s", "sourceOnDemandCloseAfter": "20s", "rtspTransport": "tcp"}
+    if RELAY_FINGERPRINT:
+        conf["sourceFingerprint"] = RELAY_FINGERPRINT
+    return conf
+
+
+def ingest_sync() -> int:
+    """Sukuria / atnaujina išorinių transliacijų kelius (MediaMTX juos pamiršta persikrovęs – tikrinama periodiškai)."""
+    if not (RELAY_ON and RELAY_INGEST):
+        return 0
+    n = 0
+    for name in RELAY_INGEST:
+        conf = ingest_conf(name)
+        try:
+            cur = None
+            try:
+                cur = mtx(f"config/paths/get/{name}")
+            except Exception:  # noqa: BLE001
+                pass
+            if cur and cur.get("source") == conf["source"] and (cur.get("sourceFingerprint") or "") == conf.get("sourceFingerprint", ""):
+                continue
+            if cur:
+                mtx(f"config/paths/patch/{name}", conf, "PATCH")
+            else:
+                mtx(f"config/paths/add/{name}", conf, "POST")
+            n += 1
+        except Exception as e:  # noqa: BLE001
+            print(f"[portal] išorinė transliacija {name}: {e}", flush=True)
+    return n
+
+
+def _ingest_loop():
+    while True:
+        ingest_sync()
+        time.sleep(60)
+
+
+if RELAY_ON and RELAY_INGEST and os.environ.get("PORTAL_NO_BG") != "1":
+    threading.Thread(target=_ingest_loop, daemon=True).start()
 
 
 @app.post("/api/items/{iid}/play")

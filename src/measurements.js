@@ -511,7 +511,7 @@ export class MeasurementVisual {
       case 'detections':
         for (const it of m.options.items || []) {
           const c = AI_CLASS_NAMES[it.cls]?.color || color;
-          this._line(it.corners.map((p) => new THREE.Vector3(...p)), c, { width: selected ? 3 : 2, closed: true });
+          this._line((it.outline || it.corners).map((p) => new THREE.Vector3(...p)), c, { width: selected ? 3 : 2, closed: true });
         }
         break;
       default:

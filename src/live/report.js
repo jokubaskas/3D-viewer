@@ -57,7 +57,14 @@ export function drawComposite(g, el, last, o) {
       g.globalAlpha = o.focus && d.id !== o.focus ? 0.45 : 1;
       g.lineWidth = Math.max(2, (o.focus && d.id === o.focus ? 3.5 : 2.5) * s);
       g.strokeStyle = color;
-      g.strokeRect(x, y, w, h);
+      if (d.outline?.length >= 3) {
+        g.beginPath();
+        d.outline.forEach(([px, py], i) => (i ? g.lineTo(ox2 + px * kk, oy2 + py * kk) : g.moveTo(ox2 + px * kk, oy2 + py * kk)));
+        g.closePath();
+        g.fillStyle = color + '33';
+        g.fill();
+        g.stroke();
+      } else g.strokeRect(x, y, w, h);
       const label = detLabel(d);
       const th = Math.round(17 * s), tw = g.measureText(label).width + 8 * s;
       const ly = y - th < 0 ? y : y - th;

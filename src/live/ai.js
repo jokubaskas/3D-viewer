@@ -163,10 +163,10 @@ export class LiveDetector {
         }
         const ai = await this.opts.getAi();
         this.ctl = new AbortController();
-        const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, model: s.model || '', signal: this.ctl.signal });
+        const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, outline: s.outline !== false, model: s.model || '', signal: this.ctl.signal });
         if (!this.on) break;
         if (res.cancelled) continue;
-        let dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k) }));
+        let dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k), outline: d.outline?.map(([x, y]) => [x / fr.k, y / fr.k]) }));
         this.tracking = s.track !== false;
         if (this.tracking) {
           const byClass = {};
@@ -253,7 +253,15 @@ export class LiveDetector {
       const x = ox + x1 * k, y = oy + y1 * k, w = (x2 - x1) * k, h = (y2 - y1) * k;
       const color = classColor(d.class);
       g.strokeStyle = color;
-      g.strokeRect(x, y, w, h);
+      if (d.outline?.length >= 3) {
+        // Objekto forma (MobileSAM): kontūras ir permatomas užpildas
+        g.beginPath();
+        d.outline.forEach(([px, py], i) => (i ? g.lineTo(ox + px * k, oy + py * k) : g.moveTo(ox + px * k, oy + py * k)));
+        g.closePath();
+        g.fillStyle = color + '33';
+        g.fill();
+        g.stroke();
+      } else g.strokeRect(x, y, w, h);
       if (w > 14 || L.dets.length < 40) {
         const label = detLabel(d);
         const tw = g.measureText(label).width + 6;

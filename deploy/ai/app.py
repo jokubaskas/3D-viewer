@@ -280,6 +280,66 @@ def _judge(name: str, length: float, width: float) -> Optional[str]:
     return "truck" if name == "car" else name
 
 
+def _mask_outline(mask: np.ndarray, ox: float = 0.0, oy: float = 0.0, simplify: float = 0.01) -> Optional[list]:
+    """Kaukės (didžiausios dalies) kontūras – supaprastintas daugiakampis vaizdo koordinatėmis."""
+    m = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return None
+    c = max(cnts, key=cv2.contourArea)
+    if cv2.contourArea(c) < 4:
+        return None
+    eps = max(0.7, simplify * cv2.arcLength(c, True))
+    poly = cv2.approxPolyDP(c, eps, True).reshape(-1, 2).astype(float)
+    if len(poly) < 3:
+        return None
+    return [[round(float(x) + ox, 1), round(float(y) + oy, 1)] for x, y in poly]
+
+
+def _box_iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    i = ix * iy
+    return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i + 1e-9)
+
+
+def _pick_mask(masks, scores, box, grow: float = 0.3):
+    """Iš SAM kaukių – visas objektas: didžiausia patikima kaukė, kuri neišeina toli už detektoriaus dėžutės
+    (detektorius iš viršaus dažnai apima tik dalį automobilio – be gaubto ar bagažinės). Šešėlis ar gretimas
+    objektas išeina už išplėstos dėžutės, todėl tokios kaukės atmetamos. Grąžina indeksą arba None."""
+    x1, y1, x2, y2 = box
+    m = grow * max(x2 - x1, y2 - y1)
+    best, area = None, -1
+    for k in range(len(scores)):
+        if scores[k] < max(0.5, scores.max() - 0.1):
+            continue
+        ys, xs = np.nonzero(masks[k])
+        if not len(xs):
+            continue
+        mb = [xs.min(), ys.min(), xs.max() + 1, ys.max() + 1]
+        if mb[0] < x1 - m or mb[1] < y1 - m or mb[2] > x2 + m or mb[3] > y2 + m or _box_iou(mb, box) < 0.4:
+            continue
+        if len(xs) > area:
+            best, area = k, len(xs)
+    return best
+
+
+def _outlines(img: np.ndarray, boxes: list) -> list:
+    """Tiesioginei transliacijai: vaizdas į MobileSAM įkeliamas vieną kartą, kiekvienam objektui – tik kaukės
+    dekoderis (keli ms). Grąžina kontūrą arba None (kai kaukė „išsilieja“ už objekto dėžutės)."""
+    if not boxes:
+        return []
+    pred = get_sam()
+    out = []
+    with _lock:
+        pred.set_image(np.ascontiguousarray(img))
+        for b in boxes:
+            masks, scores, _ = pred.predict(box=np.array(b, float), multimask_output=True)
+            k = _pick_mask(masks, scores, b)
+            out.append(None if k is None else _mask_outline(masks[k]))
+    return out
+
+
 def _refine(img: np.ndarray, box) -> Optional[dict]:
     """MobileSAM kaukė detektoriaus dėžutės viduje -> pasuktas stačiakampis (tikras ilgis, plotis, kryptis)."""
     h, w = img.shape[:2]
@@ -294,9 +354,14 @@ def _refine(img: np.ndarray, box) -> Optional[dict]:
     with _lock:
         pred.set_image(np.ascontiguousarray(crop))
         masks, scores, _ = pred.predict(box=np.array([x1 - cx0, y1 - cy0, x2 - cx0, y2 - cy0]), multimask_output=True)
-    # Iš beveik vienodai patikimų kaukių – mažiausia (didesnės dažnai apima šešėlį ar gretimą automobilį)
-    good = [k for k in range(len(scores)) if scores[k] >= scores.max() - 0.05]
-    best = min(good, key=lambda k: masks[k].sum())
+    # Visas objektas (didžiausia patikima kaukė, neišeinanti toli už dėžutės); jei tokios nėra – mažiausia iš
+    # beveik vienodai patikimų (didesnės dažnai apima šešėlį ar gretimą automobilį) ir ji turi sutapti su dėžute
+    full = _pick_mask(masks, scores, [x1 - cx0, y1 - cy0, x2 - cx0, y2 - cy0])
+    if full is not None:
+        best = full
+    else:
+        good = [k for k in range(len(scores)) if scores[k] >= scores.max() - 0.05]
+        best = min(good, key=lambda k: masks[k].sum())
     mask = masks[best].astype(np.uint8)
     n, comp, stats, _ = cv2.connectedComponentsWithStats(mask)
     if n < 2:
@@ -306,21 +371,22 @@ def _refine(img: np.ndarray, box) -> Optional[dict]:
     area = float(mask.sum())
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     (rx, ry), (rw, rh), ang = cv2.minAreaRect(max(cnts, key=cv2.contourArea))
-    # Kaukė turi sutapti su detektoriaus dėžute (kitaip SAM „išsiliejo“ į kelią ar pievą)
-    bx, by, bw, bh = cv2.boundingRect(mask)
-    ix = max(0.0, min(bx + bw, x2 - cx0) - max(bx, x1 - cx0))
-    iy = max(0.0, min(by + bh, y2 - cy0) - max(by, y1 - cy0))
-    inter = ix * iy
-    iou = inter / (bw * bh + (x2 - x1) * (y2 - y1) - inter + 1e-9)
+    if full is None:
+        # Kaukė turi sutapti su detektoriaus dėžute (kitaip SAM „išsiliejo“ į kelią ar pievą)
+        bx, by, bw, bh = cv2.boundingRect(mask)
+        if _box_iou([bx, by, bx + bw, by + bh], [x1 - cx0, y1 - cy0, x2 - cx0, y2 - cy0]) < 0.55 or scores[best] < 0.5:
+            return None
     fill = area / (rw * rh + 1e-9)
-    if iou < 0.55 or fill < 0.6 or scores[best] < 0.6:
-        return None
+    outline = _mask_outline(mask, cx0, cy0, 0.006)
+    if fill < 0.6 or scores[best] < 0.6:
+        # Ne stačiakampio formos objektas (žmogus, krūva, savo modelio klasė) – tik kontūras
+        return {"outline": outline} if outline else None
     pts = cv2.boxPoints(((rx + cx0, ry + cy0), (rw, rh), ang))
     length, width = max(rw, rh), min(rw, rh)
     # Kryptis: ilgosios ašies kampas nuo šiaurės (vaizdo viršaus), 0–180°
     v = pts[1] - pts[0] if np.linalg.norm(pts[1] - pts[0]) >= np.linalg.norm(pts[2] - pts[1]) else pts[2] - pts[1]
     heading = float(np.degrees(np.arctan2(v[0], -v[1]))) % 180.0
-    return {"corners": pts.tolist(), "length": length, "width": width, "heading": heading}
+    return {"corners": pts.tolist(), "length": length, "width": width, "heading": heading, "outline": outline}
 
 
 class Cancelled(Exception):
@@ -348,24 +414,26 @@ async def detect(
     gsd: float = Form(0.0),
     refine: bool = Form(True),
     model: str = Form(""),
+    outline: bool = Form(False),
 ):
     """Aptinka objektus dideliame vaizde, skaidydamas jį į persidengiančias plyteles.
 
     gsd – vaizdo pikselio dydis metrais. Jei nurodytas, objektai patikrinami pagal tikrus matmenis,
     o klasė (automobilis / sunkvežimis / autobusas) patikslinama pagal ilgį.
-    refine – kiekvienam objektui MobileSAM nustato tikslų (pasuktą) kontūrą.
+    refine – kiekvienam objektui MobileSAM nustato tikslų (pasuktą) kontūrą ir formą („outline“).
+    outline – be refine (transliacijai): tik objektų forma, greitai – vaizdas į MobileSAM įkeliamas vieną kartą.
 
     Skaičiavimai vyksta atskiroje gijoje po vieną plytelę; jei programa atšaukia užklausą
     (uždaro ryšį), darbas nutraukiamas ties kita plytele ir serveris iškart laisvas kitiems veiksmams.
     """
     try:
-        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model)
+        return await _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model, outline)
     except Cancelled:
         print("[ai] /detect atšaukta", flush=True)
         return {"cancelled": True, "detections": []}
 
 
-async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model_id=""):
+async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine, model_id="", outline=False):
     img = read_image(await image.read())
     # Savas modelis: „custom“ – aktyvus, kitaip – nurodytas id; klasės – iš jo aprašo (indeksas = YOLO numeris)
     if model_id == "custom":
@@ -427,8 +495,8 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
                 await _check(request)
             r = await run_in_threadpool(_refine, img, box) if refine else None
             if gsd > 0:
-                cls = _judge(name, r["length"] * gsd, r["width"] * gsd) if r else None
-                if not r:
+                cls = _judge(name, r["length"] * gsd, r["width"] * gsd) if r and "length" in r else None
+                if not r or "length" not in r:
                     # Be tikslaus kontūro – tikriname detektoriaus dėžutę. Pasuktas objektas
                     # ašinėje dėžutėje atrodo platesnis, todėl plotis ribojamas.
                     bw, bh = box[2] - box[0], box[3] - box[1]
@@ -437,7 +505,9 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
                     rejected += 1
                     continue
                 d["class"] = name = cls
-            if r:
+            if r and r.get("outline"):
+                d["outline"] = r["outline"]
+            if r and "corners" in r:
                 d["corners"] = [[round(float(x), 1), round(float(y), 1)] for x, y in r["corners"]]
                 d["heading"] = round(r["heading"], 1)
                 if gsd > 0:
@@ -446,12 +516,19 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
                 continue
             out.append(d)
         out.sort(key=lambda d: -d["score"])
+        if outline and not refine and out:
+            await _check(request)
+            polys = await run_in_threadpool(_outlines, img, [d["box"] for d in out[:80]])
+            for d, p in zip(out, polys):
+                if p:
+                    d["outline"] = p
     return {
         "width": w,
         "height": h,
         "tiles": n_tiles,
         "rejected": rejected,
         "refined": sum(1 for d in out if "corners" in d),
+        "outlined": sum(1 for d in out if "outline" in d),
         "seconds": round(time.time() - t0, 2),
         "detections": out,
     }

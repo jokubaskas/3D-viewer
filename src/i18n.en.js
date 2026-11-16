@@ -955,6 +955,7 @@ export const EN = {
   "Detalumas": "Detail",
   "Jautrumas": "Confidence",
   "Įspėti, kai aptinkamas žmogus": "Alert when a person is detected",
+  'Tiksli objektų forma (kontūras vietoj rėmelio)': 'Exact object shape (outline instead of a box)',
   "Sekti objektus (#numeriai; grįžęs objektas – ne naujas)": "Track objects (#numbers; a returning object is not counted as new)",
   "Fiksuoti šalmo būseną (kol neaišku – „Žmogus“)": "Lock helmet status (shows “Person” until clear)",
   "Fiksuoti, kai AI tikras ≥": "Lock when AI confidence ≥",
