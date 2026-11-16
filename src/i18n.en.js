@@ -509,6 +509,7 @@ export const EN = {
   'Atidaryti tekstūruotą 3D modelį LKS-94': 'Open textured 3D model (LKS-94)',
   '3D modelis': '3D model',
   'Atidaryti taškų debesį LKS-94': 'Open point cloud (LKS-94)',
+  'Apdorojimo eiga: etapų trukmė, tikslumas': 'Processing log: stage durations, accuracy',
   'Atsisiųsti visus rezultatus (all.zip, UTM)': 'Download all results (all.zip, UTM)',
   'Žurnalas': 'Log',
   'Kartoti': 'Retry',

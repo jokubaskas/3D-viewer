@@ -36,7 +36,7 @@ QUALITY = {
     "fast": {
         "label": "Greitas",
         "feature_size": 2048, "max_features": 8192,           # ODM feature-quality: medium–high
-        "neighbors": 24, "sfm": "global", "camera_model": "SIMPLE_RADIAL",
+        "neighbors": 16, "sfm": "global", "camera_model": "SIMPLE_RADIAL",
         "texture_size": 2048,                                  # ištiesintų nuotraukų dydis (tekstūrai)
         "pm_size": 1024, "pm_iters": 3, "pm_samples": 10, "pm_window_step": 2,   # ODM pc-quality: medium (¼)
         "fusion_min_pixels": 3,
@@ -45,8 +45,11 @@ QUALITY = {
     },
     "high": {
         "label": "Aukšta kokybė",
-        "feature_size": 3200, "max_features": 16384,           # ODM feature-quality: high–ultra
-        "neighbors": 48, "sfm": "incremental", "camera_model": "OPENCV",
+        # ODM feature-quality high (~½ nuotraukos), min-num-features 10000. Daugiau požymių SfM tikslumo nepadidina
+        # (išmatuota su RTK skrydžiu), bet požymių paiešką, poras ir derinimą sulėtina 2–4 kartus
+        "feature_size": 2400, "max_features": 10000,
+        # Globalus derinimas (GLOMAP) – visos nuotraukos iš karto, ~2–4 × greičiau už nuoseklų; nepavykus – nuoseklus
+        "neighbors": 20, "sfm": "global", "camera_model": "OPENCV",
         "texture_size": 4096,
         "pm_size": 2000, "pm_iters": 5, "pm_samples": 15, "pm_window_step": 1,   # ODM pc-quality: high (½)
         "fusion_min_pixels": 5,

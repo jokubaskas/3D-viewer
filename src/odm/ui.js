@@ -690,6 +690,7 @@ export function createOdmUI(app) {
             <button class="btn btn-sm btn-outline" data-pact="points" title="Atidaryti taškų debesį LKS-94">Taškai</button>`}
             ${p.ortho === false ? '' : `<button class="btn btn-sm ${p.preset === 'orthoOnly' ? 'btn-primary' : 'btn-outline'}" data-pact="ortho" title="Atidaryti ortofoto žemėlapį: peržiūra ir matavimai">${icon('map')}Ortofoto</button>`}
             <button class="btn btn-sm btn-outline" data-pact="save" title="Atsisiųsti ortofoto, DSM, DTM, taškų debesį ar 3D modelį"><span data-icon="save">${icon('save')}</span>Atsisiųsti</button>
+            <button class="btn btn-sm btn-outline" data-pact="log" title="Apdorojimo eiga: etapų trukmė, tikslumas">Žurnalas</button>
             <button class="btn btn-sm btn-ghost" data-pact="redo" title="Apdoroti visą projektą iš naujo su dabartiniais programos nustatymais (nuotraukos jau serveryje – iš naujo kelti nereikia)">${icon('play')}Perdaryti</button>` : ''}
           ${p.statusCode === STATUS.RUNNING || p.statusCode === STATUS.QUEUED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-ghost danger" data-pact="cancel">Atšaukti</button>` : ''}
           ${p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED ? `<button class="btn btn-sm btn-outline" data-pact="log">Žurnalas</button><button class="btn btn-sm btn-outline" data-pact="restart">Kartoti</button>` : ''}
@@ -742,8 +743,17 @@ export function createOdmUI(app) {
         const pre = btn.closest('.odm-proj').querySelector('.odm-log');
         pre.hidden = !pre.hidden;
         if (!pre.hidden) {
-          const lines = await c.output(uuid, -60).catch(() => c.output(uuid, 0));
-          pre.textContent = (Array.isArray(lines) ? lines.slice(-60) : []).join('\n') || '(tuščia)';
+          const done = btn.closest('.odm-proj').querySelector('[data-pact="redo"]');
+          let lines;
+          if (done) {
+            // Baigtas projektas – visa variklio eiga (etapų trukmė, tikslumas) be COLMAP / Ceres techninių eilučių
+            lines = await c.output(uuid, 0);
+            lines = (Array.isArray(lines) ? lines : []).filter((l) => l.trim() && !/^[IWEF]\d{8} |^\s|^(Residuals|Parameters|Iterations|Time|Initial cost|Final cost|Termination)\b/.test(l));
+          } else {
+            lines = await c.output(uuid, -60).catch(() => c.output(uuid, 0));
+            lines = Array.isArray(lines) ? lines.slice(-60) : [];
+          }
+          pre.textContent = lines.join('\n') || '(tuščia)';
           pre.scrollTop = pre.scrollHeight;
         }
         return;
