@@ -98,12 +98,15 @@ export async function runDetection() {
       const height = isFinite(top) && isFinite(ground) ? units.toMeters(top - ground) : null;
       let cy = surfY(cx, cz);
       if (!isFinite(cy)) cy = box.min.y;
-      const corners = px.map(([x, y]) => {
+      const toLocal = ([x, y]) => {
         const [wx, wz] = img.toWorld(x, y);
         let wy = surfY(wx, wz);
         if (!isFinite(wy)) wy = cy;
-        return viewer.worldToLocal(new THREE.Vector3(wx, wy + lift, wz)).toArray();
-      });
+        return viewer.worldToLocal(new THREE.Vector3(wx, wy + lift, wz)).toArray().map((v) => +v.toFixed(3));
+      };
+      const corners = px.map(toLocal);
+      // Tiksli objekto forma (MobileSAM kontūras) – rodoma vietoje stačiakampio
+      const outline = d.outline?.length >= 3 ? d.outline.map(toLocal) : null;
       return {
         cls: d.class, score: d.score,
         c: viewer.worldToLocal(new THREE.Vector3(cx, cy + lift, cz)).toArray(),
@@ -112,6 +115,7 @@ export async function runDetection() {
         heading: d.heading ?? null,
         height,
         corners,
+        ...(outline ? { outline } : {}),
       };
     });
     // Plokšti objektai (kelio ženklinimas, šuliniai, šešėliai) – ne transportas. Filtras taikomas tik

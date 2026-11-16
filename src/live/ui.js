@@ -128,6 +128,7 @@ export function createLiveUI(app) {
             <select id="live-ai-detail"></select>
           </label>
           <label class="row">Jautrumas <span class="live-ai-th"><input id="live-ai-th" type="range" min="0.2" max="0.8" step="0.05" /><span id="live-ai-th-v" class="small muted"></span></span></label>
+          <label class="row check"><input type="checkbox" id="live-ai-outline" /> Tiksli objektų forma (kontūras vietoj rėmelio)</label>
           <label class="row check"><input type="checkbox" id="live-ai-track" /> Sekti objektus (#numeriai; grįžęs objektas – ne naujas)</label>
           <label class="row" id="live-ai-mem-row">Prisiminti dingusį objektą <select id="live-ai-mem"></select></label>
           <label class="row check" id="live-ai-stab-row"><input type="checkbox" id="live-ai-stab" /> Fiksuoti šalmo būseną (kol neaišku – „Žmogus“)</label>
@@ -769,6 +770,7 @@ export function createLiveUI(app) {
     $('#live-ai-th-v').textContent = `${Math.round(aiSet.threshold * 100)} %`;
     $('#live-ai-alert').checked = aiSet.alertPerson;
     $('#live-ai-track').checked = aiSet.track !== false;
+    $('#live-ai-outline').checked = aiSet.outline !== false;
     $('#live-ai-mem-row').hidden = aiSet.track === false;
     const states = !!aiSet.model && hasStates(aiSet.customClasses);
     $('#live-ai-stab-row').hidden = !states || aiSet.track === false;
@@ -806,6 +808,7 @@ export function createLiveUI(app) {
       renderAiSettings();
     } else if (e.target.id === 'live-ai-alert-class') aiSet.alertClass = e.target.value;
     else if (e.target.id === 'live-ai-detail') aiSet.detail = e.target.value;
+    else if (e.target.id === 'live-ai-outline') aiSet.outline = e.target.checked;
     else if (e.target.id === 'live-ai-track') {
       aiSet.track = e.target.checked;
       renderAiSettings();
