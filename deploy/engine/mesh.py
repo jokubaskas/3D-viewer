@@ -1,4 +1,5 @@
 # Atea variklis – 3D tinklas iš tankaus taškų debesies: Screened Poisson (PoissonRecon per COLMAP, MIT) ir valymas:
+#   • Poisson paviršius už taškų ploto ribų ir žemiau žemiausių taškų (nulinkę kraštai) – nukerpamas;
 #   • Poisson gylis pagal norimą raišką ir srities dydį (ODM mesh-octree-depth logika);
 #   • tankio apkirpimas (COLMAP trim) – pašalinami „ekstrapoliuoti“ paviršiai be taškų;
 #   • tik labai toli (> 25 m) nuo bet kurio taško nutolę dariniai (mažai taškų turinčios vietos – stogai, asfaltas – lieka);
@@ -23,6 +24,28 @@ def poisson(points_ply, out_ply, depth, trim=5.0):
     pycolmap.poisson_meshing(points_ply, out_ply, o)
 
 
+def footprint_mask(points, centers, cell=1.0, below=1.5):
+    """Trikampiai už taškų ploto ribų (Poisson „sijonas“ – nulinkę kraštai) ir žemiau žemiausio taško
+    toje vietoje. Tuščios vietos ploto viduje (vienspalviai stogai, vanduo) – paliekamos."""
+    from scipy import ndimage
+    lo = points[:, :2].min(0) - 3 * cell
+    ij = np.floor((points[:, :2] - lo) / cell).astype(int)
+    shape = tuple(ij.max(0) + 4)
+    zmin = np.full(shape, np.inf)
+    np.minimum.at(zmin, (ij[:, 0], ij[:, 1]), points[:, 2])
+    occ = np.isfinite(zmin)
+    area = ndimage.binary_fill_holes(ndimage.binary_closing(occ, iterations=3, border_value=0))
+    area = ndimage.binary_dilation(area, iterations=1)
+    zlow = ndimage.minimum_filter(zmin, size=3, mode="constant", cval=np.inf)
+    c = np.floor((centers[:, :2] - lo) / cell).astype(int)
+    inside = (c >= 0).all(1) & (c[:, 0] < shape[0]) & (c[:, 1] < shape[1])
+    bad = ~inside
+    ci = c[inside]
+    zl = zlow[ci[:, 0], ci[:, 1]]
+    bad[inside] = ~area[ci[:, 0], ci[:, 1]] | (np.isfinite(zl) & (centers[inside, 2] < zl - below))
+    return bad
+
+
 def clean(mesh, points, spacing, log=print):
     """Pašalina trikampius be taškų atramos ir smulkius gabalus."""
     import open3d as o3d
@@ -34,7 +57,7 @@ def clean(mesh, points, spacing, log=print):
     d, _ = tree.query(V[F].mean(1), k=1, workers=-1)
     # Tik labai toli nuo bet kurio taško nutolę Poisson dariniai. Vienspalviai stogai, asfaltas, vanduo turi mažai taškų
     # (plataus stogo vidurys – dešimtys metrų nuo artimiausio taško) – ten paviršius paliekamas, apkerpa tik Poisson tankis
-    far = d > max(100 * spacing, 25.0)
+    far = (d > max(100 * spacing, 25.0)) | footprint_mask(points, V[F].mean(1), cell=max(1.0, 10 * spacing))
     mesh.remove_triangles_by_mask(far)
     mesh.remove_unreferenced_vertices()
     if len(mesh.triangles):

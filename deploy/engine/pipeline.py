@@ -69,6 +69,18 @@ class Cancelled(Exception):
     pass
 
 
+def depth_bounds(depths, lo=0.001, hi=0.999, margin=0.25):
+    """Bendros gylio ribos visoms nuotraukoms pagal retus taškus (kiekvienos nuotraukos gyliai – atskiras masyvas).
+    COLMAP pagal nutylėjimą kiekvienai nuotraukai ima 1–99 % taškų gylių: aukšto pastato stogas, kuris nuotraukoje
+    užima < 1 % taškų, atsiduria už ribos ir PatchMatch jį „nuleidžia“ žemyn (sugriuvęs pastatas, plūduriuojantis stogas)."""
+    los = [np.quantile(d, lo) for d in depths if len(d) >= 20]
+    his = [np.quantile(d, hi) for d in depths if len(d) >= 20]
+    if not los:
+        return None
+    dmin, dmax = max(min(los) * (1 - margin), 1e-3), max(his) * (1 + margin)
+    return (dmin, dmax) if dmax > dmin else None
+
+
 def pycolmap_device():
     """GPU, jei pycolmap su CUDA ir vaizdo plokštė tikrai yra; kitaip – procesorius."""
     import pycolmap
@@ -624,7 +636,26 @@ class Pipeline:
         o.filter = True
         o.cache_size = 16.0
         o.gpu_index = "0"
+        rng = self._depth_range()
+        if rng:
+            o.depth_min, o.depth_max = rng
+            self.log("Gylio ribos: %.1f–%.1f m (visoms nuotraukoms – aukšti pastatai neapkerpami)" % rng)
         pycolmap.patch_match_stereo(self.dense_dir, options=o)
+
+    def _depth_range(self):
+        import pycolmap
+        rec = pycolmap.Reconstruction(os.path.join(self.dense_dir, "sparse"))
+        depths = []
+        for im in rec.images.values():
+            ids = [p.point3D_id for p in im.points2D if p.has_point3D()]
+            ids = [i for i in ids if rec.points3D[i].track.length() >= 3]
+            if not ids:
+                continue
+            X = np.array([rec.points3D[i].xyz for i in ids])
+            T = im.cam_from_world()
+            z = X @ np.asarray(T.rotation.matrix()).T[:, 2] + T.translation[2]
+            depths.append(z[z > 0])
+        return depth_bounds(depths)
 
     def stage_fusion(self):
         import pycolmap
