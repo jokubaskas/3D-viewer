@@ -34,7 +34,11 @@ fi
 
 # Konfigūracija: viešas IP ir raktas (raktas – tik raidės ir skaičiai)
 case "$RELAY_KEY" in *[!A-Za-z0-9]*) echo "Raktas gali būti tik iš raidžių ir skaičių"; exit 1 ;; esac
-sed -e "s/RELAY_PUBLIC_IP/${IP}/" -e "s/RELAY_KEY_VALUE/${RELAY_KEY}/" /tmp/atea-relay.yml > /etc/mediamtx/mediamtx.yml
+# Išorinės transliacijos (pvz. drono bazinės stoties) raktas – atskiras; be jo – atsitiktinis (niekam nežinomas)
+INGEST_KEY="${RELAY_INGEST_KEY:-$(openssl rand -hex 24)}"
+case "$INGEST_KEY" in *[!A-Za-z0-9]*) echo "Raktas gali būti tik iš raidžių ir skaičių"; exit 1 ;; esac
+sed -e "s/RELAY_PUBLIC_IP/${IP}/" -e "s/RELAY_KEY_VALUE/${RELAY_KEY}/" -e "s/INGEST_KEY_VALUE/${INGEST_KEY}/" \
+  /tmp/atea-relay.yml > /etc/mediamtx/mediamtx.yml
 rm -f /tmp/atea-relay.yml
 chown -R root:mediamtx /etc/mediamtx
 chmod 750 /etc/mediamtx
@@ -72,11 +76,16 @@ ufw allow 8322/tcp >/dev/null
 ufw allow 8889/tcp >/dev/null
 ufw allow 8189/udp >/dev/null
 ufw allow 8189/tcp >/dev/null
+# Išorinė transliacija (su raktu): RTMP ir SRT
+ufw allow 1935/tcp >/dev/null
+ufw allow 8890/udp >/dev/null
 ufw --force enable >/dev/null
 
 sleep 2
 if systemctl is-active --quiet mediamtx; then
   echo "== Paruošta: persiuntėjas veikia (IP ${IP})"
+  # Sertifikato kontrolinė suma – jūsų kompiuteris pagal ją tikrina, kad jungiasi būtent prie šio serverio
+  echo "ATEA_FINGERPRINT=$(openssl x509 -in /etc/mediamtx/server.crt -noout -fingerprint -sha256 | cut -d= -f2 | tr -d : | tr 'A-F' 'a-f')"
 else
   echo "== KLAIDA: MediaMTX nepasileido. Žurnalas:"
   journalctl -u mediamtx -n 30 --no-pager

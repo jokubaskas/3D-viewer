@@ -331,14 +331,27 @@ Dronas → šis kompiuteris (MediaMTX) ──1 srautas, RTSPS, šifruota──�
 
 - **Įdiegimas:** `deploy\relay-setup.bat` → VPS IP → root slaptažodis (iš Hetzner laiško). Skriptas sugeneruoja raktą, įrašo
   `RELAY_HOST`, `RELAY_KEY`, `RELAY_AUTH` į `deploy\.env` ir per SSH įdiegia MediaMTX (v1.21.2, systemd, ugniasienė: 22, 8322,
-  8889, 8189). Tada – `start-windows.bat`. Pakartotinai paleidus – atnaujina (tas pats raktas).
+  8889, 8189, 1935, 8890/udp). Tada – `start-windows.bat`. Pakartotinai paleidus – atnaujina (tas pats raktas).
 - **Kaip veikia:** klientui iš interneto atidarius transliaciją, portalas paleidžia `ffmpeg`, kuris tą patį srautą (be
   perkodavimo) siunčia į VPS. Programa kas 25 s praneša, kad dar žiūrima; po 60 s be žiūrovų siuntimas sustabdomas. Iš
   kompiuterio išeina **vienas** srautas, kad ir kiek žiūrovų – svarbu mobiliajam internetui.
 - **Saugumas:** WebRTC ryšio nustatymas eina per šį serverį (`/live/relay/`, nginx tikrina, ar klientui transliacija
   priskirta) – VPS raktą prideda nginx, klientas jo nemato; vaizdas klientui eina tiesiai iš VPS (UDP 8189). VPS priima
-  tik su raktu ir tik šifruotai (RTSPS / HTTPS); valdymo API, RTMP, HLS išjungti.
+  tik su raktu ir tik šifruotai (RTSPS / HTTPS); valdymo API ir HLS išjungti.
 - **Atsarginis kelias:** jei VPS nepasiekiamas – automatiškai HLS kaip anksčiau. Vietiniame tinkle – WebRTC tiesiai.
+- **Išorinė transliacija (pvz. drono bazinė stotis ar partnerio sistema):** siuntėjas transliaciją siunčia į VPS, o šis
+  kompiuteris ją pasiima šifruotu RTSPS ryšiu (tikrinama VPS sertifikato kontrolinė suma) – tik tol, kol kas nors žiūri.
+  `relay-setup.bat` sugeneruoja atskirą raktą (`RELAY_INGEST_KEY`) ir parodo adresus siuntėjui:
+
+  ```
+  RTMP: rtmp://<VPS-IP>:1935/in_dbox?user=ingest&pass=<RELAY_INGEST_KEY>
+  SRT:  srt://<VPS-IP>:8890?streamid=publish:in_dbox:ingest:<RELAY_INGEST_KEY>
+  ```
+
+  Jei siuntėjas prašo atskirai serverio ir rakto (stream key): serveris `rtmp://<VPS-IP>:1935/`, raktas
+  `in_dbox?user=ingest&pass=<RELAY_INGEST_KEY>`. Programoje transliacija matoma skiltyje „Drono transliacija į šį
+  kompiuterį“ pavadinimu `dbox` (`RELAY_INGEST` – keli pavadinimai kableliais, pvz. `dbox,dbox2`). Su šiuo raktu galima
+  tik siųsti ir tik į kelius `in_…` – žiūrėti ar perimti kitų transliacijų juo negalima.
 
 ## Paskyros, klientai ir prieiga iš interneto
 

@@ -272,6 +272,40 @@ def test_relay_push_and_auth(env, monkeypatch):
     assert chk(ca, "/live/relay/../odm/x") == 403
 
 
+def test_ingest_paths_from_relay(env, monkeypatch):
+    """Išorinė transliacija (drono bazinė stotis → VPS): kelias pasiima VPS srautą RTSPS su sertifikato tikrinimu;
+    jau sukurtas kelias nekuriamas iš naujo."""
+    app = env[0]
+    calls, paths = [], {}
+
+    def fake_mtx(path, body=None, method="GET"):
+        calls.append((method, path))
+        name = path.rsplit("/", 1)[-1]
+        if method == "GET":
+            if name not in paths:
+                raise OSError("404")
+            return paths[name]
+        paths[name] = body
+        return None
+
+    monkeypatch.setattr(app, "mtx", fake_mtx)
+    monkeypatch.setattr(app, "RELAY_ON", True)
+    monkeypatch.setattr(app, "RELAY_HOST", "2.29.109.25")
+    monkeypatch.setattr(app, "RELAY_KEY", "slaptas123")
+    monkeypatch.setattr(app, "RELAY_FINGERPRINT", "ab" * 32)
+    monkeypatch.setattr(app, "RELAY_INGEST", ["dbox"])
+    assert app.ingest_sync() == 1
+    conf = paths["dbox"]
+    assert conf["source"] == "rtsps://relay:slaptas123@2.29.109.25:8322/in_dbox"
+    assert conf["sourceFingerprint"] == "ab" * 32 and conf["sourceOnDemand"] is True
+    assert ("POST", "config/paths/add/dbox") in calls
+    # Antrą kartą – nieko nekeičia
+    assert app.ingest_sync() == 0
+    # Be persiuntėjo – nieko
+    monkeypatch.setattr(app, "RELAY_ON", False)
+    assert app.ingest_sync() == 0
+
+
 def test_chunked_upload_resume(env):
     app, client, adm = env
     it = adm.post("/api/items", json={"kind": "recording", "title": "Skrydis"}, headers=H).json()
