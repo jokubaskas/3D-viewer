@@ -6,20 +6,21 @@
 #   sfm       – kamerų padėtys: „Greitas“ – globalus (GLOMAP), „Aukšta kokybė“ – nuoseklus su GPS ribojimais
 #   georef    – Sim3 į UTM vietinį rėmą pagal GPS (RANSAC) arba kontrolinius taškus (gcp_list.txt)
 #   undistort – ištiesintos nuotraukos tankinimui ir tekstūrai
-#   dense     – gylio žemėlapiai (COLMAP PatchMatch, CUDA) su geometriniu nuoseklumu
-#   fusion    – gylių suliejimas į tankų taškų debesį
+#   dense     – gylio žemėlapiai ir tankus debesis: OpenMVS (CUDA), jo nesant – COLMAP PatchMatch
+#   fusion    – gylių suliejimas į tankų taškų debesį (tik COLMAP; OpenMVS sulieja pats)
 #   filter    – sritis, statistinis triukšmo filtras, retinimas
 #   mesh      – Poisson (PoissonRecon), smulkių / nepagrįstų dalių šalinimas, supaprastinimas
 #   texture   – nuotraukų tekstūra (mvs-texturing, kaip ODM)
 #   export    – GLB / OBJ / LAZ / coords.txt ODM katalogų struktūra (programa juos atidaro kaip ODM rezultatus)
 #   ortho     – ortofoto, DSM, DTM (GeoTIFF / COG) iš tekstūruoto modelio
 # Licencijos: COLMAP / pycolmap – BSD, PoissonRecon – MIT, mvs-texturing – BSD, Open3D – MIT. ODM (AGPL) kodas
-# nenaudojamas – tik jo etapų logika ir parametrai.
+# nenaudojamas – tik jo etapų logika ir parametrai. OpenMVS (AGPL-3.0) – nekeista atskira programa (/opt/openmvs).
 import argparse
 import glob
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -30,6 +31,7 @@ import geo
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG_EXT = (".jpg", ".jpeg", ".tif", ".tiff", ".png")
+OPENMVS = os.environ.get("OPENMVS_BIN", "/opt/openmvs")
 
 # Režimų parametrai. ODM atitikmenys: feature-quality, pc-quality, mesh-octree-depth, mesh-size, orthophoto-resolution.
 QUALITY = {
@@ -39,6 +41,7 @@ QUALITY = {
         "neighbors": 16, "sfm": "global", "camera_model": "SIMPLE_RADIAL",
         "texture_size": 2048,                                  # ištiesintų nuotraukų dydis (tekstūrai)
         "pm_size": 1024, "pm_iters": 3, "pm_samples": 8, "pm_window_step": 2, "pm_src": 8,   # ODM pc-quality: medium (¼)
+        "mvs_size": 1280, "mvs_views": 4,                     # OpenMVS: didžiausia kraštinė, gretimų nuotraukų sk.
         "fusion_min_pixels": 3,
         "mesh_res": 0.12, "mesh_faces": 300_000, "max_pages": 4,  # tinklas ~12 cm, detales perteikia tekstūra
         "point_spacing": 0.05, "ortho_gsd": 0.05, "page_size": 4096,
@@ -55,6 +58,9 @@ QUALITY = {
         # 1600 px (~3 cm/px iš 56 m), 4 iteracijos, 10 pavyzdžių, langas kas 2 px, 12 gretimų nuotraukų – ~5–6 × greičiau;
         # tinklas vis tiek ~5 cm, smulkias detales perteikia tekstūra iš pilnos raiškos nuotraukų
         "pm_size": 1600, "pm_iters": 4, "pm_samples": 10, "pm_window_step": 2, "pm_src": 12,
+        # OpenMVS: ~2000 px (kaip ODM pc-quality high – ½ nuotraukos) ir 5 gretimos nuotraukos. Patikrinta su 144 RTK
+        # nuotraukomis: 30 m pastato sienos ištisinės nuo žemės iki stogo (COLMAP PatchMatch jas nukirsdavo per pusę)
+        "mvs_size": 2048, "mvs_views": 5,
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
@@ -67,7 +73,7 @@ STAGES = [("dataset", 2), ("features", 7), ("matching", 7), ("sfm", 12), ("geore
           ("fusion", 5), ("filter", 2), ("mesh", 7), ("texture", 11), ("export", 5), ("ortho", 8)]
 STAGE_LABELS = {"dataset": "nuotraukų nuskaitymas", "features": "požymių paieška", "matching": "nuotraukų porų derinimas",
                 "sfm": "kamerų padėtys (SfM)", "georef": "georeferencija", "undistort": "nuotraukų ištiesinimas",
-                "dense": "gylio žemėlapiai (GPU)", "fusion": "tankus taškų debesis", "filter": "taškų debesies valymas",
+                "dense": "gylio žemėlapiai ir tankus debesis (GPU)", "fusion": "tankus taškų debesis", "filter": "taškų debesies valymas",
                 "mesh": "3D tinklas", "texture": "tekstūra", "export": "rezultatų įrašymas", "ortho": "ortofoto ir DSM / DTM"}
 
 
@@ -85,6 +91,10 @@ def depth_bounds(depths, lo=0.001, hi=0.999, margin=0.25):
         return None
     dmin, dmax = max(min(los) * (1 - margin), 1e-3), max(his) * (1 + margin)
     return (dmin, dmax) if dmax > dmin else None
+
+
+def openmvs_available():
+    return all(os.access(os.path.join(OPENMVS, b), os.X_OK) for b in ("DensifyPointCloud", "InterfaceCOLMAP"))
 
 
 def pycolmap_device():
@@ -630,6 +640,68 @@ class Pipeline:
 
     # ---------------------------------------------------------------- 7–8. tankus debesis
     def stage_dense(self):
+        marker = os.path.join(self.dense_dir, ".openmvs")
+        if os.path.exists(marker):
+            os.remove(marker)
+        if openmvs_available():
+            try:
+                self._dense_openmvs()
+                open(marker, "w").close()
+                return
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover – GPU / atminties klaidos realiame darbe
+                self.log("OpenMVS nepavyko (%s) – naudojamas COLMAP PatchMatch" % e)
+        self._dense_colmap()
+
+    def _run_tool(self, args, quiet=()):
+        """Paleidžia išorinę programą, jos eilutes rašo į žurnalą (be progreso eilučių), atšaukus – nutraukia."""
+        self.log("$ " + " ".join(os.path.basename(a) if i == 0 else a for i, a in enumerate(args)))
+        pr = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        try:
+            for raw in pr.stdout:
+                for line in raw.replace("\r", "\n").split("\n"):
+                    line = line.strip()
+                    if line and not any(q in line for q in quiet):
+                        self.log(line)
+                if os.path.exists(os.path.join(self.dir, "cancel")):
+                    pr.kill()
+                    raise Cancelled()
+        finally:
+            if pr.poll() is None:
+                pr.kill()
+            pr.wait()
+        if pr.returncode != 0:
+            raise RuntimeError("%s baigėsi klaida (%d)" % (os.path.basename(args[0]), pr.returncode))
+
+    def _dense_openmvs(self):
+        import pycolmap
+        ws = os.path.join(self.work, "openmvs")
+        shutil.rmtree(ws, ignore_errors=True)
+        os.makedirs(os.path.join(ws, "sparse"))
+        # InterfaceCOLMAP skaito tekstinį modelį (naujesnio COLMAP dvejetainis formatas jam nepažįstamas)
+        pycolmap.Reconstruction(os.path.join(self.dense_dir, "sparse")).write_text(os.path.join(ws, "sparse"))
+        scene = os.path.join(ws, "scene.mvs")
+        self._run_tool([os.path.join(OPENMVS, "InterfaceCOLMAP"), "-i", ws, "-o", scene,
+                        "--image-folder", os.path.join(self.dense_dir, "images") + os.sep, "-w", ws])
+        # ODM nustatymai: gylio žemėlapių optimizavimas (dėmių šalinimas, tarpų užpildymas), filtras su 1 nuotrauka
+        with open(os.path.join(ws, "Densify.ini"), "w") as f:
+            f.write("Optimize = 7\nMin Views Filter = 1\n")
+        threads = str(max(1, (os.cpu_count() or 4)))
+        self._run_tool([os.path.join(OPENMVS, "DensifyPointCloud"), scene, "-o", os.path.join(ws, "dense.mvs"),
+                        "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
+                        "--resolution-level", "0", "--max-resolution", str(self.q["mvs_size"]),
+                        "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
+                        "--number-views-fuse", "2", "--sub-resolution-levels", "2", "--max-threads", threads,
+                        "--archive-type", "3", "--cuda-device", os.environ.get("OPENMVS_CUDA_DEVICE", "-1"), "-v", "1"],
+                       quiet=("depth-maps ", "ETA", "MEMORYINFO", "VmPeak", "VmSize", "ENDINFO"))
+        ply = os.path.join(ws, "dense.ply")
+        if not os.path.isfile(ply):
+            raise RuntimeError("OpenMVS nesukūrė taškų debesies")
+        shutil.move(ply, os.path.join(self.dense_dir, "fused.ply"))
+        shutil.rmtree(ws, ignore_errors=True)   # gylio žemėlapiai užima kelis GB
+
+    def _dense_colmap(self):
         import pycolmap
         if pycolmap_device() != pycolmap.Device.cuda:
             raise RuntimeError("Gylio žemėlapiams reikia NVIDIA vaizdo plokštės (CUDA) – ji nerasta")
@@ -665,6 +737,9 @@ class Pipeline:
 
     def stage_fusion(self):
         import pycolmap
+        if os.path.exists(os.path.join(self.dense_dir, ".openmvs")):
+            self.log("Tankus debesis jau sulietas (OpenMVS)")
+            return
         o = pycolmap.StereoFusionOptions()
         o.max_image_size = self.q["pm_size"]
         o.min_num_pixels = self.q["fusion_min_pixels"]
