@@ -718,7 +718,7 @@ class Pipeline:
                         "--resolution-level", "0", "--max-resolution", str(self.q["mvs_size"]),
                         "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
                         "--number-views-fuse", "2", "--sub-resolution-levels", "1", "--max-threads", threads,
-                        "--archive-type", "3", "--cuda-device", OPENMVS_DEVICE, "-v", "1"],
+                        "--cuda-device", OPENMVS_DEVICE, "-v", "1"],  # numatytas archyvas: debesis su matomumu (tinklui)
                        quiet=("ETA", "%)"))
         ply = os.path.join(ws, "dense.ply")
         if not os.path.isfile(ply):
