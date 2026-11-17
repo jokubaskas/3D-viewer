@@ -37,13 +37,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "fastapi==0.115.*" "uvicorn==0.32.*" httpx pytest
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - run: pip install "fastapi==0.115.*" "uvicorn==0.32.*" httpx pytest pytest-xdist
       - run: PORTAL_NO_BG=1 pytest -q deploy/portal
       - name: Atea variklis – visa grandinė su sintetiniu rinkiniu, API, realistiškas vaizdas (be GPU)
         run: |
           dpkg -s libegl1 libgl1 libusb-1.0-0 libsm6 libice6 >/dev/null 2>&1 || (sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libusb-1.0-0 libsm6 libice6)
           pip install numpy scipy pillow open3d-cpu==0.20.0 trimesh pycolmap==4.2.1 pyproj "laspy[lazrs]" rasterio python-multipart
-          pytest -q deploy/engine
+          # Failai lygiagrečiai (visa grandinė – vienas failas, todėl ji neskaičiuojama du kartus)
+          pytest -q -n auto --dist loadfile deploy/engine
       - name: Python sintaksė (ai, odm, relay)
         run: python -m py_compile deploy/ai/*.py deploy/odm/*.py deploy/engine/*.py
 
