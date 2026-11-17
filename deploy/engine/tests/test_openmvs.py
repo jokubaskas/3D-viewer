@@ -20,6 +20,12 @@ if os.path.basename(sys.argv[0]) == "DensifyPointCloud":
         print("CUDA error"); sys.exit(3)
     print("depth-maps 1 (50%%, 1s, ETA 1s)...\\rdepth-maps 2 (100%%, 2s, ETA 0s)...\\rDensifying point-cloud completed")
     out = out[:-4] + ".ply"
+    open(out[:-4] + ".mvs", "w").write("mvs")
+    open(os.path.join(os.path.dirname(out), "x.dmap"), "w").write("d")
+if os.path.basename(sys.argv[0]) == "ReconstructMesh":
+    import shutil
+    shutil.copyfile(os.environ["FAKE_MESH"], out)
+    sys.exit(0)
 open(out, "w").write("ply")
 """ % sys.executable
 
@@ -28,7 +34,7 @@ open(out, "w").write("ply")
 def pl(tmp_path, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for b in ("InterfaceCOLMAP", "DensifyPointCloud"):
+    for b in ("InterfaceCOLMAP", "DensifyPointCloud", "ReconstructMesh"):
         f = bin_dir / b
         f.write_text(FAKE)
         f.chmod(f.stat().st_mode | stat.S_IXUSR)
@@ -46,7 +52,9 @@ def test_openmvs_dense_and_fusion_skip(pl, tmp_path):
     assert pipeline.openmvs_available()
     pl.stage_dense()
     assert open(os.path.join(pl.dense_dir, "fused.ply")).read() == "ply"
-    assert not os.path.exists(os.path.join(pl.work, "openmvs"))   # gylio žemėlapiai išvalyti
+    ws = os.path.join(pl.work, "openmvs")
+    assert not os.path.exists(os.path.join(ws, "x.dmap"))                 # gylio žemėlapiai išvalyti
+    assert os.path.isfile(os.path.join(ws, "dense.mvs"))                  # scena lieka tinklui
     calls = open(tmp_path / "calls.txt").read().splitlines()
     assert calls[0].startswith("InterfaceCOLMAP")
     assert "--max-resolution 1024" in calls[1] and "--number-views 5" in calls[1] and "--cuda-device -2" in calls[1]
@@ -69,3 +77,21 @@ def test_cancel_kills_tool(pl):
     open(os.path.join(pl.dir, "cancel"), "w").close()
     with pytest.raises(pipeline.Cancelled):
         pl.stage_dense()
+
+
+def test_openmvs_mesh_cropped_and_workspace_removed(pl, tmp_path, monkeypatch):
+    import numpy as np
+    o3d = pytest.importorskip("open3d")
+    pl.stage_dense()
+    # Taškai – 20 × 20 m plotas; OpenMVS tinklas – 60 × 60 m plokštuma (už taškų ribų turi būti nukirpta)
+    g = np.random.default_rng(0).uniform(-10, 10, (20000, 2))
+    o3d.io.write_point_cloud(pl.out("odm_filterpoints", "point_cloud.ply"),
+                             o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.c_[g, np.zeros(len(g))])))
+    big = o3d.geometry.TriangleMesh.create_box(60, 60, 0.01).translate((-30, -30, -0.01)).subdivide_midpoint(5)
+    o3d.io.write_triangle_mesh(str(tmp_path / "m.ply"), big)
+    monkeypatch.setenv("FAKE_MESH", str(tmp_path / "m.ply"))
+    pl.stage_mesh()
+    V = np.asarray(o3d.io.read_triangle_mesh(pl.out("odm_meshing", "odm_mesh.ply")).vertices)
+    assert len(V) and np.abs(V[:, :2]).max() < 14
+    assert not os.path.exists(os.path.join(pl.work, "openmvs"))
+    assert any("OpenMVS tinklas" in m for m in pl.logs)

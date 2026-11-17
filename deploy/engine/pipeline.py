@@ -723,8 +723,10 @@ class Pipeline:
         ply = os.path.join(ws, "dense.ply")
         if not os.path.isfile(ply):
             raise RuntimeError("OpenMVS nesukūrė taškų debesies")
-        shutil.move(ply, os.path.join(self.dense_dir, "fused.ply"))
-        shutil.rmtree(ws, ignore_errors=True)   # gylio žemėlapiai užima kelis GB
+        shutil.copyfile(ply, os.path.join(self.dense_dir, "fused.ply"))
+        # Gylio žemėlapiai užima kelis GB – trinami; scena ir debesis su matomumu lieka tinklui (ReconstructMesh)
+        for f in glob.glob(os.path.join(ws, "*.dmap")):
+            os.remove(f)
 
     def _dense_colmap(self):
         import pycolmap
@@ -800,9 +802,37 @@ class Pipeline:
     # ---------------------------------------------------------------- 10. tinklas
     def stage_mesh(self):
         import mesh as meshmod
+        ws = os.path.join(self.work, "openmvs")
+        if (os.path.exists(os.path.join(self.dense_dir, ".openmvs")) and os.path.isfile(os.path.join(ws, "dense.mvs"))
+                and os.access(os.path.join(OPENMVS, "ReconstructMesh"), os.X_OK)
+                and os.environ.get("ATEA_MESH", "openmvs") != "poisson"):
+            try:
+                self._mesh_openmvs(ws)
+                shutil.rmtree(ws, ignore_errors=True)
+                return
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover – realaus darbo klaidos
+                self.log("OpenMVS tinklas nepavyko (%s) – naudojamas Poisson" % e)
+        shutil.rmtree(ws, ignore_errors=True)
         meshmod.build(self.out("odm_filterpoints", "point_cloud.ply"), self.out("odm_meshing", "odm_mesh.ply"),
                       res=self.q["mesh_res"], max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"],
                       work=self.work, log=self.log)
+
+    def _mesh_openmvs(self, ws):
+        """Tinklas pagal matomumą (Delaunay + grafo pjūvis, kaip RealityCapture / Metashape): erdvė tarp kameros ir
+        jos matomo taško – tuščia. Stiklinėms sienoms ir stogams, kur taškų mažai, tai duoda tiesias sienas ir
+        aštrius kampus, o Poisson tokias vietas „išpučia“ ar „įdubina“."""
+        import mesh as meshmod
+        raw = os.path.join(ws, "mesh.ply")
+        self._run_tool([os.path.join(OPENMVS, "ReconstructMesh"), os.path.join(ws, "dense.mvs"),
+                        "-p", os.path.join(ws, "dense.ply"), "-o", raw, "-w", ws,
+                        "--free-space-support", "1", "--max-threads", str(max(1, os.cpu_count() or 4)), "-v", "1"],
+                       quiet=("ETA", "%)"))
+        if not os.path.isfile(raw):
+            raise RuntimeError("ReconstructMesh nesukūrė tinklo")
+        meshmod.finish(raw, self.out("odm_meshing", "odm_mesh.ply"), self.out("odm_filterpoints", "point_cloud.ply"),
+                       max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log)
 
     # ---------------------------------------------------------------- 11. tekstūra
     def stage_texture(self):
