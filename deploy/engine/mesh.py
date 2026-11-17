@@ -155,3 +155,37 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_
     m.compute_vertex_normals()
     o3d.io.write_triangle_mesh(out_ply, m, write_vertex_colors=True)
     return len(m.triangles)
+
+
+def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3):
+    """OpenMVS (ReconstructMesh) tinklas → toks pat rezultatas kaip build(): be dalių už taškų ploto (pasirinkta sritis,
+    „sijonas“), be smulkių gabalų, ne daugiau max_faces trikampių."""
+    import open3d as o3d
+    m = o3d.io.read_triangle_mesh(mesh_ply)
+    if not len(m.triangles):
+        raise RuntimeError("Tuščias tinklas")
+    P = np.asarray(o3d.io.read_point_cloud(points_ply).points)
+    n0 = len(m.triangles)
+    V, F = np.asarray(m.vertices), np.asarray(m.triangles)
+    m.remove_triangles_by_mask(footprint_mask(P, V[F].mean(1), cell=max(1.0, 10 * spacing)))
+    m.remove_unreferenced_vertices()
+    if len(m.triangles):
+        cl, cnt, _ = m.cluster_connected_triangles()
+        cl, cnt = np.asarray(cl), np.asarray(cnt)
+        m.remove_triangles_by_mask(cnt[cl] < max(200, 0.002 * cnt.max()))
+        m.remove_unreferenced_vertices()
+    m.remove_degenerate_triangles()
+    m.remove_duplicated_triangles()
+    m.remove_non_manifold_edges()
+    if smooth_iters:
+        m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
+    n1 = len(m.triangles)
+    if n1 > max_faces:
+        m = m.simplify_quadric_decimation(max_faces)
+        m.remove_unreferenced_vertices()
+    if not len(m.triangles):
+        raise RuntimeError("Po valymo 3D tinklas tuščias")
+    log("OpenMVS tinklas: %d → %d (už ploto ribų pašalinta) → %d trikampių" % (n0, n1, len(m.triangles)))
+    m.compute_vertex_normals()
+    o3d.io.write_triangle_mesh(out_ply, m)
+    return len(m.triangles)
