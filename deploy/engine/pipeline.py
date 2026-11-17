@@ -32,6 +32,9 @@ import geo
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG_EXT = (".jpg", ".jpeg", ".tif", ".tiff", ".png")
 OPENMVS = os.environ.get("OPENMVS_BIN", "/opt/openmvs")
+# OpenMVS gylio žemėlapiai – procesoriumi (-2). GPU (-1) ~6 × greitesnis, bet su tomis pačiomis 144 nuotraukomis ant
+# stiklinių sienų ir stogo davė 2,5–4 × mažiau taškų: tinklas virš pastato išsipūsdavo. Procesorius (24 br.) – ~6 min.
+OPENMVS_DEVICE = os.environ.get("OPENMVS_CUDA_DEVICE", "-2")
 
 # Režimų parametrai. ODM atitikmenys: feature-quality, pc-quality, mesh-octree-depth, mesh-size, orthophoto-resolution.
 QUALITY = {
@@ -76,7 +79,7 @@ STAGES = [("dataset", 2), ("features", 7), ("matching", 7), ("sfm", 12), ("geore
           ("fusion", 5), ("filter", 2), ("mesh", 7), ("texture", 11), ("export", 5), ("ortho", 8)]
 STAGE_LABELS = {"dataset": "nuotraukų nuskaitymas", "features": "požymių paieška", "matching": "nuotraukų porų derinimas",
                 "sfm": "kamerų padėtys (SfM)", "georef": "georeferencija", "undistort": "nuotraukų ištiesinimas",
-                "dense": "gylio žemėlapiai ir tankus debesis (GPU)", "fusion": "tankus taškų debesis", "filter": "taškų debesies valymas",
+                "dense": "gylio žemėlapiai ir tankus debesis", "fusion": "tankus taškų debesis", "filter": "taškų debesies valymas",
                 "mesh": "3D tinklas", "texture": "tekstūra", "export": "rezultatų įrašymas", "ortho": "ortofoto ir DSM / DTM"}
 
 
@@ -715,7 +718,7 @@ class Pipeline:
                         "--resolution-level", "0", "--max-resolution", str(self.q["mvs_size"]),
                         "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
                         "--number-views-fuse", "2", "--sub-resolution-levels", "1", "--max-threads", threads,
-                        "--archive-type", "3", "--cuda-device", os.environ.get("OPENMVS_CUDA_DEVICE", "-1"), "-v", "1"],
+                        "--archive-type", "3", "--cuda-device", OPENMVS_DEVICE, "-v", "1"],
                        quiet=("ETA", "%)"))
         ply = os.path.join(ws, "dense.ply")
         if not os.path.isfile(ply):

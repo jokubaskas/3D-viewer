@@ -1,5 +1,5 @@
-# Perskaičiuoja projektą nuo nurodyto etapo (ankstesni etapai nekartojami). Pvz. OpenMVS procesoriumi, ne GPU:
-#   docker exec -e OPENMVS_CUDA_DEVICE=-2 -i <variklio konteineris> python3 - <projekto ID> dense < deploy\engine\rerun.py
+# Perskaičiuoja projektą nuo nurodyto etapo (ankstesni etapai nekartojami). Pvz. OpenMVS su GPU:
+#   docker exec -e OPENMVS_CUDA_DEVICE=-1 -i <variklio konteineris> python3 - <projekto ID> dense < deploy\engine\rerun.py
 import json
 import os
 import sys
@@ -23,7 +23,7 @@ def main(task, start="dense"):
         if os.path.exists(p):
             os.remove(p)
     print("Perskaičiuojama nuo „%s“, režimas %s, OpenMVS įrenginys %s" % (
-        start, quality, os.environ.get("OPENMVS_CUDA_DEVICE", "-1 (GPU)")), flush=True)
+        start, quality, pipeline.OPENMVS_DEVICE + (" (GPU)" if pipeline.OPENMVS_DEVICE != "-2" else " (procesorius)")), flush=True)
     pipeline.Pipeline(root, quality).run()
 
 
