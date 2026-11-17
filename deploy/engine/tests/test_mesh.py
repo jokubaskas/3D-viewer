@@ -69,12 +69,16 @@ def test_footprint_mask_cuts_skirt_keeps_roof_hole():
         [10, 10, -4],    # po žeme (Poisson „sijonas“)
         [36, 0, -3],     # už ploto ribos – nulinkęs kraštas
         [29.5, 0, -0.5],  # pats kraštas – paliekamas
-        [0, 0, 26],      # „balionas“ virš stogo be taškų
-        [20, 20, 4],     # „balionas“ virš žemės
-        [7.9, 0, 21.5],  # stogo kraštas – paliekamas
     ], float)
     bad = mesh.footprint_mask(P, C, cell=1.0)
-    assert list(bad) == [False, False, True, True, False, True, True, False]
+    assert list(bad) == [False, False, True, True, False]
+
+
+def test_clamp_above_flattens_balloon():
+    P = _scene(np.random.default_rng(0))
+    V = np.array([[0, 0, 26], [20, 20, 4], [7.9, 0, 20.3], [10, 10, 0.1]], float)
+    z, n = mesh.clamp_above(P, V)
+    assert n == 2 and abs(z[0] - 20) < 0.1 and abs(z[1]) < 0.2 and z[2] == 20.3 and z[3] == 0.1
 
 
 def test_mesh_no_balloon_over_sparse_roof(tmp_path):
