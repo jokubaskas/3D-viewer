@@ -34,9 +34,10 @@ def poisson(points_ply, out_ply, depth, trim=5.0):
     pycolmap.poisson_meshing(points_ply, out_ply, o)
 
 
-def footprint_mask(points, centers, cell=1.0, below=1.5):
-    """Trikampiai už taškų ploto ribų (Poisson „sijonas“ – nulinkę kraštai) ir žemiau žemiausio taško
-    toje vietoje. Tuščios vietos ploto viduje (vienspalviai stogai, vanduo) – paliekamos."""
+def footprint_mask(points, centers, cell=1.0, below=1.5, above=2.0):
+    """Trikampiai už taškų ploto ribų (Poisson „sijonas“ – nulinkę kraštai), žemiau žemiausio taško toje vietoje
+    ir aukščiau aukščiausio aplinkinio taško (Poisson „balionas“ virš stogo, kuriame mažai taškų – be šito virš
+    pastato kabodavo gabalai). Tuščios vietos ploto viduje (vienspalviai stogai, vanduo) – paliekamos."""
     from scipy import ndimage
     lo = points[:, :2].min(0) - 3 * cell
     ij = np.floor((points[:, :2] - lo) / cell).astype(int)
@@ -47,12 +48,19 @@ def footprint_mask(points, centers, cell=1.0, below=1.5):
     area = ndimage.binary_fill_holes(ndimage.binary_closing(occ, iterations=3, border_value=0))
     area = ndimage.binary_dilation(area, iterations=1)
     zlow = ndimage.minimum_filter(zmin, size=3, mode="constant", cval=np.inf)
+    zmax = np.full(shape, -np.inf)
+    np.maximum.at(zmax, (ij[:, 0], ij[:, 1]), points[:, 2])
+    # Aukščiausias taškas aplink (~9 m); kur tiek toli taškų nėra (plataus stogo vidurys) – plačiau (~31 m)
+    zhigh = ndimage.maximum_filter(zmax, size=9, mode="constant", cval=-np.inf)
+    zhigh = np.where(np.isfinite(zhigh), zhigh, ndimage.maximum_filter(zmax, size=31, mode="constant", cval=-np.inf))
     c = np.floor((centers[:, :2] - lo) / cell).astype(int)
     inside = (c >= 0).all(1) & (c[:, 0] < shape[0]) & (c[:, 1] < shape[1])
     bad = ~inside
     ci = c[inside]
     zl = zlow[ci[:, 0], ci[:, 1]]
-    bad[inside] = ~area[ci[:, 0], ci[:, 1]] | (np.isfinite(zl) & (centers[inside, 2] < zl - below))
+    zh = zhigh[ci[:, 0], ci[:, 1]]
+    z = centers[inside, 2]
+    bad[inside] = ~area[ci[:, 0], ci[:, 1]] | (np.isfinite(zl) & (z < zl - below)) | (np.isfinite(zh) & (z > zh + above))
     return bad
 
 
