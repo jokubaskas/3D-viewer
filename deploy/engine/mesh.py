@@ -15,6 +15,15 @@ def poisson_depth(extent, res):
     return int(np.clip(round(math.log2(max(extent, 1.0) / max(res, 1e-3))), 8, 13))
 
 
+def effective_res(points, res, max_faces, cell=1.0, oversample=8):
+    """Poisson raiška pagal trikampių biudžetą: tinklas vis tiek supaprastinamas iki max_faces, todėl daugiau nei
+    ~8 × biudžeto trikampių (plotas / raiška²) tik ilgina Poisson, išlyginimą ir supaprastinimą (205 m sritis: 29 mln.
+    → 1 mln. trikampių truko 20 min.), o detalių po supaprastinimo neprideda."""
+    ij = np.unique(np.floor(points[:, :2] / cell).astype(np.int64), axis=0)
+    area = len(ij) * cell * cell * 1.3          # + sienos ir šlaitai
+    return max(res, math.sqrt(2.0 * area / (oversample * max_faces)))
+
+
 def poisson(points_ply, out_ply, depth, trim=5.0):
     import pycolmap
     o = pycolmap.PoissonMeshingOptions()
@@ -76,14 +85,20 @@ def clean(mesh, points, spacing, log=print):
 def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_iters=20):
     import open3d as o3d
     pc = o3d.io.read_point_cloud(points_ply)
+    P = np.asarray(pc.points)
+    if len(P):
+        r = effective_res(P, res, max_faces)
+        if r > res * 1.05:
+            log("Tinklo raiška %.1f cm vietoj %.1f cm – %d trikampių ribai tiek užtenka" % (100 * r, 100 * res, max_faces))
+        res = r
     # Poisson įvestis – ne tankesnė nei pusė tinklo raiškos (tankesni taškai detalių neprideda, tik laiką)
-    if spacing < res / 2 and len(pc.points):
-        n0 = len(pc.points)
+    if spacing < res / 2 and len(P):
+        n0 = len(P)
         pc = pc.voxel_down_sample(res / 2)
         points_ply = os.path.join(work, "poisson_in.ply")
         o3d.io.write_point_cloud(points_ply, pc)
         log("Tinklui: %d → %d taškų (%.1f cm)" % (n0, len(pc.points), 100 * res / 2))
-    P = np.asarray(pc.points)
+        P = np.asarray(pc.points)
     # Plotas – be pavienių tolimų taškų (procentiliai), aukštis – visas (aukščiausi stogai neturi būti nupjauti)
     lo, hi = np.percentile(P, 0.5, axis=0), np.percentile(P, 99.5, axis=0)
     lo[2], hi[2] = np.percentile(P[:, 2], 0.01), P[:, 2].max()
