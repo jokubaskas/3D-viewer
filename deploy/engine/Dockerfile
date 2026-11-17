@@ -1,6 +1,6 @@
 # Atea variklis (GPU): nuotraukos → 3D modelis, taškų debesis, ortofoto, DSM / DTM (COLMAP / pycolmap – BSD,
 # PoissonRecon – MIT, Open3D – MIT, savas tekstūravimas ir ortofoto) ir realistiškas vaizdas (gsplat – Apache 2.0).
-# Gylio žemėlapiai ir tankus debesis – OpenMVS (AGPL-3.0, nekeista atskira programa, žr. THIRD_PARTY.md).
+# Gylio žemėlapiai ir tankus debesis – OpenMVS (AGPL-3.0, nekeista atskira programa, licencija – /opt/openmvs/LICENSE).
 # PyTorch 2.4 + CUDA 12.4 + Python 3.10 (Ubuntu 22.04). Tik su NVIDIA GPU.
 
 # ---- OpenMVS su CUDA (tik DensifyPointCloud ir InterfaceCOLMAP) ----

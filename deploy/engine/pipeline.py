@@ -655,22 +655,41 @@ class Pipeline:
         self._dense_colmap()
 
     def _run_tool(self, args, quiet=()):
-        """Paleidžia išorinę programą, jos eilutes rašo į žurnalą (be progreso eilučių), atšaukus – nutraukia."""
+        """Paleidžia išorinę programą ir jos išvestį rašo į žurnalą. Progreso eilutės (quiet) – ne dažniau kaip kas
+        minutę. Atšaukimas tikrinamas kas sekundę, net kai programa nieko nerašo."""
+        import re
+        import select
         self.log("$ " + " ".join(os.path.basename(a) if i == 0 else a for i, a in enumerate(args)))
-        pr = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        pr = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        fd, buf, last = pr.stdout.fileno(), b"", 0.0
+
+        def emit(raw):
+            nonlocal last
+            line = raw.decode("utf-8", "replace").strip()
+            if not line:
+                return
+            if any(q in line for q in quiet):
+                if time.time() - last < 60:
+                    return
+                last = time.time()
+            self.log(line)
         try:
-            for raw in pr.stdout:
-                for line in raw.replace("\r", "\n").split("\n"):
-                    line = line.strip()
-                    if line and not any(q in line for q in quiet):
-                        self.log(line)
+            while True:
+                if select.select([fd], [], [], 1.0)[0]:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    *lines, buf = re.split(rb"[\r\n]", buf + chunk)
+                    for ln in lines:
+                        emit(ln)
                 if os.path.exists(os.path.join(self.dir, "cancel")):
-                    pr.kill()
                     raise Cancelled()
+            emit(buf)
         finally:
             if pr.poll() is None:
                 pr.kill()
             pr.wait()
+            pr.stdout.close()
         if pr.returncode != 0:
             raise RuntimeError("%s baigėsi klaida (%d)" % (os.path.basename(args[0]), pr.returncode))
 
@@ -694,7 +713,7 @@ class Pipeline:
                         "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
                         "--number-views-fuse", "2", "--sub-resolution-levels", "2", "--max-threads", threads,
                         "--archive-type", "3", "--cuda-device", os.environ.get("OPENMVS_CUDA_DEVICE", "-1"), "-v", "1"],
-                       quiet=("depth-maps ", "ETA", "MEMORYINFO", "VmPeak", "VmSize", "ENDINFO"))
+                       quiet=("ETA", "%)"))
         ply = os.path.join(ws, "dense.ply")
         if not os.path.isfile(ply):
             raise RuntimeError("OpenMVS nesukūrė taškų debesies")

@@ -18,7 +18,7 @@ out = a[a.index("-o") + 1]
 if os.path.basename(sys.argv[0]) == "DensifyPointCloud":
     if os.environ.get("FAKE_FAIL"):
         print("CUDA error"); sys.exit(3)
-    print("Geometric-consistent estimated depth-maps 1 (50%%, 1s, ETA 1s)...\\rDensifying point-cloud completed")
+    print("depth-maps 1 (50%%, 1s, ETA 1s)...\\rdepth-maps 2 (100%%, 2s, ETA 0s)...\\rDensifying point-cloud completed")
     out = out[:-4] + ".ply"
 open(out, "w").write("ply")
 """ % sys.executable
@@ -51,7 +51,7 @@ def test_openmvs_dense_and_fusion_skip(pl, tmp_path):
     assert calls[0].startswith("InterfaceCOLMAP")
     assert "--max-resolution 2048" in calls[1] and "--number-views 5" in calls[1] and "--cuda-device -1" in calls[1]
     assert any("Densifying point-cloud completed" in m for m in pl.logs)
-    assert not any("depth-maps 1 (" in m for m in pl.logs)              # progreso eilutės neužteršia žurnalo
+    assert sum("depth-maps" in m for m in pl.logs) == 1                 # progresas – ne dažniau kaip kas minutę
     pl.stage_fusion()                                                    # COLMAP suliejimas nepaleidžiamas
     assert any("OpenMVS" in m for m in pl.logs)
 

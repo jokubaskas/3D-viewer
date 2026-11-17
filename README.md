@@ -108,12 +108,12 @@ Mygtukas **„Iš nuotraukų“** atidaro projekto kūrimo langą:
      - *Greitas* – peržiūrai lauke: požymiai iki 2048 px, globalus kamerų derinimas (GLOMAP), gylio žemėlapiai ¼ raiškos, tinklas ~8 cm, iki 0,4 mln. trikampių, ortofoto 5 cm/px.
      - *Aukšta kokybė* – požymiai iki 3200 px, nuoseklus kamerų derinimas su GPS ribojimais, gylio žemėlapiai ½ raiškos su geometriniu nuoseklumu, tinklas ~2,5 cm, iki 1,5 mln. trikampių, tekstūra iki 8192 px lapų, ortofoto pagal nuotraukų GSD. Po modelio **automatiškai apmokomas realistiškas vaizdas** (žr. žemiau).
    - **Tik ortofoto** – greitas 2D žemėlapis be 3D modelio (OpenDroneMap `fast-orthophoto`, `skip-3dmodel`, paslauga `nodeodm`): kelis kartus greičiau, mažai RAM; DSM / DTM apytiksliai. Geriausia statmenoms nuotraukoms. Baigus – mygtukas **Ortofoto**.
-   - **Atea variklio etapai** (ODM logika, laisvos licencijos įrankiai; ODM / AGPL kodas nenaudojamas):
+   - **Atea variklio etapai** (ODM logika; ODM kodas nenaudojamas, OpenMVS (AGPL-3.0) – nekeista atskira programa `/opt/openmvs`, jos šaltinis – [cdcseacave/openMVS v2.3.0](https://github.com/cdcseacave/openMVS/tree/v2.3.0)):
      1. *nuotraukos* – EXIF ir DJI XMP, programos `geo.txt` (perskaičiuoti aukščiai ir RTK tikslumas), vietinis UTM rėmas (kaip ODM `coords.txt`);
      2. *požymiai ir poros* – SIFT (COLMAP / [pycolmap](https://github.com/colmap/colmap), BSD, GPU), poros pagal GPS artumą (be GPS – visos arba iš eilės), geometrinis patikrinimas;
      3. *kamerų padėtys* – COLMAP: *Greitas* – globalus (GLOMAP), *Aukšta kokybė* – nuoseklus su GPS padėtimis kaip ribojimais;
      4. *georeferencija* – Sim3 į UTM pagal GPS (RANSAC riba pagal tikslumą: RTK FIX – centimetrai, be RTK – metrai) arba pagal **kontrolinius taškus** (`gcp_list.txt`, ODM formatas – taškai trianguliuojami iš jų matymų nuotraukose);
-     5. *tankus taškų debesis* – COLMAP PatchMatch (CUDA) su geometriniu nuoseklumu ir gylių suliejimas; pasirinkta sritis (`boundary.geojson`), statistinis triukšmo filtras;
+     5. *tankus taškų debesis* – OpenMVS DensifyPointCloud (CUDA, kaip ODM): aukštų pastatų sienos ištisinės nuo žemės iki stogo; jei OpenMVS nepavyksta – COLMAP PatchMatch; pasirinkta sritis (`boundary.geojson`), statistinis triukšmo filtras;
      6. *3D tinklas* – Screened Poisson (PoissonRecon, MIT) su tankio apkirpimu; pašalinami trikampiai be taškų atramos („burbulai“, užlaidos) ir smulkūs atskiri gabalai, supaprastinama;
      7. *tekstūra* – savas tekstūravimas (mvs-texturing logika): kiekvienam trikampiui geriausia nuotrauka pagal matomą plotą (užstojimai – spindulių sekimu), parinkimas išlyginamas tarp kaimynų (mažiau siūlių), nuotraukų iškarpos sudedamos į JPEG lapus;
      8. *ortofoto, DSM, DTM* – tikra ortoprojekcija iš tekstūruoto modelio (pastatai nevirsta, ortofoto tiksliai sutampa su 3D); DTM – iš DSM pašalinus pastatus ir medžius (morfologinis atvėrimas).
