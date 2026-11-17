@@ -72,3 +72,11 @@ def test_footprint_mask_cuts_skirt_keeps_roof_hole():
     ], float)
     bad = mesh.footprint_mask(P, C, cell=1.0)
     assert list(bad) == [False, False, True, True, False]
+
+
+def test_effective_res_follows_face_budget():
+    rng = np.random.default_rng(1)
+    P = np.c_[rng.uniform(0, 200, (200000, 2)), np.zeros(200000)]        # 200 × 200 m
+    assert mesh.effective_res(P, 0.05, 1_000_000) == pytest.approx(0.114, abs=0.005)
+    small = P[(P[:, 0] < 20) & (P[:, 1] < 20)]                            # 20 × 20 m – lieka norima raiška
+    assert mesh.effective_res(small, 0.05, 1_000_000) == 0.05
