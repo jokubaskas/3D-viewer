@@ -56,6 +56,27 @@ def footprint_mask(points, centers, cell=1.0, below=1.5):
     return bad
 
 
+def clamp_above(points, V, cell=1.0, above=0.5):
+    """Poisson „balionas“ virš stogo, kuriame mažai taškų (lygus / stiklinis stogas): paviršius išsipučia keliais–
+    keliolika metrų virš sienų viršaus, o dėžė nukerpa jo viršų – virš pastato „kabo“ gabalai. Viršūnės, aukštesnės nei
+    aukščiausias aplinkinis taškas (~9 m, kur taškų nėra – ~31 m), nuleidžiamos iki jo: lygus stogas sienų viršaus
+    aukštyje. Grąžina naujus aukščius ir pakeistų viršūnių skaičių."""
+    from scipy import ndimage
+    lo = points[:, :2].min(0) - 3 * cell
+    ij = np.floor((points[:, :2] - lo) / cell).astype(int)
+    shape = tuple(ij.max(0) + 4)
+    zmax = np.full(shape, -np.inf)
+    np.maximum.at(zmax, (ij[:, 0], ij[:, 1]), points[:, 2])
+    zhigh = ndimage.maximum_filter(zmax, size=9, mode="constant", cval=-np.inf)
+    zhigh = np.where(np.isfinite(zhigh), zhigh, ndimage.maximum_filter(zmax, size=31, mode="constant", cval=-np.inf))
+    c = np.clip(np.floor((V[:, :2] - lo) / cell).astype(int), 0, np.array(shape) - 1)
+    zh = zhigh[c[:, 0], c[:, 1]]
+    hi = np.isfinite(zh) & (V[:, 2] > zh + above)
+    z = V[:, 2].copy()
+    z[hi] = zh[hi]
+    return z, int(hi.sum())
+
+
 def clean(mesh, points, spacing, log=print):
     """Pašalina trikampius be taškų atramos ir smulkius gabalus."""
     import open3d as o3d
@@ -114,6 +135,12 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_
     # Viršuje – daugiau vietos: kur taškų nėra (vienspalvis stogas), Poisson paviršius išsilenkia virš aukščiausio taško
     box = o3d.geometry.AxisAlignedBoundingBox(lo - 1.0, hi + np.array([1.0, 1.0, 5.0]))
     m = m.crop(box)
+    V = np.asarray(m.vertices)
+    z, n = clamp_above(P, V, cell=max(1.0, 10 * spacing))
+    if n:
+        V[:, 2] = z
+        m.vertices = o3d.utility.Vector3dVector(V)
+        log("Poisson išsipūtimas virš taškų nuleistas: %d viršūnių" % n)
     m = clean(m, P, spacing, log)
     # Išlyginimas (Taubin – nemažina tūrio ir nesuapvalina pastatų kaip paprastas vidurkinimas): pašalina taškų
     # debesies triukšmo „raukšles“ – lygesnis paviršius, tekstūra be trikampių raštų

@@ -41,7 +41,7 @@ QUALITY = {
         "neighbors": 16, "sfm": "global", "camera_model": "SIMPLE_RADIAL",
         "texture_size": 2048,                                  # ištiesintų nuotraukų dydis (tekstūrai)
         "pm_size": 1024, "pm_iters": 3, "pm_samples": 8, "pm_window_step": 2, "pm_src": 8,   # ODM pc-quality: medium (¼)
-        "mvs_size": 1280, "mvs_views": 4,                     # OpenMVS: didžiausia kraštinė, gretimų nuotraukų sk.
+        "mvs_size": 768, "mvs_views": 4,                      # OpenMVS: didžiausia kraštinė, gretimų nuotraukų sk.
         "fusion_min_pixels": 3,
         "mesh_res": 0.12, "mesh_faces": 300_000, "max_pages": 4,  # tinklas ~12 cm, detales perteikia tekstūra
         "point_spacing": 0.05, "ortho_gsd": 0.05, "page_size": 4096,
@@ -58,9 +58,10 @@ QUALITY = {
         # 1600 px (~3 cm/px iš 56 m), 4 iteracijos, 10 pavyzdžių, langas kas 2 px, 12 gretimų nuotraukų – ~5–6 × greičiau;
         # tinklas vis tiek ~5 cm, smulkias detales perteikia tekstūra iš pilnos raiškos nuotraukų
         "pm_size": 1600, "pm_iters": 4, "pm_samples": 10, "pm_window_step": 2, "pm_src": 12,
-        # OpenMVS: ~2000 px (kaip ODM pc-quality high – ½ nuotraukos) ir 5 gretimos nuotraukos. Patikrinta su 144 RTK
-        # nuotraukomis: 30 m pastato sienos ištisinės nuo žemės iki stogo (COLMAP PatchMatch jas nukirsdavo per pusę)
-        "mvs_size": 2048, "mvs_views": 5,
+        # OpenMVS: ~1000 px (kaip ODM pc-quality medium – ¼ nuotraukos) ir 5 gretimos nuotraukos. Patikrinta su 144 RTK
+        # nuotraukomis: 30 m pastato sienos ištisinės, stogas savo aukštyje (16 mln. taškų). Su 2048 px – 65 mln. taškų,
+        # o lygiame stikliniame stoge daug triukšmo: stogas dingo, virš pastato „kabojo“ gabalai
+        "mvs_size": 1024, "mvs_views": 5,
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
@@ -713,7 +714,7 @@ class Pipeline:
                         "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
                         "--resolution-level", "0", "--max-resolution", str(self.q["mvs_size"]),
                         "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
-                        "--number-views-fuse", "2", "--sub-resolution-levels", "2", "--max-threads", threads,
+                        "--number-views-fuse", "2", "--sub-resolution-levels", "1", "--max-threads", threads,
                         "--archive-type", "3", "--cuda-device", os.environ.get("OPENMVS_CUDA_DEVICE", "-1"), "-v", "1"],
                        quiet=("ETA", "%)"))
         ply = os.path.join(ws, "dense.ply")

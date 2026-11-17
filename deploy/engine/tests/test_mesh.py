@@ -74,6 +74,31 @@ def test_footprint_mask_cuts_skirt_keeps_roof_hole():
     assert list(bad) == [False, False, True, True, False]
 
 
+def test_clamp_above_flattens_balloon():
+    P = _scene(np.random.default_rng(0))
+    V = np.array([[0, 0, 26], [20, 20, 4], [7.9, 0, 20.3], [10, 10, 0.1]], float)
+    z, n = mesh.clamp_above(P, V)
+    assert n == 2 and abs(z[0] - 20) < 0.1 and abs(z[1]) < 0.2 and z[2] == 20.3 and z[3] == 0.1
+
+
+def test_mesh_no_balloon_over_sparse_roof(tmp_path):
+    """Stogas beveik be taškų (tik kraštai) – Poisson neturi „išsipūsti“ virš pastato."""
+    rng = np.random.default_rng(2)
+    P = _scene(rng)
+    roof = (P[:, 2] > 19.9) & (np.abs(P[:, 0]) < 7) & (np.abs(P[:, 1]) < 5)
+    P = P[~roof]
+    pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P))
+    pc.colors = o3d.utility.Vector3dVector(np.full((len(P), 3), 0.5))
+    pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=1.0, max_nn=30))
+    pc.orient_normals_to_align_with_direction([0, 0, 1])
+    pts = str(tmp_path / "p.ply")
+    o3d.io.write_point_cloud(pts, pc)
+    out = str(tmp_path / "m.ply")
+    mesh.build(pts, out, res=0.25, max_faces=200_000, spacing=0.1, work=str(tmp_path), log=lambda m: None)
+    V = np.asarray(o3d.io.read_triangle_mesh(out).vertices)
+    assert V[:, 2].max() < 22.5, V[:, 2].max()
+
+
 def test_effective_res_follows_face_budget():
     rng = np.random.default_rng(1)
     P = np.c_[rng.uniform(0, 200, (200000, 2)), np.zeros(200000)]        # 200 × 200 m
