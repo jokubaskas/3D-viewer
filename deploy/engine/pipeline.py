@@ -65,7 +65,9 @@ QUALITY = {
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
         "mesh_res": 0.05, "mesh_faces": 1_000_000, "max_pages": 12,
-        "point_spacing": 0.02, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
+        # Taškų debesis kas 4 cm: OpenMVS (2048 px) duoda ~65 mln. taškų, kas 2 cm iš jų likdavo 60 mln. – valymas
+        # 4 min., tinklas dar ilgiau, o ~5 cm tinklui ir matavimams tiek nereikia
+        "point_spacing": 0.04, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
     },
 }
 
