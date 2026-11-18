@@ -221,3 +221,79 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     m.compute_vertex_normals()
     o3d.io.write_triangle_mesh(out_ply, m)
     return len(m.triangles)
+
+
+def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, wall_edge=1.5):
+    """2,5D tinklas (kaip ODM pagal nutylėjimą ir greiti įrankiai statmenoms drono nuotraukoms): aukščių žemėlapis
+    (aukščiausias patikimas taškas langelyje) → tinklelio trikampiai. Pastatų sienos – vertikalios nuo stogo krašto iki
+    žemės, stogai plokšti; stiklo atspindžių taškai pastato viduje ir po stogu neturi įtakos. Kur taškų nėra (ploto
+    viduje) – užpildoma artimiausiu aukščiu."""
+    import open3d as o3d
+    from scipy import ndimage
+    P = np.asarray(points, np.float64)
+    lo = P[:, :2].min(0)
+    ij = np.floor((P[:, :2] - lo) / cell).astype(np.int64)
+    nx, ny = ij.max(0) + 1
+    key = ij[:, 0] * ny + ij[:, 1]
+    # Langelio aukštis – 2-asis didžiausias taškas (pavienis triukšmo taškas virš stogo neiškelia paviršiaus)
+    order = np.lexsort((-P[:, 2], key))
+    k, z = key[order], P[order, 2]
+    first = np.r_[True, k[1:] != k[:-1]]
+    idx = np.flatnonzero(first)
+    nxt = np.minimum(idx + 1, len(k) - 1)
+    second = np.where(k[nxt] == k[idx], z[nxt], z[idx])
+    Z = np.full(nx * ny, np.nan)
+    Z[k[idx]] = second
+    Z = Z.reshape(nx, ny)
+    occ = np.isfinite(Z)
+    area = ndimage.binary_fill_holes(ndimage.binary_closing(occ, iterations=5, border_value=0))
+    # Tuščių langelių užpildymas artimiausiu aukščiu (tik ploto viduje), tada 3×3 medianinis – be dygių, kraštai aštrūs
+    _, (ii, jj) = ndimage.distance_transform_edt(~occ, return_indices=True)
+    Z = Z[ii, jj]
+    Z = ndimage.median_filter(Z, size=3)
+    n_fill = int((area & ~occ).sum())
+    # Tinklelis: viršūnė kiekvienam ploto langeliui, du trikampiai kvadratui (įstrižainė – mažesnio aukščių skirtumo)
+    vid = np.full((nx, ny), -1, np.int64)
+    vid[area] = np.arange(int(area.sum()))
+    gi, gj = np.nonzero(area)
+    V = np.c_[lo[0] + (gi + 0.5) * cell, lo[1] + (gj + 0.5) * cell, Z[gi, gj]]
+    a, b, c, d = vid[:-1, :-1], vid[1:, :-1], vid[1:, 1:], vid[:-1, 1:]
+    ok = (a >= 0) & (b >= 0) & (c >= 0) & (d >= 0)
+    za, zb, zc, zd = Z[:-1, :-1][ok], Z[1:, :-1][ok], Z[1:, 1:][ok], Z[:-1, 1:][ok]
+    a, b, c, d = a[ok], b[ok], c[ok], d[ok]
+    diag_ac = np.abs(za - zc) <= np.abs(zb - zd)
+    F = np.concatenate([np.c_[a, b, c][diag_ac], np.c_[a, c, d][diag_ac],
+                        np.c_[a, b, d][~diag_ac], np.c_[b, c, d][~diag_ac]])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(F))
+    # Tinklelio „laipteliai“ sienose (10 cm) ištiesinami – siena tampa plokštuma, supaprastinus – dideli trikampiai,
+    # o tekstūra – iš vienos nuotraukos (be vertikalių juostų). Taubin nemažina tūrio ir beveik neapvalina kraštų
+    m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
+    n0 = len(F)
+    if n0 > max_faces // 2:
+        # Pusė biudžeto – sienų padalijimas (žemiau) trikampių vėl prideda
+        m = m.simplify_quadric_decimation(max_faces // 2)
+        m.remove_unreferenced_vertices()
+    m.remove_degenerate_triangles()
+    # Sienos 2,5D tinkle – aukšti siauri trikampiai (stogo kraštas → žemė, 30 m × 10 cm): kiekvienas jų gauna vieną
+    # nuotrauką, ir siena subyra į vertikalias juostas. Ilgos kraštinės padalijamos iki ~1,5 m – sienos tampa tinkleliu,
+    # tekstūros lopai jungiasi į didelius plotus
+    import trimesh
+    Vm, Fm = np.asarray(m.vertices), np.asarray(m.triangles)
+    nrm = np.cross(Vm[Fm[:, 1]] - Vm[Fm[:, 0]], Vm[Fm[:, 2]] - Vm[Fm[:, 0]])
+    steep = np.abs(nrm[:, 2]) < 0.5 * np.linalg.norm(nrm, axis=1)     # tik sienos (žemė ir stogai – kaip yra)
+    edge = wall_edge
+    while True:   # trikampių riba – sienų padalijimas stambesnis, jei netelpa
+        Vw, Fw = trimesh.remesh.subdivide_to_size(Vm, Fm[steep], max_edge=edge, max_iter=8)
+        if (~steep).sum() + len(Fw) <= max_faces or edge > 50:
+            break
+        edge *= 2
+    Vd = np.concatenate([Vm, Vw])
+    Fd = np.concatenate([Fm[~steep], Fw + len(Vm)])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(Vd), o3d.utility.Vector3iVector(Fd))
+    m.remove_duplicated_vertices()
+    m.remove_unreferenced_vertices()
+    m.compute_vertex_normals()
+    o3d.io.write_triangle_mesh(out_ply, m)
+    log("2,5D tinklas: %d × %d langelių po %.0f cm (užpildyta %d), %d → %d trikampių" % (
+        nx, ny, cell * 100, n_fill, n0, len(m.triangles)))
+    return len(m.triangles)
