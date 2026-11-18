@@ -411,3 +411,61 @@ def write_glb(path, V, F, face_uv, face_page, page_paths):
         tm = trimesh.Trimesh(V[vid], tri, visual=vis, vertex_normals=normals[vid], process=False)
         scene.add_geometry(tm, geom_name="page%d" % p)
     scene.export(path, include_normals=True)
+
+
+def import_obj(obj_path, out_prefix, work=None, quality=90, log=print):
+    """Tekstūruotas OBJ (OpenMVS TextureMesh) → tie patys rezultatai kaip texture(): <out_prefix>.obj/.mtl,
+    _map_<n>.jpg lapai, .glb ir work/texture_uv.npz (ortofoto)."""
+    from PIL import Image
+    src_dir = os.path.dirname(obj_path)
+    V, VT, F, FT, FP = [], [], [], [], []
+    mtl_file, mats, cur = None, [], -1
+    with open(obj_path) as f:
+        for line in f:
+            if line.startswith("v "):
+                V.append(line.split()[1:4])
+            elif line.startswith("vt "):
+                VT.append(line.split()[1:3])
+            elif line.startswith("f "):
+                c = [p.split("/") for p in line.split()[1:4]]
+                F.append([int(p[0]) - 1 for p in c])
+                FT.append([int(p[1]) - 1 for p in c])
+                FP.append(cur)
+            elif line.startswith("usemtl "):
+                name = line.split(None, 1)[1].strip()
+                if name not in mats:
+                    mats.append(name)
+                cur = mats.index(name)
+            elif line.startswith("mtllib "):
+                mtl_file = line.split(None, 1)[1].strip()
+    maps = {}
+    if mtl_file:
+        name = None
+        with open(os.path.join(src_dir, mtl_file)) as f:
+            for line in f:
+                if line.startswith("newmtl "):
+                    name = line.split(None, 1)[1].strip()
+                elif line.strip().startswith("map_Kd") and name:
+                    maps[name] = line.strip().split(None, 1)[1].strip()
+    V = np.array(V, np.float64)
+    VT = np.array(VT, np.float64)
+    F = np.array(F, np.int64)
+    FP = np.array(FP, np.int32)
+    if not len(F) or (FP < 0).any() or any(m not in maps for m in mats):
+        raise RuntimeError("Netinkamas tekstūruotas OBJ")
+    uv = VT[np.array(FT)]
+    face_uv = np.stack([uv[..., 0], 1.0 - uv[..., 1]], -1)
+    base = os.path.basename(out_prefix)
+    out_dir = os.path.dirname(out_prefix)
+    names = []
+    for i, m in enumerate(mats):
+        n = "%s_map_%d.jpg" % (base, i)
+        Image.open(os.path.join(src_dir, maps[m])).convert("RGB").save(os.path.join(out_dir, n), quality=quality)
+        names.append(n)
+    log("Tekstūra (OpenMVS): %d trikampių, %d lapai" % (len(F), len(names)))
+    write_obj(out_prefix, V, F, face_uv, FP, names)
+    write_glb(out_prefix + ".glb", V, F, face_uv, FP, [os.path.join(out_dir, n) for n in names])
+    if work:
+        np.savez(os.path.join(work, "texture_uv.npz"), V=V, F=F, uv=face_uv.astype(np.float32), page=FP,
+                 pages=np.array([os.path.join(out_dir, n) for n in names]))
+    return len(names)
