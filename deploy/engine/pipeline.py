@@ -840,10 +840,10 @@ class Pipeline:
         dst = self.out("odm_meshing", "odm_mesh.ply")
         meshmod.finish(raw, dst, self.out("odm_filterpoints", "point_cloud.ply"),
                        max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log)
-        if os.environ.get("ATEA_REFINE", "1") == "0" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
+        if os.environ.get("ATEA_REFINE", "0") != "1" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
             return
-        # Patikslinimas pagal nuotraukas (fotometrinis): viršūnės pastumiamos taip, kad nuotraukos sutaptų –
-        # plokščios sienos, aštrūs kampai, išsilygina skylių užtaisymų „kristalai“. Nepavykus – lieka neištaisytas
+        # Patikslinimas pagal nuotraukas (fotometrinis). Išjungtas pagal nutylėjimą: stikliniame pastate jis pats
+        # išvalo skylių užtaisymus (sienose vėl skylės) ir užtrunka ~15 min. (24 br.). Įjungti – ATEA_REFINE=1
         try:
             self._run_tool([os.path.join(OPENMVS, "RefineMesh"), os.path.join(ws, "dense.mvs"), "-m", dst,
                             "-o", os.path.join(ws, "refined.mvs"), "-w", ws, "--resolution-level", "1",
@@ -865,14 +865,16 @@ class Pipeline:
         import texturing
         ws = os.path.join(self.work, "openmvs")
         if (os.path.isfile(os.path.join(ws, "dense.mvs")) and os.access(os.path.join(OPENMVS, "TextureMesh"), os.X_OK)
-                and os.environ.get("ATEA_TEXTURE", "openmvs") != "own"):
+                and os.environ.get("ATEA_TEXTURE", "own") == "openmvs"):
             try:
-                # Lopai parenkami visam paviršiui kartu (grafo pjūvis), siūlės išlyginamos visame modelyje ir
-                # lopų kraštuose – be „mozaikos“ iš skirtingų nuotraukų atspindžių
-                self._run_tool([os.path.join(OPENMVS, "TextureMesh"), os.path.join(ws, "dense.mvs"),
+                # Pasirinktinai (ATEA_TEXTURE=openmvs): lopai parenkami visam paviršiui kartu – mažiau lopų, bet
+                # palyginus su sava tekstūra (tas pats tinklas, 144 nuotr.) – neryškesnė, užtaisytos skylės be spalvos.
+                # scene.mvs – pilnos raiškos nuotraukos (dense.mvs – sumažintos iki gylio raiškos). Globalus siūlių
+                # išlyginimas OpenMVS 2.3 lūžta (std::out_of_range), todėl išjungtas
+                self._run_tool([os.path.join(OPENMVS, "TextureMesh"), os.path.join(ws, "scene.mvs"),
                                 "-m", self.out("odm_meshing", "odm_mesh.ply"), "-o", os.path.join(ws, "textured.mvs"),
                                 "-w", ws, "--export-type", "obj", "--max-texture-size", str(self.q["page_size"]),
-                                "--empty-color", "8421504", "--close-holes", "0",
+                                "--empty-color", "8421504", "--close-holes", "0", "--global-seam-leveling", "0",
                                 "--max-threads", str(max(1, os.cpu_count() or 4)), "--cuda-device", OPENMVS_DEVICE,
                                 "-v", "1"], quiet=("ETA", "%)"))
                 texturing.import_obj(os.path.join(ws, "textured.obj"),
