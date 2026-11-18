@@ -87,7 +87,7 @@ def test_openmvs_mesh_cropped_and_workspace_removed(pl, tmp_path, monkeypatch):
     g = np.random.default_rng(0).uniform(-10, 10, (20000, 2))
     o3d.io.write_point_cloud(pl.out("odm_filterpoints", "point_cloud.ply"),
                              o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.c_[g, np.zeros(len(g))])))
-    big = o3d.geometry.TriangleMesh.create_box(60, 60, 0.01).translate((-30, -30, -0.01)).subdivide_midpoint(5)
+    big = o3d.geometry.TriangleMesh.create_box(60, 60, 0.01).translate((-30, -30, -0.01)).subdivide_midpoint(7)
     o3d.io.write_triangle_mesh(str(tmp_path / "m.ply"), big)
     monkeypatch.setenv("FAKE_MESH", str(tmp_path / "m.ply"))
     pl.stage_mesh()

@@ -157,6 +157,35 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_
     return len(m.triangles)
 
 
+def flat_fill_mask(points, V, F, area_min=2.0, cell=2.0, tall=4.0):
+    """Dideli skylių užtaisymo trikampiai (ReconstructMesh --close-holes) ne ties aukštu statiniu. Stiklinio pastato
+    skylės užtaisomos naudingai, bet žemėje (aplink medžius, automobilius) tas pats užtaisymas palieka dideles pilkas
+    plokštumas be tekstūros. Paliekami tik tie, kurių vietoje (~10 m) taškų aukščiai skiriasi > tall m."""
+    from scipy import ndimage
+    T = V[F]
+    area = 0.5 * np.linalg.norm(np.cross(T[:, 1] - T[:, 0], T[:, 2] - T[:, 0]), axis=1)
+    big = area > area_min
+    if not big.any():
+        return big
+    lo = points[:, :2].min(0) - 3 * cell
+    ij = np.floor((points[:, :2] - lo) / cell).astype(int)
+    shape = tuple(ij.max(0) + 4)
+    zmax = np.full(shape, -np.inf)
+    zmin = np.full(shape, np.inf)
+    np.maximum.at(zmax, (ij[:, 0], ij[:, 1]), points[:, 2])
+    np.minimum.at(zmin, (ij[:, 0], ij[:, 1]), points[:, 2])
+    hi = ndimage.maximum_filter(zmax, size=5, mode="constant", cval=-np.inf)
+    lo_z = ndimage.minimum_filter(zmin, size=5, mode="constant", cval=np.inf)
+    rel = np.where(np.isfinite(hi) & np.isfinite(lo_z), hi - lo_z, 0.0)
+    c = np.floor((T[big].mean(1)[:, :2] - lo) / cell).astype(int)
+    ok = (c >= 0).all(1) & (c[:, 0] < shape[0]) & (c[:, 1] < shape[1])
+    keep = np.zeros(len(c), bool)
+    keep[ok] = rel[c[ok, 0], c[ok, 1]] > tall
+    out = np.zeros(len(F), bool)
+    out[np.flatnonzero(big)[~keep]] = True
+    return out
+
+
 def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3):
     """OpenMVS (ReconstructMesh) tinklas → toks pat rezultatas kaip build(): be dalių už taškų ploto (pasirinkta sritis,
     „sijonas“), be smulkių gabalų, ne daugiau max_faces trikampių."""
@@ -167,8 +196,11 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     P = np.asarray(o3d.io.read_point_cloud(points_ply).points)
     n0 = len(m.triangles)
     V, F = np.asarray(m.vertices), np.asarray(m.triangles)
-    m.remove_triangles_by_mask(footprint_mask(P, V[F].mean(1), cell=max(1.0, 10 * spacing)))
+    fills = flat_fill_mask(P, V, F)
+    m.remove_triangles_by_mask(footprint_mask(P, V[F].mean(1), cell=max(1.0, 10 * spacing)) | fills)
     m.remove_unreferenced_vertices()
+    if fills.any():
+        log("Skylių užtaisymai lygioje vietovėje pašalinti: %d trikampių" % int(fills.sum()))
     if len(m.triangles):
         cl, cnt, _ = m.cluster_connected_triangles()
         cl, cnt = np.asarray(cl), np.asarray(cnt)

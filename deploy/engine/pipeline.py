@@ -831,9 +831,9 @@ class Pipeline:
         self._run_tool([os.path.join(OPENMVS, "ReconstructMesh"), os.path.join(ws, "dense.mvs"),
                         "-p", os.path.join(ws, "dense.ply"), "-o", raw, "-w", ws,
                         "--free-space-support", "1", "--max-threads", str(max(1, os.cpu_count() or 4)), "-v", "1",
-                        # Skylės iki ~500 kraštinių (stiklo vietos be taškų) užtaisomos; trikampių sumažinama pačiame
+                        # Skylės iki 2000 kraštinių (stiklo vietos be taškų) užtaisomos (žemėje – pašalinamos, mesh.flat_fill_mask); trikampių sumažinama pačiame
                         # OpenMVS (12 mln. → 3 × riba), kitaip Python supaprastinimas užtrunka kelias minutes
-                        "--close-holes", os.environ.get("ATEA_MESH_CLOSE_HOLES", "500"),
+                        "--close-holes", os.environ.get("ATEA_MESH_CLOSE_HOLES", "2000"),
                         "--target-face-num", str(3 * self.q["mesh_faces"])],
                        quiet=("ETA", "%)"))
         if not os.path.isfile(raw):
