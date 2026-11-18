@@ -709,15 +709,18 @@ class Pipeline:
         scene = os.path.join(ws, "scene.mvs")
         self._run_tool([os.path.join(OPENMVS, "InterfaceCOLMAP"), "-i", ws, "-o", scene,
                         "--image-folder", os.path.join(self.dense_dir, "images") + os.sep, "-w", ws])
-        # ODM nustatymai: gylio žemėlapių optimizavimas (dėmių šalinimas, tarpų užpildymas), filtras su 1 nuotrauka
+        # Gylio žemėlapių optimizavimas (dėmių šalinimas, tarpų užpildymas). Suliejant taškas paliekamas, kai jį
+        # patvirtina ≥ 3 nuotraukos (ODM – 2): stiklo atspindžiai keičiasi su kampu, todėl jų patvirtinimų mažiau, o
+        # likę atspindžių taškai „už“ stiklinės sienos tinklui (pagal matomumą) išpjauna sienoje skyles
         with open(os.path.join(ws, "Densify.ini"), "w") as f:
-            f.write("Optimize = 7\nMin Views Filter = 1\n")
+            f.write("Optimize = 7\n")
+        fuse = os.environ.get("ATEA_MVS_FUSE", "3")
         threads = str(max(1, (os.cpu_count() or 4)))
         self._run_tool([os.path.join(OPENMVS, "DensifyPointCloud"), scene, "-o", os.path.join(ws, "dense.mvs"),
                         "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
-                        "--resolution-level", "0", "--max-resolution", str(self.q["mvs_size"]),
+                        "--resolution-level", "0", "--max-resolution", os.environ.get("ATEA_MVS_SIZE", str(self.q["mvs_size"])),
                         "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
-                        "--number-views-fuse", "2", "--sub-resolution-levels", "1", "--max-threads", threads,
+                        "--number-views-fuse", fuse, "--sub-resolution-levels", "1", "--max-threads", threads,
                         "--cuda-device", OPENMVS_DEVICE, "-v", "1"],  # numatytas archyvas: debesis su matomumu (tinklui)
                        quiet=("ETA", "%)"))
         ply = os.path.join(ws, "dense.ply")
@@ -827,7 +830,11 @@ class Pipeline:
         raw = os.path.join(ws, "mesh.ply")
         self._run_tool([os.path.join(OPENMVS, "ReconstructMesh"), os.path.join(ws, "dense.mvs"),
                         "-p", os.path.join(ws, "dense.ply"), "-o", raw, "-w", ws,
-                        "--free-space-support", "1", "--max-threads", str(max(1, os.cpu_count() or 4)), "-v", "1"],
+                        "--free-space-support", "1", "--max-threads", str(max(1, os.cpu_count() or 4)), "-v", "1",
+                        # Skylės iki ~500 kraštinių (stiklo vietos be taškų) užtaisomos; trikampių sumažinama pačiame
+                        # OpenMVS (12 mln. → 3 × riba), kitaip Python supaprastinimas užtrunka kelias minutes
+                        "--close-holes", os.environ.get("ATEA_MESH_CLOSE_HOLES", "500"),
+                        "--target-face-num", str(3 * self.q["mesh_faces"])],
                        quiet=("ETA", "%)"))
         if not os.path.isfile(raw):
             raise RuntimeError("ReconstructMesh nesukūrė tinklo")
