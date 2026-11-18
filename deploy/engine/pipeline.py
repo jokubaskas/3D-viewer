@@ -840,10 +840,10 @@ class Pipeline:
         dst = self.out("odm_meshing", "odm_mesh.ply")
         meshmod.finish(raw, dst, self.out("odm_filterpoints", "point_cloud.ply"),
                        max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log)
-        if os.environ.get("ATEA_REFINE", "1") == "0" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
+        if os.environ.get("ATEA_REFINE", "0") != "1" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
             return
-        # Patikslinimas pagal nuotraukas (fotometrinis): viršūnės pastumiamos taip, kad nuotraukos sutaptų –
-        # plokščios sienos, aštrūs kampai, išsilygina skylių užtaisymų „kristalai“. Nepavykus – lieka neištaisytas
+        # Patikslinimas pagal nuotraukas (fotometrinis). Išjungtas pagal nutylėjimą: stikliniame pastate jis pats
+        # išvalo skylių užtaisymus (sienose vėl skylės) ir užtrunka ~15 min. (24 br.). Įjungti – ATEA_REFINE=1
         try:
             self._run_tool([os.path.join(OPENMVS, "RefineMesh"), os.path.join(ws, "dense.mvs"), "-m", dst,
                             "-o", os.path.join(ws, "refined.mvs"), "-w", ws, "--resolution-level", "1",
