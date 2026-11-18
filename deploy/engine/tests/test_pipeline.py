@@ -98,7 +98,7 @@ def test_sfm_and_georef(run):
 def test_mesh_matches_scene(run):
     task, *_ = run
     m = o3d.io.read_triangle_mesh(os.path.join(task, "odm_meshing", "odm_mesh.ply"))
-    assert 10_000 < len(m.triangles) <= 120_000
+    assert 10_000 < len(m.triangles) <= 240_000          # 2,5D tinklui (statmenos nuotraukos) – 2 × riba
     gt = synth.scene_mesh().translate(_gt_offset(task))
     sc = o3d.t.geometry.RaycastingScene()
     sc.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(gt))

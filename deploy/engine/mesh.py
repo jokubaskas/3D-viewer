@@ -247,10 +247,10 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     Z = Z.reshape(nx, ny)
     occ = np.isfinite(Z)
     area = ndimage.binary_fill_holes(ndimage.binary_closing(occ, iterations=5, border_value=0))
-    # Tuščių langelių užpildymas artimiausiu aukščiu (tik ploto viduje), tada 3×3 medianinis – be dygių, kraštai aštrūs
+    # Tuščių langelių užpildymas artimiausiu aukščiu (tik ploto viduje), tada 5×5 medianinis – be dygių (stogo krašto „šukos“ nuo stiklo atspindžių), kraštai aštrūs
     _, (ii, jj) = ndimage.distance_transform_edt(~occ, return_indices=True)
     Z = Z[ii, jj]
-    Z = ndimage.median_filter(Z, size=3)
+    Z = ndimage.median_filter(Z, size=5)
     n_fill = int((area & ~occ).sum())
     # Tinklelis: viršūnė kiekvienam ploto langeliui, du trikampiai kvadratui (įstrižainė – mažesnio aukščių skirtumo)
     vid = np.full((nx, ny), -1, np.int64)
@@ -269,9 +269,10 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     # o tekstūra – iš vienos nuotraukos (be vertikalių juostų). Taubin nemažina tūrio ir beveik neapvalina kraštų
     m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     n0 = len(F)
-    if n0 > max_faces // 2:
-        # Pusė biudžeto – sienų padalijimas (žemiau) trikampių vėl prideda
-        m = m.simplify_quadric_decimation(max_faces // 2)
+    if n0 > max_faces // 8:
+        # Aštuntadalis biudžeto – lygūs paviršiai (žemė, stogai) supaprastinami stipriai, likusieji trikampiai tenka
+        # sienų padalijimui (žemiau): kitaip sienų trikampiai lieka po kelis metrus ir tekstūra subyra į juostas
+        m = m.simplify_quadric_decimation(max_faces // 8)
         m.remove_unreferenced_vertices()
     m.remove_degenerate_triangles()
     # Sienos 2,5D tinkle – aukšti siauri trikampiai (stogo kraštas → žemė, 30 m × 10 cm): kiekvienas jų gauna vieną
@@ -294,6 +295,6 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     m.remove_unreferenced_vertices()
     m.compute_vertex_normals()
     o3d.io.write_triangle_mesh(out_ply, m)
-    log("2,5D tinklas: %d × %d langelių po %.0f cm (užpildyta %d), %d → %d trikampių" % (
-        nx, ny, cell * 100, n_fill, n0, len(m.triangles)))
+    log("2,5D tinklas: %d × %d langelių po %.0f cm (užpildyta %d), %d → %d trikampių (sienos: %d, iki %.1f m)" % (
+        nx, ny, cell * 100, n_fill, n0, len(m.triangles), len(Fw), edge))
     return len(m.triangles)
