@@ -105,3 +105,13 @@ def test_effective_res_follows_face_budget():
     assert mesh.effective_res(P, 0.05, 1_000_000) == pytest.approx(0.114, abs=0.005)
     small = P[(P[:, 0] < 20) & (P[:, 1] < 20)]                            # 20 × 20 m – lieka norima raiška
     assert mesh.effective_res(small, 0.05, 1_000_000) == 0.05
+
+
+def test_flat_fill_mask_keeps_building_drops_ground():
+    P = _scene(np.random.default_rng(0))          # 20 m pastatas 16 × 12 m lygioje žemėje
+    V = np.array([[0, -6, 2], [0, -6, 12], [3, -6, 7],          # didelis trikampis ant sienos – paliekamas
+                  [-4, 0, 20], [4, 0, 20], [0, 4, 20],          # didelis ant stogo – paliekamas
+                  [20, 20, 1], [26, 20, 1], [23, 26, 1],        # didelis lygioje žemėje – šalinamas
+                  [20, 20, 0], [20.3, 20, 0], [20, 20.3, 0]], float)  # mažas žemėje – paliekamas
+    F = np.arange(12).reshape(4, 3)
+    assert list(mesh.flat_fill_mask(P, V, F)) == [False, False, True, False]
