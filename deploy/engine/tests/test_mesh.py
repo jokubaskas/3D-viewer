@@ -115,3 +115,26 @@ def test_flat_fill_mask_keeps_building_drops_ground():
                   [20, 20, 0], [20.3, 20, 0], [20, 20.3, 0]], float)  # mažas žemėje – paliekamas
     F = np.arange(12).reshape(4, 3)
     assert list(mesh.flat_fill_mask(P, V, F)) == [False, False, True, False]
+
+
+def test_dsm_mesh_vertical_walls_flat_roof(tmp_path):
+    """2,5D tinklas: pastatas be stogo vidurio taškų ir su „atspindžių“ taškais po stogu – stogas lygus 20 m aukštyje,
+    sienos vertikalios (kraštas aštrus), žemė 0 m."""
+    rng = np.random.default_rng(3)
+    P = _scene(rng)
+    inside = np.c_[rng.uniform(4, 7.5, 3000), rng.uniform(-5, 5, 3000), rng.uniform(2, 15, 3000)]  # atspindžiai po stogu
+    P = np.concatenate([P, inside])
+    out = str(tmp_path / "m.ply")
+    n = mesh.dsm_mesh(P, out, max_faces=150_000, cell=0.25, log=lambda m: None)
+    assert 0 < n
+    m = o3d.io.read_triangle_mesh(out)
+    sc = o3d.t.geometry.RaycastingScene()
+    sc.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(m))
+    rays = np.array([[x, y, 40, 0, 0, -1] for x in (-5, 0, 5) for y in (-4, 0, 4)] +
+                    [[x, y, 40, 0, 0, -1] for x in (-15, 15) for y in (-15, 15)], np.float32)
+    z = 40 - sc.cast_rays(o3d.core.Tensor(rays))["t_hit"].numpy()
+    assert np.all(np.abs(z[:9] - 20) < 0.5), z[:9]          # stogas (taip pat vidurys be taškų)
+    assert np.all(np.abs(z[9:]) < 0.5), z[9:]              # žemė
+    # Siena: horizontalus spindulys į pastatą 10 m aukštyje pataiko ties x ≈ −8
+    hit = sc.cast_rays(o3d.core.Tensor(np.array([[-20, 0, 10, 1, 0, 0]], np.float32)))["t_hit"].numpy()
+    assert abs(-20 + hit[0] + 8) < 0.6, hit

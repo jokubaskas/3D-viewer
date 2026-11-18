@@ -51,7 +51,21 @@ def face_geometry(V, F):
     return (A + B + C) / 3.0, n, area
 
 
-def visibility(V, F, cams, size=1600, log=print):
+def smoothed_normals(V, F, iters=15):
+    """Trikampių normalės iš išlyginto tinklo – nuotraukai parinkti. 2,5D tinklo siena, nelygiagreti tinkleliui, yra
+    10 cm „laipteliai“: tikros normalės kaitaliojasi (x / y), kaimyniniai trikampiai pasirenka skirtingas nuotraukas ir
+    siena subyra į vertikalias juostas. Išlyginus – visa siena turi vieną kryptį."""
+    import open3d as o3d
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(F))
+    m = m.filter_smooth_laplacian(number_of_iterations=iters, lambda_filter=0.5)
+    Vs = np.asarray(m.vertices)
+    n = np.cross(Vs[F[:, 1]] - Vs[F[:, 0]], Vs[F[:, 2]] - Vs[F[:, 0]])
+    ln = np.linalg.norm(n, axis=1, keepdims=True)
+    _, N0, _ = face_geometry(V, F)
+    return np.where(ln > 1e-12, n / np.maximum(ln, 1e-12), N0)
+
+
+def visibility(V, F, cams, size=1600, log=print, normals=None):
     """Kiekvienam trikampiui – TOP geriausių nuotraukų (indeksai, balai); −1 – nematoma.
     Kaip mvs-texturing: trikampio centras projektuojamas į kiekvieną nuotrauką ir tikrinamas gylio žemėlapiu
     (užstoja mašina, medis, kitas pastatas – ta nuotrauka netinka). Balas – trikampio plotas nuotraukoje (px²):
@@ -61,6 +75,8 @@ def visibility(V, F, cams, size=1600, log=print):
     scene.add_triangles(o3d.core.Tensor(V.astype(np.float32)), o3d.core.Tensor(F.astype(np.uint32)))
     nF = len(F)
     Cf, Nf, Af = face_geometry(V, F)
+    if normals is not None:
+        Nf = normals
     Cf32 = Cf.astype(np.float32)
     best_s = np.zeros((nF, TOP), np.float32)
     best_c = np.full((nF, TOP), -1, np.int32)
@@ -288,11 +304,17 @@ def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=
     if not len(F):
         raise RuntimeError("Tuščias tinklas – nėra ką tekstūruoti")
     cams = load_cameras(dense_dir)
-    best_c, best_s = visibility(V, F, cams, log=log)
+    Ns = smoothed_normals(V, F)
+    best_c, best_s = visibility(V, F, cams, log=log, normals=Ns)
     adj = face_adjacency(F)
     col = sample_colors(V, F, cams, best_c)
+    # Sienos (stačios): stiklas kiekvienoje nuotraukoje atspindi vis ką kita – spalvų nuoseklumo patikra jas atmestų
+    # atsitiktinai, o skirtingos kaimynų nuotraukos subyra į juostas. Sienoms – be patikros ir stipresnis išlyginimas
+    steep = np.abs(Ns[:, 2]) < 0.4
+    c0, s0, col0 = best_c.copy(), best_s.copy(), col[steep].copy()
     best_c, best_s = photo_consistency(best_c, best_s, col, log=log)
-    labels = smooth_labels(best_c, best_s, adj)
+    best_c[steep], best_s[steep], col[steep] = c0[steep], s0[steep], col0
+    labels = smooth_labels(best_c, best_s, adj, iters=30, weight=np.where(steep, 4.0, 1.0).astype(np.float32))
     gains = exposure_gains(cams, best_c, col, log=log)
     comp = patches(labels, adj)
     n_patch = comp.max() + 1

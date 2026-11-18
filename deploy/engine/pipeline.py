@@ -803,9 +803,33 @@ class Pipeline:
         o3d.io.write_point_cloud(self.out("odm_filterpoints", "point_cloud.ply"), pc)
 
     # ---------------------------------------------------------------- 10. tinklas
+    def _nadir_share(self):
+        """Statmenų nuotraukų dalis (kameros kryptis nuo vertikalės < 20°)."""
+        import pycolmap
+        try:
+            rec = pycolmap.Reconstruction(os.path.join(self.work, "sfm_geo"))
+        except Exception:
+            return 0.0
+        d = [np.asarray(im.cam_from_world().rotation.matrix())[2] for im in rec.images.values()]
+        return float(np.mean([v[2] < -np.cos(np.radians(20)) for v in d])) if d else 0.0
+
     def stage_mesh(self):
         import mesh as meshmod
         ws = os.path.join(self.work, "openmvs")
+        mode = os.environ.get("ATEA_MESH", "auto")
+        if mode == "auto":
+            share = self._nadir_share()
+            mode = "dsm" if share >= 0.8 else "openmvs"
+            self.log("Statmenų nuotraukų: %.0f %% – tinklas %s" % (100 * share, "2,5D (aukščių žemėlapis)" if mode == "dsm"
+                                                                   else "3D (pagal matomumą)"))
+        if mode == "dsm":
+            # Vien statmenos nuotraukos: sienas jos mato tik smailiu kampu, stiklas – atspindžiai. 3D tinklas tokiose
+            # vietose spėlioja (skylės, „kristalai“, banguotos sienos); 2,5D – tiesios sienos ir lygūs stogai
+            import open3d as o3d
+            P = np.asarray(o3d.io.read_point_cloud(self.out("odm_filterpoints", "point_cloud.ply")).points)
+            meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=self.q["mesh_faces"],
+                             cell=float(np.clip(self.q["mesh_res"], 0.08, 0.15)), log=self.log)
+            return
         if (os.path.exists(os.path.join(self.dense_dir, ".openmvs")) and os.path.isfile(os.path.join(ws, "dense.mvs"))
                 and os.access(os.path.join(OPENMVS, "ReconstructMesh"), os.X_OK)
                 and os.environ.get("ATEA_MESH", "openmvs") != "poisson"):
