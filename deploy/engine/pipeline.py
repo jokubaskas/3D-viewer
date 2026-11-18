@@ -811,8 +811,7 @@ class Pipeline:
                 and os.environ.get("ATEA_MESH", "openmvs") != "poisson"):
             try:
                 self._mesh_openmvs(ws)
-                shutil.rmtree(ws, ignore_errors=True)
-                return
+                return                                     # scena lieka tekstūrai (TextureMesh)
             except Cancelled:
                 raise
             except Exception as e:  # pragma: no cover – realaus darbo klaidos
@@ -838,12 +837,53 @@ class Pipeline:
                        quiet=("ETA", "%)"))
         if not os.path.isfile(raw):
             raise RuntimeError("ReconstructMesh nesukūrė tinklo")
-        meshmod.finish(raw, self.out("odm_meshing", "odm_mesh.ply"), self.out("odm_filterpoints", "point_cloud.ply"),
+        dst = self.out("odm_meshing", "odm_mesh.ply")
+        meshmod.finish(raw, dst, self.out("odm_filterpoints", "point_cloud.ply"),
                        max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log)
+        if os.environ.get("ATEA_REFINE", "1") == "0" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
+            return
+        # Patikslinimas pagal nuotraukas (fotometrinis): viršūnės pastumiamos taip, kad nuotraukos sutaptų –
+        # plokščios sienos, aštrūs kampai, išsilygina skylių užtaisymų „kristalai“. Nepavykus – lieka neištaisytas
+        try:
+            self._run_tool([os.path.join(OPENMVS, "RefineMesh"), os.path.join(ws, "dense.mvs"), "-m", dst,
+                            "-o", os.path.join(ws, "refined.mvs"), "-w", ws, "--resolution-level", "1",
+                            "--max-face-area", "16", "--scales", "2", "--close-holes", "0",
+                            "--max-threads", str(max(1, os.cpu_count() or 4)), "--cuda-device", OPENMVS_DEVICE,
+                            "-v", "1"], quiet=("ETA", "%)"))
+            ref = os.path.join(ws, "refined.ply")
+            if not os.path.isfile(ref):
+                raise RuntimeError("RefineMesh nesukūrė tinklo")
+            meshmod.finish(ref, dst, self.out("odm_filterpoints", "point_cloud.ply"), max_faces=self.q["mesh_faces"],
+                           spacing=self.q["point_spacing"], log=self.log, smooth_iters=0)
+        except Cancelled:
+            raise
+        except Exception as e:  # pragma: no cover
+            self.log("Tinklo patikslinimas nepavyko (%s) – paliekamas nepatikslintas" % e)
 
     # ---------------------------------------------------------------- 11. tekstūra
     def stage_texture(self):
         import texturing
+        ws = os.path.join(self.work, "openmvs")
+        if (os.path.isfile(os.path.join(ws, "dense.mvs")) and os.access(os.path.join(OPENMVS, "TextureMesh"), os.X_OK)
+                and os.environ.get("ATEA_TEXTURE", "openmvs") != "own"):
+            try:
+                # Lopai parenkami visam paviršiui kartu (grafo pjūvis), siūlės išlyginamos visame modelyje ir
+                # lopų kraštuose – be „mozaikos“ iš skirtingų nuotraukų atspindžių
+                self._run_tool([os.path.join(OPENMVS, "TextureMesh"), os.path.join(ws, "dense.mvs"),
+                                "-m", self.out("odm_meshing", "odm_mesh.ply"), "-o", os.path.join(ws, "textured.mvs"),
+                                "-w", ws, "--export-type", "obj", "--max-texture-size", str(self.q["page_size"]),
+                                "--empty-color", "8421504", "--close-holes", "0",
+                                "--max-threads", str(max(1, os.cpu_count() or 4)), "--cuda-device", OPENMVS_DEVICE,
+                                "-v", "1"], quiet=("ETA", "%)"))
+                texturing.import_obj(os.path.join(ws, "textured.obj"),
+                                     self.out("odm_texturing", "odm_textured_model_geo"), work=self.work, log=self.log)
+                shutil.rmtree(ws, ignore_errors=True)
+                return
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover
+                self.log("OpenMVS tekstūra nepavyko (%s) – naudojama sava" % e)
+        shutil.rmtree(ws, ignore_errors=True)
         texturing.texture(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
                           self.out("odm_texturing", "odm_textured_model_geo"), work=self.work,
                           page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log)

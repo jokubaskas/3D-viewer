@@ -93,5 +93,27 @@ def test_openmvs_mesh_cropped_and_workspace_removed(pl, tmp_path, monkeypatch):
     pl.stage_mesh()
     V = np.asarray(o3d.io.read_triangle_mesh(pl.out("odm_meshing", "odm_mesh.ply")).vertices)
     assert len(V) and np.abs(V[:, :2]).max() < 14
-    assert not os.path.exists(os.path.join(pl.work, "openmvs"))
+    assert os.path.isfile(os.path.join(pl.work, "openmvs", "dense.mvs"))    # scena lieka tekstūrai
     assert any("OpenMVS tinklas" in m for m in pl.logs)
+
+
+def test_import_textured_obj(tmp_path):
+    import numpy as np
+    from PIL import Image
+    import texturing
+    src = tmp_path / "src"
+    src.mkdir()
+    Image.new("RGB", (64, 32), (200, 10, 10)).save(src / "t_map0.png")
+    Image.new("RGB", (32, 32), (10, 200, 10)).save(src / "t_map1.png")
+    (src / "t.mtl").write_text("newmtl m0\nmap_Kd t_map0.png\nnewmtl m1\nmap_Kd t_map1.png\n")
+    (src / "t.obj").write_text("mtllib t.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\n"
+                               "vt 0 0\nvt 1 0\nvt 0 1\nvt 1 1\nusemtl m0\nf 1/1 2/2 3/3\nusemtl m1\nf 2/2 4/4 3/3\n")
+    out = tmp_path / "out"
+    out.mkdir()
+    work = tmp_path / "work"
+    work.mkdir()
+    assert texturing.import_obj(str(src / "t.obj"), str(out / "m"), work=str(work)) == 2
+    d = np.load(work / "texture_uv.npz")
+    assert list(d["page"]) == [0, 1] and d["F"].tolist() == [[0, 1, 2], [1, 3, 2]]
+    assert np.allclose(d["uv"][0, 2], [0, 0])          # vt (0, 1) → viršus (v apverstas)
+    assert (out / "m.glb").is_file() and (out / "m_map_1.jpg").is_file()
