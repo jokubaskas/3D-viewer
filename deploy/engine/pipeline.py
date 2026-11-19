@@ -827,8 +827,9 @@ class Pipeline:
             # vietose spėlioja (skylės, „kristalai“, banguotos sienos); 2,5D – tiesios sienos ir lygūs stogai
             import open3d as o3d
             P = np.asarray(o3d.io.read_point_cloud(self.out("odm_filterpoints", "point_cloud.ply")).points)
-            meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=self.q["mesh_faces"],
-                             cell=float(np.clip(self.q["mesh_res"], 0.08, 0.15)), log=self.log)
+            # 2 × trikampių: sienos padalijamos iki ~1,5 m (kitaip tekstūra – vertikaliomis juostomis)
+            meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=2 * self.q["mesh_faces"],
+                             cell=float(np.clip(self.q["mesh_res"], 0.1, 0.15)), log=self.log)
             return
         if (os.path.exists(os.path.join(self.dense_dir, ".openmvs")) and os.path.isfile(os.path.join(ws, "dense.mvs"))
                 and os.access(os.path.join(OPENMVS, "ReconstructMesh"), os.X_OK)
