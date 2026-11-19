@@ -18,7 +18,7 @@ services:
     build: ./engine
     restart: unless-stopped
     environment:
-      - OPENMVS_CUDA_DEVICE=${OPENMVS_CUDA_DEVICE:--2}
+      - OPENMVS_CUDA_DEVICE=${OPENMVS_CUDA_DEVICE:--1}
     volumes:
       - engine-data:/engine-data
       - nodeodm-data:/odm-data:ro
