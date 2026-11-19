@@ -138,3 +138,23 @@ def test_dsm_mesh_vertical_walls_flat_roof(tmp_path):
     # Siena: horizontalus spindulys į pastatą 10 m aukštyje pataiko ties x ≈ −8
     hit = sc.cast_rays(o3d.core.Tensor(np.array([[-20, 0, 10, 1, 0, 0]], np.float32)))["t_hit"].numpy()
     assert abs(-20 + hit[0] + 8) < 0.6, hit
+
+
+def test_regularize_facades_removes_waves_keeps_floors():
+    """Siena x = 0 (normalė +x), 40 m pločio, 30 m aukščio: kas 3 m – 0,5 m atbraila (tikra), išilgai – bangos
+    ±0,25 m (stiklo triukšmas). Po išlyginimo bangos < 5 cm, atbrailos lieka."""
+    rng = np.random.default_rng(4)
+    y, z = np.meshgrid(np.arange(0, 40, 0.1), np.arange(1, 30, 0.1), indexing="ij")
+    ledge = np.where((z % 3) < 0.4, 0.5, 0.0)
+    wave = 0.25 * np.sin(y * 2 * np.pi / 5)
+    V = np.c_[(ledge + wave).ravel(), y.ravel(), z.ravel()]
+    Q = np.c_[rng.normal(0, 0.03, 5000), rng.uniform(0, 40, 5000), rng.uniform(1, 30, 5000)]
+    planes = [(np.array([1.0, 0, 0]), 0.0, Q)]
+    V2, k = mesh.regularize_facades(V, planes)
+    assert k == len(V)
+    x2 = V2[:, 0].reshape(y.shape)
+    inner = (y[:, 0] > 10) & (y[:, 0] < 30)
+    flat = (z[0] % 3 > 1) & (z[0] % 3 < 2.5)
+    assert np.abs(x2[np.ix_(inner, flat)]).max() < 0.05                        # bangos dingo
+    led = (z[0] % 3 > 0.1) & (z[0] % 3 < 0.3)
+    assert np.abs(x2[np.ix_(inner, led)] - 0.5).max() < 0.05                  # atbrailos liko

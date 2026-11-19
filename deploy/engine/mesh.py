@@ -186,7 +186,7 @@ def flat_fill_mask(points, V, F, area_min=2.0, cell=2.0, tall=4.0):
     return out
 
 
-def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3):
+def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3, facades=True):
     """OpenMVS (ReconstructMesh) tinklas → toks pat rezultatas kaip build(): be dalių už taškų ploto (pasirinkta sritis,
     „sijonas“), be smulkių gabalų, ne daugiau max_faces trikampių."""
     import open3d as o3d
@@ -209,6 +209,12 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     m.remove_degenerate_triangles()
     m.remove_duplicated_triangles()
     m.remove_non_manifold_edges()
+    if facades and len(m.triangles):
+        planes = wall_planes(P, log=log)
+        if planes:
+            Vr, k = regularize_facades(np.asarray(m.vertices), planes)
+            m.vertices = o3d.utility.Vector3dVector(Vr)
+            log("Fasadai išlyginti išilgai aukštų: %d viršūnių" % k)
     if smooth_iters:
         m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     n1 = len(m.triangles)
@@ -301,3 +307,71 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     log("2,5D tinklas: %d × %d langelių po %.0f cm (užpildyta %d), %d → %d trikampių (sienos: %d, iki %.1f m)" % (
         nx, ny, cell * 100, n_fill, n0, len(m.triangles), len(Fw), edge))
     return len(m.triangles)
+
+
+def wall_planes(points, voxel=0.1, dist=0.15, min_pts=1500, max_planes=30, above=3.0, log=print):
+    """Pagrindinės vertikalios pastatų sienų plokštumos (RANSAC tarp taškų su horizontalia normale ≥ above m virš
+    žemės). Grąžina [(n – vienetinė horizontali normalė, d, Q – plokštumos taškai)], plokštuma n·x + d = 0."""
+    import open3d as o3d
+    pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points)).voxel_down_sample(voxel)
+    pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4 * voxel, max_nn=30))
+    X, N = np.asarray(pc.points), np.asarray(pc.normals)
+    ground = np.percentile(X[:, 2], 40)
+    rest = pc.select_by_index(np.flatnonzero((np.abs(N[:, 2]) < 0.3) & (X[:, 2] > ground + above)))
+    planes, misses = [], 0
+    while len(rest.points) >= min_pts and len(planes) < max_planes and misses < 10:
+        (a, b, c, d), inl = rest.segment_plane(distance_threshold=dist, ransac_n=3, num_iterations=3000)
+        if len(inl) < min_pts:
+            break
+        Q = np.asarray(rest.points)[inl]
+        rest = rest.select_by_index(inl, invert=True)
+        n = np.array([a, b, c])
+        if abs(n[2]) > 0.05:
+            misses += 1
+            continue
+        n = np.array([a, b, 0.0]) / np.hypot(a, b)
+        planes.append((n, -float(np.median(Q @ n)), Q))
+    log("Sienų plokštumos: %d" % len(planes))
+    return planes
+
+
+def regularize_facades(V, planes, band=1.2, cell=0.1, window=10.0, margin=1.0):
+    """Fasadų „bangų“ (stiklo atspindžių triukšmo) išlyginimas išilgai aukštų: viršūnės iki band m nuo sienos
+    plokštumos ir jos ribose – atstumas nuo plokštumos keičiamas medianu tame pačiame aukštyje (cell) ~window m
+    ruože. Aukštų juostos, atbrailos, įdubos (kinta su aukščiu) lieka, horizontalios bangos (kinta išilgai) dingsta."""
+    from scipy.ndimage import median_filter, uniform_filter1d
+    V = V.copy()
+    done = np.zeros(len(V), bool)
+    for n, d, Q in planes:
+        u = np.array([-n[1], n[0], 0.0])                       # kryptis išilgai sienos
+        tq = Q @ u
+        t0, t1 = tq.min() - margin, tq.max() + margin
+        z0, z1 = Q[:, 2].min() - margin, Q[:, 2].max() + margin
+        s = V @ n + d
+        t = V @ u
+        sel = (~done) & (np.abs(s) < band) & (t > t0) & (t < t1) & (V[:, 2] > z0) & (V[:, 2] < z1)
+        idx = np.flatnonzero(sel)
+        if len(idx) < 100:
+            continue
+        it = ((t[idx] - t0) / cell).astype(int)
+        iz = ((V[idx, 2] - z0) / cell).astype(int)
+        nt, nz = it.max() + 1, iz.max() + 1
+        S = np.full((nt, nz), np.nan)
+        # langelio reikšmė – paviršiaus atstumas (mediana), tušti – NaN
+        key = it * nz + iz
+        o = np.argsort(key)
+        ks, ss = key[o], s[idx][o]
+        start = np.r_[0, np.flatnonzero(np.diff(ks)) + 1]
+        med = np.array([np.median(ss[a:b]) for a, b in zip(start, np.r_[start[1:], len(ks)])])
+        S.flat[ks[start]] = med
+        w = max(3, int(window / cell) | 1)
+        filled = np.where(np.isnan(S), 0.0, S)
+        cnt = (~np.isnan(S)).astype(float)
+        # tuščių langelių įtaka – per svorį: mediana su NaN sunki, todėl vidurkis per langą be tuščių, tada mediana
+        mean = uniform_filter1d(filled, w, axis=0, mode="nearest") / np.maximum(uniform_filter1d(cnt, w, axis=0,
+                                                                                                mode="nearest"), 1e-6)
+        base = np.where(np.isnan(S), mean, S)
+        R = median_filter(base, size=(w, 1), mode="nearest")
+        V[idx] += np.outer(R[it, iz] - s[idx], n)
+        done[idx] = True
+    return V, int(done.sum())
