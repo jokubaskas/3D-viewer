@@ -57,7 +57,7 @@ def test_openmvs_dense_and_fusion_skip(pl, tmp_path):
     assert os.path.isfile(os.path.join(ws, "dense.mvs"))                  # scena lieka tinklui
     calls = open(tmp_path / "calls.txt").read().splitlines()
     assert calls[0].startswith("InterfaceCOLMAP")
-    assert "--max-resolution 1024" in calls[1] and "--number-views 5" in calls[1] and "--cuda-device -2" in calls[1]
+    assert "--max-resolution 1024" in calls[1] and "--number-views 12" in calls[1] and "--cuda-device -2" in calls[1]
     assert any("Densifying point-cloud completed" in m for m in pl.logs)
     assert sum("depth-maps" in m for m in pl.logs) == 1                 # progresas – ne dažniau kaip kas minutę
     pl.stage_fusion()                                                    # COLMAP suliejimas nepaleidžiamas

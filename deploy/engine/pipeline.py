@@ -64,7 +64,7 @@ QUALITY = {
         # OpenMVS: ~1000 px (kaip ODM pc-quality medium – ¼ nuotraukos) ir 5 gretimos nuotraukos. Patikrinta su 144 RTK
         # nuotraukomis: 30 m pastato sienos ištisinės, stogas savo aukštyje (16 mln. taškų). Su 2048 px – 65 mln. taškų,
         # o lygiame stikliniame stoge daug triukšmo: stogas dingo, virš pastato „kabojo“ gabalai
-        "mvs_size": 1024, "mvs_views": 5,
+        "mvs_size": 1024, "mvs_views": 12,  # 12: fasadų taškų +15 %, nematomų trikampių 2 × mažiau (+2,5 min.)
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
