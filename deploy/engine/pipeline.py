@@ -817,6 +817,8 @@ class Pipeline:
         import mesh as meshmod
         ws = os.path.join(self.work, "openmvs")
         mode = os.environ.get("ATEA_MESH", "auto")
+        if os.path.exists(os.path.join(self.work, ".mesh_dsm")):
+            os.remove(os.path.join(self.work, ".mesh_dsm"))
         if mode == "auto":
             share = self._nadir_share()
             mode = "dsm" if share >= 0.8 else "openmvs"
@@ -828,6 +830,7 @@ class Pipeline:
             import open3d as o3d
             P = np.asarray(o3d.io.read_point_cloud(self.out("odm_filterpoints", "point_cloud.ply")).points)
             # 2 × trikampių: sienos padalijamos iki ~1,5 m (kitaip tekstūra – vertikaliomis juostomis)
+            open(os.path.join(self.work, ".mesh_dsm"), "w").close()   # tekstūrai: normalės patikimai į lauką
             meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=2 * self.q["mesh_faces"],
                              cell=float(np.clip(self.q["mesh_res"], 0.1, 0.15)), log=self.log)
             return
@@ -913,7 +916,8 @@ class Pipeline:
         shutil.rmtree(ws, ignore_errors=True)
         texturing.texture(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
                           self.out("odm_texturing", "odm_textured_model_geo"), work=self.work,
-                          page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log)
+                          page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log,
+                          oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")))
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):
