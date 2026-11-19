@@ -212,9 +212,20 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     if facades and len(m.triangles):
         planes = wall_planes(P, log=log)
         if planes:
-            Vr, k = regularize_facades(np.asarray(m.vertices), planes)
+            # OpenMVS jau sumažino trikampius: lygi siena ir skylių užtaisymai („kristalai“) – keli dideli trikampiai,
+            # jų viršūnių per mažai išlyginti. Statūs trikampiai susmulkinami iki 0,5 m, po išlyginimo – vėl sumažinami
+            import trimesh
+            Vm, Fm = np.asarray(m.vertices), np.asarray(m.triangles)
+            nrm = np.cross(Vm[Fm[:, 1]] - Vm[Fm[:, 0]], Vm[Fm[:, 2]] - Vm[Fm[:, 0]])
+            steep = np.abs(nrm[:, 2]) < 0.6 * np.linalg.norm(nrm, axis=1)
+            Vw, Fw = trimesh.remesh.subdivide_to_size(Vm, Fm[steep], max_edge=0.5, max_iter=10)
+            m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(np.concatenate([Vm, Vw])),
+                                          o3d.utility.Vector3iVector(np.concatenate([Fm[~steep], Fw + len(Vm)])))
+            m.remove_duplicated_vertices()
+            m.remove_unreferenced_vertices()
+            Vr, k = regularize_facades(np.asarray(m.vertices), planes, band=2.5)
             m.vertices = o3d.utility.Vector3dVector(Vr)
-            log("Fasadai išlyginti išilgai aukštų: %d viršūnių" % k)
+            log("Fasadai išlyginti išilgai aukštų: %d viršūnių (%d trikampių)" % (k, len(m.triangles)))
     if smooth_iters:
         m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     n1 = len(m.triangles)
