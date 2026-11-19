@@ -285,11 +285,14 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     edge = wall_edge
     while True:   # trikampių riba – sienų padalijimas stambesnis, jei netelpa
         Vw, Fw = trimesh.remesh.subdivide_to_size(Vm, Fm[steep], max_edge=edge, max_iter=8)
-        if (~steep).sum() + len(Fw) <= max_faces or edge > 50:
+        # Lygūs paviršiai – ne didesni nei ~4 × sienų: didelio trikampio tekstūra (tiesinė UV, ne perspektyvinė)
+        # „nuplaukia“ – ortofoto ant žemės pasislenka
+        Vg, Fg = trimesh.remesh.subdivide_to_size(Vm, Fm[~steep], max_edge=4 * edge, max_iter=8)
+        if len(Fg) + len(Fw) <= max_faces or edge > 50:
             break
         edge *= 2
-    Vd = np.concatenate([Vm, Vw])
-    Fd = np.concatenate([Fm[~steep], Fw + len(Vm)])
+    Vd = np.concatenate([Vg, Vw])
+    Fd = np.concatenate([Fg, Fw + len(Vg)])
     m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(Vd), o3d.utility.Vector3iVector(Fd))
     m.remove_duplicated_vertices()
     m.remove_unreferenced_vertices()

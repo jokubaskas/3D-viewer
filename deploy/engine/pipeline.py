@@ -719,7 +719,7 @@ class Pipeline:
         self._run_tool([os.path.join(OPENMVS, "DensifyPointCloud"), scene, "-o", os.path.join(ws, "dense.mvs"),
                         "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
                         "--resolution-level", "0", "--max-resolution", os.environ.get("ATEA_MVS_SIZE", str(self.q["mvs_size"])),
-                        "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
+                        "--min-resolution", "640", "--number-views", os.environ.get("ATEA_MVS_VIEWS", str(self.q["mvs_views"])),
                         "--number-views-fuse", fuse, "--sub-resolution-levels", "1", "--max-threads", threads,
                         "--cuda-device", OPENMVS_DEVICE, "-v", "1"],  # numatytas archyvas: debesis su matomumu (tinklui)
                        quiet=("ETA", "%)"))
@@ -800,6 +800,10 @@ class Pipeline:
         if not pc.has_normals():
             pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=6 * sp, max_nn=30))
         self.log("Taškų debesis: %d → %d taškų (retinimas %.1f cm, triukšmo filtras)" % (n0, len(pc.points), sp * 100))
+        # Fasadų padengimas: taškai su horizontalia normale (sienos) – statmenose nuotraukose jų mažai, nuo to
+        # priklauso fasadų kokybė (palyginimui tarp nustatymų)
+        nz = np.abs(np.asarray(pc.normals)[:, 2])
+        self.log("Sienų taškų (normalė horizontali): %d (%.1f %%)" % (int((nz < 0.3).sum()), 100 * float((nz < 0.3).mean())))
         o3d.io.write_point_cloud(self.out("odm_filterpoints", "point_cloud.ply"), pc)
 
     # ---------------------------------------------------------------- 10. tinklas
@@ -817,6 +821,8 @@ class Pipeline:
         import mesh as meshmod
         ws = os.path.join(self.work, "openmvs")
         mode = os.environ.get("ATEA_MESH", "auto")
+        if os.path.exists(os.path.join(self.work, ".mesh_dsm")):
+            os.remove(os.path.join(self.work, ".mesh_dsm"))
         if mode == "auto":
             share = self._nadir_share()
             mode = "dsm" if share >= 0.8 else "openmvs"
@@ -828,6 +834,7 @@ class Pipeline:
             import open3d as o3d
             P = np.asarray(o3d.io.read_point_cloud(self.out("odm_filterpoints", "point_cloud.ply")).points)
             # 2 × trikampių: sienos padalijamos iki ~1,5 m (kitaip tekstūra – vertikaliomis juostomis)
+            open(os.path.join(self.work, ".mesh_dsm"), "w").close()   # tekstūrai: normalės patikimai į lauką
             meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=2 * self.q["mesh_faces"],
                              cell=float(np.clip(self.q["mesh_res"], 0.1, 0.15)), log=self.log)
             return
@@ -913,7 +920,8 @@ class Pipeline:
         shutil.rmtree(ws, ignore_errors=True)
         texturing.texture(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
                           self.out("odm_texturing", "odm_textured_model_geo"), work=self.work,
-                          page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log)
+                          page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log,
+                          oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")))
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):

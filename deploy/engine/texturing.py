@@ -65,7 +65,7 @@ def smoothed_normals(V, F, iters=15):
     return np.where(ln > 1e-12, n / np.maximum(ln, 1e-12), N0)
 
 
-def visibility(V, F, cams, size=1600, log=print, normals=None):
+def visibility(V, F, cams, size=1600, log=print, normals=None, oriented=False):
     """Kiekvienam trikampiui – TOP geriausių nuotraukų (indeksai, balai); −1 – nematoma.
     Kaip mvs-texturing: trikampio centras projektuojamas į kiekvieną nuotrauką ir tikrinamas gylio žemėlapiu
     (užstoja mašina, medis, kitas pastatas – ta nuotrauka netinka). Balas – trikampio plotas nuotraukoje (px²):
@@ -109,7 +109,10 @@ def visibility(V, F, cams, size=1600, log=print, normals=None):
         center = -R.T @ tv
         vd = center[None, :] - Cf[idx]
         dist = np.linalg.norm(vd, axis=1)
-        cos = np.abs(np.einsum("ij,ij->i", Nf[idx], vd)) / np.maximum(dist, 1e-9)
+        cos = np.einsum("ij,ij->i", Nf[idx], vd) / np.maximum(dist, 1e-9)
+        # Tinklas su patikima orientacija (2,5D – normalės į viršų / lauką): tik kameros priešais paviršių. Kitaip
+        # sienai tekstūrą duotų ir kamera už jos (pastato viduje matomas kitas fasadas) – juostos ir šiukšlės
+        cos = cos if oriented else np.abs(cos)
         uu, vv = (u[idx] / W - 0.5), (v[idx] / H - 0.5)
         sc = (Af[idx] * cos * (K[0, 0] / z[idx]) ** 2 * (1.0 - 0.8 * (uu * uu + vv * vv))).astype(np.float32)
         good = cos > 0.1
@@ -294,7 +297,8 @@ class Packer:
         return p
 
 
-def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=90, max_pages=6, log=print):
+def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=90, max_pages=6, log=print,
+            oriented=False):
     """Tekstūruoja tinklą. Rezultatas: <out_prefix>.obj/.mtl, _<n>.jpg lapai, .glb; work/texture_uv.npz – ortofoto."""
     import open3d as o3d
     from PIL import Image
@@ -305,7 +309,7 @@ def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=
         raise RuntimeError("Tuščias tinklas – nėra ką tekstūruoti")
     cams = load_cameras(dense_dir)
     Ns = smoothed_normals(V, F)
-    best_c, best_s = visibility(V, F, cams, log=log, normals=Ns)
+    best_c, best_s = visibility(V, F, cams, log=log, normals=Ns, oriented=oriented)
     adj = face_adjacency(F)
     col = sample_colors(V, F, cams, best_c)
     # Sienos (stačios): stiklas kiekvienoje nuotraukoje atspindi vis ką kita – spalvų nuoseklumo patikra jas atmestų
