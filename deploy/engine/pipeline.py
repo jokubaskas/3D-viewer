@@ -32,9 +32,10 @@ import geo
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG_EXT = (".jpg", ".jpeg", ".tif", ".tiff", ".png")
 OPENMVS = os.environ.get("OPENMVS_BIN", "/opt/openmvs")
-# OpenMVS gylio žemėlapiai – procesoriumi (-2). GPU (-1) ~6 × greitesnis, bet su tomis pačiomis 144 nuotraukomis ant
-# stiklinių sienų ir stogo davė 2,5–4 × mažiau taškų: tinklas virš pastato išsipūsdavo. Procesorius (24 br.) – ~6 min.
-OPENMVS_DEVICE = os.environ.get("OPENMVS_CUDA_DEVICE", "-2")
+# OpenMVS gylio žemėlapiai – GPU (-1); -2 – procesorius. Naudotojo palyginimas (144 statmenos nuotr. stiklinio pastato):
+# GPU, 2048 px, 12 nuotr. – sienų taškų 1,85 mln. (5,3 %), procesorius 1024 px – 0,14 mln. (1,0 %), 1600 px – 0,3 mln.
+# (1,0 %, 2 × ilgiau). Su tiek fasado taškų 3D tinklas atkuria aukštų atbrailas (2,5D – tik plokščias sienas)
+OPENMVS_DEVICE = os.environ.get("OPENMVS_CUDA_DEVICE", "-1")
 
 # Režimų parametrai. ODM atitikmenys: feature-quality, pc-quality, mesh-octree-depth, mesh-size, orthophoto-resolution.
 QUALITY = {
@@ -61,10 +62,9 @@ QUALITY = {
         # 1600 px (~3 cm/px iš 56 m), 4 iteracijos, 10 pavyzdžių, langas kas 2 px, 12 gretimų nuotraukų – ~5–6 × greičiau;
         # tinklas vis tiek ~5 cm, smulkias detales perteikia tekstūra iš pilnos raiškos nuotraukų
         "pm_size": 1600, "pm_iters": 4, "pm_samples": 10, "pm_window_step": 2, "pm_src": 12,
-        # OpenMVS: ~1000 px (kaip ODM pc-quality medium – ¼ nuotraukos) ir 5 gretimos nuotraukos. Patikrinta su 144 RTK
-        # nuotraukomis: 30 m pastato sienos ištisinės, stogas savo aukštyje (16 mln. taškų). Su 2048 px – 65 mln. taškų,
-        # o lygiame stikliniame stoge daug triukšmo: stogas dingo, virš pastato „kabojo“ gabalai
-        "mvs_size": 1024, "mvs_views": 12,  # 12: fasadų taškų +15 %, nematomų trikampių 2 × mažiau (+2,5 min.)
+        # OpenMVS: 2048 px ir 12 gretimų nuotraukų (GPU ~10 min. 144 nuotraukoms). Anksčiau su 2048 px ir 5 nuotraukomis
+        # Poisson tinklas stikliniame stoge „išsipūsdavo“ – tinklas dabar pagal matomumą (ReconstructMesh)
+        "mvs_size": 2048, "mvs_views": 12,  # su GPU – fasadų taškų 13 × daugiau nei 1024 px (žr. OPENMVS_DEVICE)
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
@@ -803,7 +803,9 @@ class Pipeline:
         # Fasadų padengimas: taškai su horizontalia normale (sienos) – statmenose nuotraukose jų mažai, nuo to
         # priklauso fasadų kokybė (palyginimui tarp nustatymų)
         nz = np.abs(np.asarray(pc.normals)[:, 2])
-        self.log("Sienų taškų (normalė horizontali): %d (%.1f %%)" % (int((nz < 0.3).sum()), 100 * float((nz < 0.3).mean())))
+        wall = float((nz < 0.3).mean()) if len(nz) else 0.0
+        self.log("Sienų taškų (normalė horizontali): %d (%.1f %%)" % (int((nz < 0.3).sum()), 100 * wall))
+        json.dump({"wall_share": wall}, open(os.path.join(self.work, "cloud_stats.json"), "w"))
         o3d.io.write_point_cloud(self.out("odm_filterpoints", "point_cloud.ply"), pc)
 
     # ---------------------------------------------------------------- 10. tinklas
@@ -824,10 +826,16 @@ class Pipeline:
         if os.path.exists(os.path.join(self.work, ".mesh_dsm")):
             os.remove(os.path.join(self.work, ".mesh_dsm"))
         if mode == "auto":
+            # 2,5D – tik kai fasadų beveik nėra debesyje (statmenos nuotraukos, maža raiška): tada 3D tinklas sienose
+            # spėlioja. Kai sienų taškų ≥ 3 % – 3D (atbrailos, įdubos, kolonos)
             share = self._nadir_share()
-            mode = "dsm" if share >= 0.8 else "openmvs"
-            self.log("Statmenų nuotraukų: %.0f %% – tinklas %s" % (100 * share, "2,5D (aukščių žemėlapis)" if mode == "dsm"
-                                                                   else "3D (pagal matomumą)"))
+            try:
+                wall = json.load(open(os.path.join(self.work, "cloud_stats.json")))["wall_share"]
+            except (OSError, ValueError, KeyError):
+                wall = 0.0
+            mode = "dsm" if share >= 0.8 and wall < 0.03 else "openmvs"
+            self.log("Statmenų nuotraukų: %.0f %%, sienų taškų %.1f %% – tinklas %s" % (
+                100 * share, 100 * wall, "2,5D (aukščių žemėlapis)" if mode == "dsm" else "3D (pagal matomumą)"))
         if mode == "dsm":
             # Vien statmenos nuotraukos: sienas jos mato tik smailiu kampu, stiklas – atspindžiai. 3D tinklas tokiose
             # vietose spėlioja (skylės, „kristalai“, banguotos sienos); 2,5D – tiesios sienos ir lygūs stogai
