@@ -719,7 +719,7 @@ class Pipeline:
         self._run_tool([os.path.join(OPENMVS, "DensifyPointCloud"), scene, "-o", os.path.join(ws, "dense.mvs"),
                         "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
                         "--resolution-level", "0", "--max-resolution", os.environ.get("ATEA_MVS_SIZE", str(self.q["mvs_size"])),
-                        "--min-resolution", "640", "--number-views", str(self.q["mvs_views"]),
+                        "--min-resolution", "640", "--number-views", os.environ.get("ATEA_MVS_VIEWS", str(self.q["mvs_views"])),
                         "--number-views-fuse", fuse, "--sub-resolution-levels", "1", "--max-threads", threads,
                         "--cuda-device", OPENMVS_DEVICE, "-v", "1"],  # numatytas archyvas: debesis su matomumu (tinklui)
                        quiet=("ETA", "%)"))
@@ -800,6 +800,10 @@ class Pipeline:
         if not pc.has_normals():
             pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=6 * sp, max_nn=30))
         self.log("Taškų debesis: %d → %d taškų (retinimas %.1f cm, triukšmo filtras)" % (n0, len(pc.points), sp * 100))
+        # Fasadų padengimas: taškai su horizontalia normale (sienos) – statmenose nuotraukose jų mažai, nuo to
+        # priklauso fasadų kokybė (palyginimui tarp nustatymų)
+        nz = np.abs(np.asarray(pc.normals)[:, 2])
+        self.log("Sienų taškų (normalė horizontali): %d (%.1f %%)" % (int((nz < 0.3).sum()), 100 * float((nz < 0.3).mean())))
         o3d.io.write_point_cloud(self.out("odm_filterpoints", "point_cloud.ply"), pc)
 
     # ---------------------------------------------------------------- 10. tinklas
