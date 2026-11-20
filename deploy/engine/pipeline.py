@@ -32,6 +32,7 @@ import geo
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG_EXT = (".jpg", ".jpeg", ".tif", ".tiff", ".png")
 OPENMVS = os.environ.get("OPENMVS_BIN", "/opt/openmvs")
+MVSTEX = os.environ.get("MVSTEX_BIN", "/opt/mvstex")
 # OpenMVS gylio žemėlapiai – GPU (-1); -2 – procesorius. Naudotojo palyginimas (144 statmenos nuotr. stiklinio pastato):
 # GPU, 2048 px, 12 nuotr. – sienų taškų 1,85 mln. (5,3 %), procesorius 1024 px – 0,14 mln. (1,0 %), 1600 px – 0,3 mln.
 # (1,0 %, 2 × ilgiau). Su tiek fasado taškų 3D tinklas atkuria aukštų atbrailas (2,5D – tik plokščias sienas)
@@ -936,6 +937,17 @@ class Pipeline:
                           page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log,
                           oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")),
                           planes=meshmod.load_planes(pf) if os.path.isfile(pf) else None)
+        tr = os.path.join(MVSTEX, "texrecon")
+        if os.access(tr, os.X_OK) and os.environ.get("ATEA_SEAMS", "1") != "0":
+            # Siūlės tarp nuotraukų išlyginamos kaip ODM (mvs-texturing); nepavykus – lieka sava tekstūra
+            try:
+                texturing.seam_level(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
+                                     self.out("odm_texturing", "odm_textured_model_geo"), self.work, tr, log=self.log,
+                                     run=lambda cmd: self._run_tool(cmd, quiet=("%", "Took")))
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover
+                self.log("Siūlių išlyginimas nepavyko (%s) – paliekama sava tekstūra" % e)
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):

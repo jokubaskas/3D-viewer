@@ -78,6 +78,7 @@ def visibility(V, F, cams, size=1600, log=print, normals=None, oriented=False):
     if normals is not None:
         Nf = normals
     Cf32 = Cf.astype(np.float32)
+    Vf32 = np.asarray(V, np.float32)
     best_s = np.zeros((nF, TOP), np.float32)
     best_c = np.full((nF, TOP), -1, np.int32)
     fb_s = np.zeros(nF, np.float32)  # be užstojimo patikros – tik visai nematomiems
@@ -102,6 +103,14 @@ def visibility(V, F, cams, size=1600, log=print, normals=None, oriented=False):
         u = np.where(ok, K[0, 0] * Y[:, 0] / np.maximum(z, 1e-6) + K[0, 2], -1)
         v = np.where(ok, K[1, 1] * Y[:, 1] / np.maximum(z, 1e-6) + K[1, 2], -1)
         ok &= (u >= 0) & (u < W) & (v >= 0) & (v < H)
+        # Visos trikampio viršūnės – nuotraukoje su atsarga (lopo kraštai ir siūlių išlyginimas ima ir gretimus
+        # pikselius: už nuotraukos ribų – spalvos nėra, siūlėse atsiranda ryškios linijos)
+        Yv = Vf32 @ R.T.astype(np.float32) + tv.astype(np.float32)
+        zv = np.maximum(Yv[:, 2], 1e-6)
+        mg = 0.01 * max(W, H) + 2
+        uv_in = ((Yv[:, 2] > 0.1) & (K[0, 0] * Yv[:, 0] / zv + K[0, 2] >= mg) & (K[0, 0] * Yv[:, 0] / zv + K[0, 2] < W - mg)
+                 & (K[1, 1] * Yv[:, 1] / zv + K[1, 2] >= mg) & (K[1, 1] * Yv[:, 1] / zv + K[1, 2] < H - mg))
+        ok &= uv_in[F].all(1)
         idx = np.flatnonzero(ok)
         if not len(idx):
             continue
@@ -359,6 +368,8 @@ def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=
     if planes:
         labels = facade_labels(labels, best_c, best_s, V, F, planes, log=log)
     gains = exposure_gains(cams, best_c, col, log=log)
+    if work:
+        np.save(os.path.join(work, "texture_labels.npy"), labels.astype(np.int32))   # pvz. siūlių išlyginimui (texrecon -L)
     comp = patches(labels, adj)
     n_patch = comp.max() + 1
     log("Lopų: %d (nuotraukų panaudota: %d)" % (n_patch, len(np.unique(labels[labels >= 0]))))
@@ -534,3 +545,42 @@ def import_obj(obj_path, out_prefix, work=None, quality=90, log=print):
         np.savez(os.path.join(work, "texture_uv.npz"), V=V, F=F, uv=face_uv.astype(np.float32), page=FP,
                  pages=np.array([os.path.join(out_dir, n) for n in names]))
     return len(names)
+
+
+def seam_level(dense_dir, mesh_ply, out_prefix, work, binary, log=print, run=None, timeout=3600):
+    """Siūlių išlyginimas kaip ODM: mvs-texturing (texrecon) su mūsų parinktomis nuotraukomis (-L): lopų ribose
+    spalvos sulyginamos Puasono redagavimu – nebelieka ryškių „laiptų“ tarp nuotraukų. Bendras (globalus) spalvų
+    sulyginimas išjungtas: su dideliais fasadų lopais jis nudažo sienas rausvai / žaliai. Rezultatas – kaip texture()."""
+    import shutil
+    import subprocess
+    labels = np.load(os.path.join(work, "texture_labels.npy")).astype(np.int64)
+    cams = load_cameras(dense_dir)
+    scene = os.path.join(work, "texrecon_scene")
+    shutil.rmtree(scene, ignore_errors=True)
+    os.makedirs(scene)
+    for i, c in enumerate(cams):
+        # Vardai – pagal eilę (texrecon rūšiuoja failus ir ieško nuotraukos po .cam): i-oji kamera = i-asis vaizdas
+        ext = os.path.splitext(c["name"])[1].lower()
+        base = os.path.join(scene, "v%05d" % i)
+        os.symlink(os.path.abspath(c["path"]), base + (ext if ext in (".jpg", ".jpeg", ".png", ".tiff") else ".jpg"))
+        K, Vm = c["K"], c["viewmat"]
+        m = max(c["width"], c["height"])
+        with open(base + ".cam", "w") as f:
+            f.write(" ".join("%.10f" % v for v in list(Vm[:3, 3]) + list(Vm[:3, :3].ravel())) + "\n")
+            f.write("%.10f 0 0 %.10f %.10f %.10f\n" % (K[0, 0] / m, K[1, 1] / K[0, 0], K[0, 2] / c["width"],
+                                                         K[1, 2] / c["height"]))
+    lab = os.path.join(work, "texture_labels.bin")
+    (labels + 1).clip(0).astype(np.uint64).tofile(lab)          # 0 – nematomas, i + 1 – i-oji kamera
+    out = os.path.join(work, "texrecon")
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    cmd = [binary, scene, mesh_ply, os.path.join(out, "m"), "-L", lab, "-t", "none", "--skip_global_seam_leveling",
+           "--keep_unseen_faces", "--no_intermediate_results"]
+    if run:
+        run(cmd)
+    else:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, timeout=timeout)
+    n = import_obj(os.path.join(out, "m.obj"), out_prefix, work=work, log=log)
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.rmtree(scene, ignore_errors=True)
+    return n
