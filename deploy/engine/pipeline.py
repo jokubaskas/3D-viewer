@@ -32,6 +32,7 @@ import geo
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMG_EXT = (".jpg", ".jpeg", ".tif", ".tiff", ".png")
 OPENMVS = os.environ.get("OPENMVS_BIN", "/opt/openmvs")
+MVSTEX = os.environ.get("MVSTEX_BIN", "/opt/mvstex")
 # OpenMVS gylio žemėlapiai – GPU (-1); -2 – procesorius. Naudotojo palyginimas (144 statmenos nuotr. stiklinio pastato):
 # GPU, 2048 px, 12 nuotr. – sienų taškų 1,85 mln. (5,3 %), procesorius 1024 px – 0,14 mln. (1,0 %), 1600 px – 0,3 mln.
 # (1,0 %, 2 × ilgiau). Su tiek fasado taškų 3D tinklas atkuria aukštų atbrailas (2,5D – tik plokščias sienas)
@@ -68,7 +69,7 @@ QUALITY = {
         "fusion_min_pixels": 5,
         # Kaip ODM: lygus, ne per smulkus tinklas (~5 cm), detales perteikia nuotraukų tekstūra. Smulkesnis tinklas iš
         # triukšmingo taškų debesies – „suglamžytas“, ir priartinus matomi trikampiai
-        "mesh_res": 0.05, "mesh_faces": 1_000_000, "max_pages": 12,
+        "mesh_res": 0.05, "mesh_faces": 2_000_000, "max_pages": 12,
         # Taškų debesis kas 4 cm: OpenMVS (2048 px) duoda ~65 mln. taškų, kas 2 cm iš jų likdavo 60 mln. – valymas
         # 4 min., tinklas dar ilgiau, o ~5 cm tinklui ir matavimams tiek nereikia
         "point_spacing": 0.04, "ortho_gsd": 0.0, "page_size": 8192,  # ortofoto 0 – pagal nuotraukų GSD
@@ -873,35 +874,35 @@ class Pipeline:
                         "-p", os.path.join(ws, "dense.ply"), "-o", raw, "-w", ws,
                         "--free-space-support", "1", "--max-threads", str(max(1, os.cpu_count() or 4)), "-v", "1",
                         # Skylės iki 2000 kraštinių (stiklo vietos be taškų) užtaisomos (žemėje – pašalinamos, mesh.flat_fill_mask); trikampių sumažinama pačiame
-                        # OpenMVS (12 mln. → 3 × riba), kitaip Python supaprastinimas užtrunka kelias minutes
+                        # OpenMVS (16 mln. → 2 × riba), kitaip Python supaprastinimas (ir patikslinimas) užtrunka per ilgai
                         "--close-holes", os.environ.get("ATEA_MESH_CLOSE_HOLES", "2000"),
-                        "--target-face-num", str(3 * self.q["mesh_faces"])],
+                        "--target-face-num", str(2 * self.q["mesh_faces"])],
                        quiet=("ETA", "%)"))
         if not os.path.isfile(raw):
             raise RuntimeError("ReconstructMesh nesukūrė tinklo")
+        if os.environ.get("ATEA_REFINE", "1") == "1" and os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
+            # Patikslinimas pagal nuotraukas (fotometrinis, kaip RealityCapture / Metashape): paviršius pastumiamas
+            # ten, kur nuotraukos geriausiai sutampa – ryškėja automobiliai, bordiūrai, stogo įranga, kraštai.
+            # Prieš pastatų blokus: stiklinėse sienose jis vėl atveria skyles, bet pastatus vis tiek pakeičia blokai.
+            # Išjungti – ATEA_REFINE=0
+            try:
+                self._run_tool([os.path.join(OPENMVS, "RefineMesh"), os.path.join(ws, "dense.mvs"), "-m", raw,
+                                "-o", os.path.join(ws, "refined.mvs"), "-w", ws, "--resolution-level", "1",
+                                "--max-face-area", "16", "--scales", "2", "--close-holes", "0",
+                                "--max-threads", str(max(1, os.cpu_count() or 4)), "--cuda-device", OPENMVS_DEVICE,
+                                "-v", "1"], quiet=("ETA", "%)"))
+                ref = os.path.join(ws, "refined.ply")
+                if not os.path.isfile(ref):
+                    raise RuntimeError("RefineMesh nesukūrė tinklo")
+                raw = ref
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover
+                self.log("Tinklo patikslinimas nepavyko (%s) – naudojamas nepatikslintas" % e)
         dst = self.out("odm_meshing", "odm_mesh.ply")
         meshmod.finish(raw, dst, self.out("odm_filterpoints", "point_cloud.ply"),
                        max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log,
                        planes_out=os.path.join(self.work, "planes.npz"))
-        if os.environ.get("ATEA_REFINE", "0") != "1" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
-            return
-        # Patikslinimas pagal nuotraukas (fotometrinis). Išjungtas pagal nutylėjimą: stikliniame pastate jis pats
-        # išvalo skylių užtaisymus (sienose vėl skylės) ir užtrunka ~15 min. (24 br.). Įjungti – ATEA_REFINE=1
-        try:
-            self._run_tool([os.path.join(OPENMVS, "RefineMesh"), os.path.join(ws, "dense.mvs"), "-m", dst,
-                            "-o", os.path.join(ws, "refined.mvs"), "-w", ws, "--resolution-level", "1",
-                            "--max-face-area", "16", "--scales", "2", "--close-holes", "0",
-                            "--max-threads", str(max(1, os.cpu_count() or 4)), "--cuda-device", OPENMVS_DEVICE,
-                            "-v", "1"], quiet=("ETA", "%)"))
-            ref = os.path.join(ws, "refined.ply")
-            if not os.path.isfile(ref):
-                raise RuntimeError("RefineMesh nesukūrė tinklo")
-            meshmod.finish(ref, dst, self.out("odm_filterpoints", "point_cloud.ply"), max_faces=self.q["mesh_faces"],
-                           spacing=self.q["point_spacing"], log=self.log, smooth_iters=0)
-        except Cancelled:
-            raise
-        except Exception as e:  # pragma: no cover
-            self.log("Tinklo patikslinimas nepavyko (%s) – paliekamas nepatikslintas" % e)
 
     # ---------------------------------------------------------------- 11. tekstūra
     def stage_texture(self):
@@ -936,6 +937,17 @@ class Pipeline:
                           page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log,
                           oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")),
                           planes=meshmod.load_planes(pf) if os.path.isfile(pf) else None)
+        tr = os.path.join(MVSTEX, "texrecon")
+        if os.access(tr, os.X_OK) and os.environ.get("ATEA_SEAMS", "1") != "0":
+            # Siūlės tarp nuotraukų išlyginamos kaip ODM (mvs-texturing); nepavykus – lieka sava tekstūra
+            try:
+                texturing.seam_level(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
+                                     self.out("odm_texturing", "odm_textured_model_geo"), self.work, tr, log=self.log,
+                                     run=lambda cmd: self._run_tool(cmd, quiet=("%", "Took")))
+            except Cancelled:
+                raise
+            except Exception as e:  # pragma: no cover
+                self.log("Siūlių išlyginimas nepavyko (%s) – paliekama sava tekstūra" % e)
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):
