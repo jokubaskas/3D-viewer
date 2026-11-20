@@ -845,7 +845,8 @@ class Pipeline:
             # 2 × trikampių: sienos padalijamos iki ~1,5 m (kitaip tekstūra – vertikaliomis juostomis)
             open(os.path.join(self.work, ".mesh_dsm"), "w").close()   # tekstūrai: normalės patikimai į lauką
             meshmod.dsm_mesh(P, self.out("odm_meshing", "odm_mesh.ply"), max_faces=2 * self.q["mesh_faces"],
-                             cell=float(np.clip(self.q["mesh_res"], 0.1, 0.15)), log=self.log)
+                             cell=float(np.clip(self.q["mesh_res"], 0.1, 0.15)), log=self.log,
+                             planes_out=os.path.join(self.work, "planes.npz"))
             return
         if (os.path.exists(os.path.join(self.dense_dir, ".openmvs")) and os.path.isfile(os.path.join(ws, "dense.mvs"))
                 and os.access(os.path.join(OPENMVS, "ReconstructMesh"), os.X_OK)
