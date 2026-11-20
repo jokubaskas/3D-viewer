@@ -186,7 +186,8 @@ def flat_fill_mask(points, V, F, area_min=2.0, cell=2.0, tall=4.0):
     return out
 
 
-def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3, facades=True):
+def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3, facades=True,
+           planes_out=None):
     """OpenMVS (ReconstructMesh) tinklas → toks pat rezultatas kaip build(): be dalių už taškų ploto (pasirinkta sritis,
     „sijonas“), be smulkių gabalų, ne daugiau max_faces trikampių."""
     import open3d as o3d
@@ -210,7 +211,11 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     m.remove_duplicated_triangles()
     m.remove_non_manifold_edges()
     if facades and len(m.triangles):
-        planes = wall_planes(P, log=log)
+        # Sienos ieškomos pačiame tinkle (tolygūs taškai paviršiuje): debesyje stiklinių fasadų taškų per mažai
+        S = np.asarray(m.sample_points_uniformly(min(3_000_000, 3 * len(m.triangles))).points)
+        planes = wall_planes(S, voxel=0.15, dist=0.5, min_pts=2000, log=log)
+        if planes and planes_out:
+            save_planes(planes_out, planes)
         if planes:
             # OpenMVS jau sumažino trikampius: lygi siena ir skylių užtaisymai („kristalai“) – keli dideli trikampiai,
             # jų viršūnių per mažai išlyginti. Statūs trikampiai susmulkinami iki 0,5 m, po išlyginimo – vėl sumažinami
@@ -223,7 +228,9 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
                                           o3d.utility.Vector3iVector(np.concatenate([Fm[~steep], Fw + len(Vm)])))
             m.remove_duplicated_vertices()
             m.remove_unreferenced_vertices()
-            Vr, k = regularize_facades(np.asarray(m.vertices), planes, band=2.5)
+            # Visa sienos ilgis, ±6 m: stiklo fasadas iš statmenų nuotraukų „išlinksta“ keliais metrais (aukštų
+            # juostos – horizontalios, todėl gylis kiekviename aukštyje – vienas visai sienai)
+            Vr, k = regularize_facades(np.asarray(m.vertices), planes, band=6.0, window=100.0)
             m.vertices = o3d.utility.Vector3dVector(Vr)
             log("Fasadai išlyginti išilgai aukštų: %d viršūnių (%d trikampių)" % (k, len(m.triangles)))
     if smooth_iters:
@@ -341,6 +348,14 @@ def wall_planes(points, voxel=0.1, dist=0.15, min_pts=1500, max_planes=30, above
             misses += 1
             continue
         n = np.array([a, b, 0.0]) / np.hypot(a, b)
+        # Tik didžiausia jungi dalis: ta pati plokštuma gali kirsti kelis pastatus (gretimas pastatas – ne ta siena)
+        lab = np.asarray(o3d.geometry.PointCloud(o3d.utility.Vector3dVector(Q)).cluster_dbscan(eps=5 * voxel,
+                                                                                               min_points=5))
+        if (lab >= 0).any():
+            Q = Q[lab == np.bincount(lab[lab >= 0]).argmax()]
+        if len(Q) < min_pts:
+            misses += 1
+            continue
         planes.append((n, -float(np.median(Q @ n)), Q))
     log("Sienų plokštumos: %d" % len(planes))
     return planes
@@ -386,3 +401,16 @@ def regularize_facades(V, planes, band=1.2, cell=0.1, window=10.0, margin=1.0):
         V[idx] += np.outer(R[it, iz] - s[idx], n)
         done[idx] = True
     return V, int(done.sum())
+
+
+def save_planes(path, planes, keep=4000):
+    """Sienų plokštumos tekstūrai (kiekvienos – iki keep taškų jos ribai nusakyti)."""
+    rng = np.random.default_rng(0)
+    Q = [p[2][rng.choice(len(p[2]), min(keep, len(p[2])), replace=False)] for p in planes]
+    np.savez(path, n=np.array([p[0] for p in planes]), d=np.array([p[1] for p in planes]),
+             Q=np.concatenate(Q), k=np.repeat(np.arange(len(Q)), [len(q) for q in Q]))
+
+
+def load_planes(path):
+    z = np.load(path)
+    return [(z["n"][i], float(z["d"][i]), z["Q"][z["k"] == i]) for i in range(len(z["n"]))]

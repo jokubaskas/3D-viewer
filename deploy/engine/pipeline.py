@@ -823,8 +823,9 @@ class Pipeline:
         import mesh as meshmod
         ws = os.path.join(self.work, "openmvs")
         mode = os.environ.get("ATEA_MESH", "auto")
-        if os.path.exists(os.path.join(self.work, ".mesh_dsm")):
-            os.remove(os.path.join(self.work, ".mesh_dsm"))
+        for f in (".mesh_dsm", "planes.npz"):
+            if os.path.exists(os.path.join(self.work, f)):
+                os.remove(os.path.join(self.work, f))
         if mode == "auto":
             # 2,5D – tik kai fasadų beveik nėra debesyje (statmenos nuotraukos, maža raiška): tada 3D tinklas sienose
             # spėlioja. Kai sienų taškų ≥ 3 % – 3D (atbrailos, įdubos, kolonos)
@@ -879,7 +880,8 @@ class Pipeline:
             raise RuntimeError("ReconstructMesh nesukūrė tinklo")
         dst = self.out("odm_meshing", "odm_mesh.ply")
         meshmod.finish(raw, dst, self.out("odm_filterpoints", "point_cloud.ply"),
-                       max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log)
+                       max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"], log=self.log,
+                       planes_out=os.path.join(self.work, "planes.npz"))
         if os.environ.get("ATEA_REFINE", "0") != "1" or not os.access(os.path.join(OPENMVS, "RefineMesh"), os.X_OK):
             return
         # Patikslinimas pagal nuotraukas (fotometrinis). Išjungtas pagal nutylėjimą: stikliniame pastate jis pats
@@ -902,7 +904,9 @@ class Pipeline:
 
     # ---------------------------------------------------------------- 11. tekstūra
     def stage_texture(self):
+        import mesh as meshmod
         import texturing
+        pf = os.path.join(self.work, "planes.npz")   # sienų plokštumos – kiekvienai sienai po vieną–kelias nuotraukas
         ws = os.path.join(self.work, "openmvs")
         if (os.path.isfile(os.path.join(ws, "dense.mvs")) and os.access(os.path.join(OPENMVS, "TextureMesh"), os.X_OK)
                 and os.environ.get("ATEA_TEXTURE", "own") == "openmvs"):
@@ -929,7 +933,8 @@ class Pipeline:
         texturing.texture(self.dense_dir, self.out("odm_meshing", "odm_mesh.ply"),
                           self.out("odm_texturing", "odm_textured_model_geo"), work=self.work,
                           page_size=self.q["page_size"], max_pages=self.q["max_pages"], log=self.log,
-                          oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")))
+                          oriented=os.path.exists(os.path.join(self.work, ".mesh_dsm")),
+                          planes=meshmod.load_planes(pf) if os.path.isfile(pf) else None)
 
     # ---------------------------------------------------------------- 12. rezultatai
     def stage_export(self):

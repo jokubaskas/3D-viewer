@@ -58,3 +58,23 @@ def test_exposure_gains_recover_brighter_camera():
     g = texturing.exposure_gains(cams, c, col, log=lambda m: None)
     ratio = g[1] / g[[0, 2]].mean(0)
     assert np.all(np.abs(ratio - 1 / 1.2) < 0.03), ratio
+
+
+def test_facade_labels_greedy_cover():
+    """Sienos trikampiai: kamera 3 – geriausia daugumai, kamera 7 – likusiems; kiti trikampiai neliečiami."""
+    import numpy as np
+    import texturing
+    V = np.array([[0, y, z] for y in range(0, 41) for z in range(0, 21)], float)
+    idx = lambda y, z: y * 21 + z
+    F = np.array([[idx(y, z), idx(y + 1, z), idx(y, z + 1)] for y in range(40) for z in range(20)])
+    nF = len(F)
+    best_c = np.full((nF, 3), -1, np.int32)
+    best_s = np.zeros((nF, 3), np.float32)
+    best_c[:, 0], best_s[:, 0] = 5, 1.0          # visiems geriausia pavieniui – vis kita (5)
+    best_c[:600, 1], best_s[:600, 1] = 3, 0.9    # 3 – dauguma
+    best_c[600:, 1], best_s[600:, 1] = 7, 0.9    # 7 – likusieji
+    best_c[:, 0] = np.arange(nF) % 50 + 10       # „mozaika“
+    labels = best_c[:, 0].copy()
+    Q = V
+    out = texturing.facade_labels(labels, best_c, best_s, V, F, [(np.array([1.0, 0, 0]), 0.0, Q)], log=lambda m: None)
+    assert (out[:600] == 3).all() and (out[600:] == 7).all()
