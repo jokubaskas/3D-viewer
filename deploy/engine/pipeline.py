@@ -861,7 +861,7 @@ class Pipeline:
         shutil.rmtree(ws, ignore_errors=True)
         meshmod.build(self.out("odm_filterpoints", "point_cloud.ply"), self.out("odm_meshing", "odm_mesh.ply"),
                       res=self.q["mesh_res"], max_faces=self.q["mesh_faces"], spacing=self.q["point_spacing"],
-                      work=self.work, log=self.log)
+                      work=self.work, log=self.log, planes_out=os.path.join(self.work, "planes.npz"))
 
     def _mesh_openmvs(self, ws):
         """Tinklas pagal matomumą (Delaunay + grafo pjūvis, kaip RealityCapture / Metashape): erdvė tarp kameros ir
