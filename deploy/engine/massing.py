@@ -219,25 +219,39 @@ def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=3.
         k = (sd > -3) & (sd < 6) & (al > a0 + 2) & (al < a1 - 2) & (Pr[:, 2] > zb + 1) & (Pr[:, 2] < ztop)
         zl = np.arange(zb, ztop + prof_step, prof_step)
         prof = np.full(len(zl), np.nan)
+        wide = np.zeros(len(zl), bool)
         if a1 - a0 > 6 and k.sum() > 200:
             iz = np.clip(np.round((Pr[k, 2] - zb) / prof_step).astype(int), 0, len(zl) - 1)
+            sk, ib = sd[k], np.floor((al[k] - a0) / 4.0).astype(int)
             for q in np.unique(iz):
-                v = sd[k][np.abs(iz - q) <= 1]
+                sel = np.abs(iz - q) <= 1
+                v = sk[sel]
                 if len(v) < 40:
                     continue
                 h, e = np.histogram(v, bins=36, range=(-3, 6))
                 h = np.convolve(h, [1, 2, 1], "same")
                 if h.max() > 0.2 * len(v):
                     prof[q] = e[h.argmax()] + 0.125
+                # Tas pats gylis per visą sienos ilgį (4 m ruožuose) – tikras fasadas (pvz. įtrauktas viršutinis
+                # aukštas), ne atspindys, net jei nuo kitų aukštų skiriasi daug
+                modes = []
+                for bb in np.unique(ib[sel]):
+                    w = v[ib[sel] == bb]
+                    if len(w) >= 15:
+                        hb, eb = np.histogram(w, bins=36, range=(-3, 6))
+                        modes.append(eb[hb.argmax()] + 0.125)
+                if len(modes) >= max(4, 0.4 * (a1 - a0) / 4.0) and np.ptp(modes) < 0.8:
+                    prof[q] = float(np.median(modes))
+                    wide[q] = True
         # visos sienos dažniausias poslinkis; aukštai, kurių reikšmė nuo jo toli (> 1,2 m) – atspindžiai, ne fasadas
         lv = np.isfinite(prof) & (zl > zb + 4)
         og = float(np.median(prof[lv])) if lv.sum() >= 3 else 0.0
-        okp = np.isfinite(prof) & (np.abs(prof - og) < 1.2)
+        okp = np.isfinite(prof) & ((np.abs(prof - og) < 1.2) | wide)
         # žemiausi ~4 m – automobiliai, įėjimai: be patikimo fasado; imama aukščiau esančių reikšmė
         okp &= (zl > zb + 4) & (zl < ztop - 2.5)
         if okp.sum() >= 5:
-            prof = np.interp(zl, zl[okp], np.clip(prof[okp], -1.0, 2.5))
-            prof = ndimage.median_filter(prof, size=9, mode="nearest")
+            prof = np.interp(zl, zl[okp], np.clip(prof[okp], -3.0, 2.5))
+            prof = ndimage.median_filter(prof, size=5, mode="nearest")
             prof = ndimage.gaussian_filter1d(prof, 1.0, mode="nearest")
         else:
             prof = np.full(len(zl), og)
