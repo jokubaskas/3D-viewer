@@ -186,7 +186,8 @@ def flat_fill_mask(points, V, F, area_min=2.0, cell=2.0, tall=4.0):
     return out
 
 
-def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3, facades=True):
+def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_iters=3, facades=True,
+           planes_out=None):
     """OpenMVS (ReconstructMesh) tinklas → toks pat rezultatas kaip build(): be dalių už taškų ploto (pasirinkta sritis,
     „sijonas“), be smulkių gabalų, ne daugiau max_faces trikampių."""
     import open3d as o3d
@@ -209,8 +210,14 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     m.remove_degenerate_triangles()
     m.remove_duplicated_triangles()
     m.remove_non_manifold_edges()
+    if smooth_iters:
+        m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     if facades and len(m.triangles):
-        planes = wall_planes(P, log=log)
+        # Sienos ieškomos pačiame tinkle (tolygūs taškai paviršiuje): debesyje stiklinių fasadų taškų per mažai
+        S = np.asarray(m.sample_points_uniformly(min(3_000_000, 3 * len(m.triangles))).points)
+        planes = wall_planes(S, voxel=0.15, dist=0.5, min_pts=2000, log=log)
+        if planes and planes_out:
+            save_planes(planes_out, planes)
         if planes:
             # OpenMVS jau sumažino trikampius: lygi siena ir skylių užtaisymai („kristalai“) – keli dideli trikampiai,
             # jų viršūnių per mažai išlyginti. Statūs trikampiai susmulkinami iki 0,5 m, po išlyginimo – vėl sumažinami
@@ -223,11 +230,11 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
                                           o3d.utility.Vector3iVector(np.concatenate([Fm[~steep], Fw + len(Vm)])))
             m.remove_duplicated_vertices()
             m.remove_unreferenced_vertices()
-            Vr, k = regularize_facades(np.asarray(m.vertices), planes, band=2.5)
+            # Visa sienos ilgis, ±6 m: stiklo fasadas iš statmenų nuotraukų „išlinksta“ keliais metrais (aukštų
+            # juostos – horizontalios, todėl gylis kiekviename aukštyje – vienas visai sienai)
+            Vr, k = regularize_facades(np.asarray(m.vertices), planes, band=6.0, window=100.0)
             m.vertices = o3d.utility.Vector3dVector(Vr)
             log("Fasadai išlyginti išilgai aukštų: %d viršūnių (%d trikampių)" % (k, len(m.triangles)))
-    if smooth_iters:
-        m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     n1 = len(m.triangles)
     if n1 > max_faces:
         m = m.simplify_quadric_decimation(max_faces)
@@ -341,9 +348,47 @@ def wall_planes(points, voxel=0.1, dist=0.15, min_pts=1500, max_planes=30, above
             misses += 1
             continue
         n = np.array([a, b, 0.0]) / np.hypot(a, b)
+        # Tik didžiausia jungi dalis: ta pati plokštuma gali kirsti kelis pastatus (gretimas pastatas – ne ta siena)
+        lab = np.asarray(o3d.geometry.PointCloud(o3d.utility.Vector3dVector(Q)).cluster_dbscan(eps=5 * voxel,
+                                                                                               min_points=5))
+        if (lab >= 0).any():
+            Q = Q[lab == np.bincount(lab[lab >= 0]).argmax()]
+        if len(Q) < min_pts:
+            misses += 1
+            continue
         planes.append((n, -float(np.median(Q @ n)), Q))
+    planes = merge_planes(planes)
     log("Sienų plokštumos: %d" % len(planes))
     return planes
+
+
+def merge_planes(planes, snap_deg=15.0, merge_d=2.5):
+    """Pastato sienos – stačiais kampais: normalės pritraukiamos prie pagrindinės krypties (didžiausios sienos) arba
+    jai statmenos, jei skiriasi < snap_deg. Tada lygiagrečios plokštumos, nutolusios < merge_d, sujungiamos – stiklinė
+    siena, kurios dalis „išlinkusi“, kitaip skyla į kelias plokštumas ir išlyginama tik iš dalies."""
+    if not planes:
+        return planes
+    big = max(planes, key=lambda p: len(p[2]))[0]
+    axes = [big, np.array([-big[1], big[0], 0.0])]
+    snapped = []
+    for n, d, Q in planes:
+        best = None
+        for a in axes:
+            for sgn in (1.0, -1.0):
+                if np.degrees(np.arccos(np.clip(n @ (sgn * a), -1, 1))) < snap_deg:
+                    best = sgn * a
+        n2 = best if best is not None else n
+        snapped.append([n2, -float(np.median(Q @ n2)), Q])
+    out = []
+    for n, d, Q in sorted(snapped, key=lambda p: -len(p[2])):
+        for o in out:
+            if abs(n @ o[0]) > 0.999 and abs(d - (o[1] if n @ o[0] > 0 else -o[1])) < merge_d:
+                o[2] = np.concatenate([o[2], Q])
+                o[1] = -float(np.median(o[2] @ o[0]))
+                break
+        else:
+            out.append([n, d, Q])
+    return [(n, d, Q) for n, d, Q in out]
 
 
 def regularize_facades(V, planes, band=1.2, cell=0.1, window=10.0, margin=1.0):
@@ -383,6 +428,27 @@ def regularize_facades(V, planes, band=1.2, cell=0.1, window=10.0, margin=1.0):
                                                                                                 mode="nearest"), 1e-6)
         base = np.where(np.isnan(S), mean, S)
         R = median_filter(base, size=(w, 1), mode="nearest")
-        V[idx] += np.outer(R[it, iz] - s[idx], n)
+        # Aukštyje – be 10 cm „laiptelių“ tarp gretimų eilučių: lengvas vertikalus išlyginimas ir tiesinė interpoliacija
+        from scipy.ndimage import gaussian_filter1d
+        R = gaussian_filter1d(median_filter(R, size=(1, 3), mode="nearest"), 1.0, axis=1, mode="nearest")
+        zf = np.clip((V[idx, 2] - z0) / cell - 0.5, 0, nz - 1)
+        z_lo = np.floor(zf).astype(int)
+        z_hi = np.minimum(z_lo + 1, nz - 1)
+        a = zf - z_lo
+        target = R[it, z_lo] * (1 - a) + R[it, z_hi] * a
+        V[idx] += np.outer(target - s[idx], n)
         done[idx] = True
     return V, int(done.sum())
+
+
+def save_planes(path, planes, keep=4000):
+    """Sienų plokštumos tekstūrai (kiekvienos – iki keep taškų jos ribai nusakyti)."""
+    rng = np.random.default_rng(0)
+    Q = [p[2][rng.choice(len(p[2]), min(keep, len(p[2])), replace=False)] for p in planes]
+    np.savez(path, n=np.array([p[0] for p in planes]), d=np.array([p[1] for p in planes]),
+             Q=np.concatenate(Q), k=np.repeat(np.arange(len(Q)), [len(q) for q in Q]))
+
+
+def load_planes(path):
+    z = np.load(path)
+    return [(z["n"][i], float(z["d"][i]), z["Q"][z["k"] == i]) for i in range(len(z["n"]))]

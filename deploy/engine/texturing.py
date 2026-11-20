@@ -8,7 +8,7 @@ import os
 
 import numpy as np
 
-TOP = 5  # kandidatinių nuotraukų trikampiui (spalvų nuoseklumo patikrai reikia kelių)
+TOP = 10  # kandidatinių nuotraukų trikampiui (spalvų nuoseklumui; fasadui – kad viena nuotrauka padengtų daugiau)
 
 
 def load_cameras(dense_dir):
@@ -297,8 +297,45 @@ class Packer:
         return p
 
 
+def facade_labels(labels, best_c, best_s, V, F, planes, band=2.5, log=print):
+    """Vienas fasadas – viena nuotrauka: stiklas kiekvienoje nuotraukoje atspindi vis ką kita, todėl lopai iš kelių
+    nuotraukų sudaro „mozaiką“ ir aukštų juostos lūžinėja ties siūlėmis. Kiekvienai sienos plokštumai parenkama
+    nuotrauka, kuri tarp kandidatų turi didžiausią bendrą balą, ir ji priskiriama visiems tos sienos trikampiams,
+    kuriems ji yra kandidatė (kitiems – lieka kaip buvo)."""
+    labels = labels.copy()
+    C = V[F].mean(1)
+    n_tri = 0
+    for n, d, Q in planes:
+        u = np.array([-n[1], n[0], 0.0])
+        tq = Q @ u
+        t = C @ u
+        on = (np.abs(C @ n + d) < band) & (t > tq.min() - 1) & (t < tq.max() + 1) & \
+             (C[:, 2] > Q[:, 2].min() - 1) & (C[:, 2] < Q[:, 2].max() + 1)
+        idx = np.flatnonzero(on)
+        if len(idx) < 50:
+            continue
+        # Godus padengimas: geriausia nuotrauka (didžiausias bendras balas) – visiems jos matomiems sienos
+        # trikampiams, likusiems – kita geriausia ir t. t. (siena – iš kelių didelių vientisų lopų)
+        left = idx
+        for _ in range(4):
+            cand, sc = best_c[left], best_s[left]
+            ok = cand >= 0
+            if not ok.any():
+                break
+            cam = int(np.argmax(np.bincount(cand[ok], weights=sc[ok])))
+            has = (cand == cam).any(1)
+            labels[left[has]] = cam
+            n_tri += int(has.sum())
+            left = left[~has]
+            if len(left) < 50:
+                break
+    if n_tri:
+        log("Fasadų tekstūra – po vieną nuotrauką sienai: %d trikampių" % n_tri)
+    return labels
+
+
 def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=90, max_pages=6, log=print,
-            oriented=False):
+            oriented=False, planes=None):
     """Tekstūruoja tinklą. Rezultatas: <out_prefix>.obj/.mtl, _<n>.jpg lapai, .glb; work/texture_uv.npz – ortofoto."""
     import open3d as o3d
     from PIL import Image
@@ -319,6 +356,8 @@ def texture(dense_dir, mesh_ply, out_prefix, work=None, page_size=8192, quality=
     best_c, best_s = photo_consistency(best_c, best_s, col, log=log)
     best_c[steep], best_s[steep], col[steep] = c0[steep], s0[steep], col0
     labels = smooth_labels(best_c, best_s, adj, iters=30, weight=np.where(steep, 4.0, 1.0).astype(np.float32))
+    if planes:
+        labels = facade_labels(labels, best_c, best_s, V, F, planes, log=log)
     gains = exposure_gains(cams, best_c, col, log=log)
     comp = patches(labels, adj)
     n_patch = comp.max() + 1

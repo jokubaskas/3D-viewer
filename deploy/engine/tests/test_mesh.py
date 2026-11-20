@@ -157,4 +157,13 @@ def test_regularize_facades_removes_waves_keeps_floors():
     flat = (z[0] % 3 > 1) & (z[0] % 3 < 2.5)
     assert np.abs(x2[np.ix_(inner, flat)]).max() < 0.05                        # bangos dingo
     led = (z[0] % 3 > 0.1) & (z[0] % 3 < 0.3)
-    assert np.abs(x2[np.ix_(inner, led)] - 0.5).max() < 0.05                  # atbrailos liko
+    assert np.abs(x2[np.ix_(inner, led)] - 0.5).max() < 0.1                   # atbrailos liko (kraštai – ~10 cm švelnesni)
+
+
+def test_planes_roundtrip(tmp_path):
+    rng = np.random.default_rng(5)
+    pl = [(np.array([1.0, 0, 0]), -2.0, rng.normal(size=(5000, 3))), (np.array([0, 1.0, 0]), 3.0, rng.normal(size=(100, 3)))]
+    mesh.save_planes(str(tmp_path / "p.npz"), pl)
+    back = mesh.load_planes(str(tmp_path / "p.npz"))
+    assert len(back) == 2 and back[1][1] == 3.0 and len(back[0][2]) == 4000 and len(back[1][2]) == 100
+    assert np.allclose(back[0][0], [1, 0, 0])
