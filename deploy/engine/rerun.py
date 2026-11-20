@@ -18,6 +18,13 @@ def main(task, start="dense"):
         quality = json.load(open(os.path.join(root, "work", ".done_dataset"))).get("quality", quality)
     except (OSError, ValueError):
         pass
+    # OpenMVS darbo aplankas po tekstūros ištrinamas: tinklą be jo būtų galima kurti tik Poisson (prastesnis) –
+    # tada perskaičiuojama nuo gylio žemėlapių
+    after = names[names.index("dense") + 1:] if "dense" in names else []
+    if (start in after and os.path.exists(os.path.join(root, "work", "dense", ".openmvs"))
+            and not os.path.isfile(os.path.join(root, "work", "openmvs", "dense.mvs"))):
+        print("OpenMVS scenos nebėra (ištrinta po tekstūros) – perskaičiuojama nuo „dense“", flush=True)
+        start = "dense"
     for s in names[names.index(start):]:
         p = os.path.join(root, "work", ".done_" + s)
         if os.path.exists(p):

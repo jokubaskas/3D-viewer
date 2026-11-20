@@ -103,7 +103,7 @@ def clean(mesh, points, spacing, log=print):
     return mesh
 
 
-def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_iters=20):
+def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_iters=20, planes_out=None):
     import open3d as o3d
     pc = o3d.io.read_point_cloud(points_ply)
     P = np.asarray(pc.points)
@@ -145,6 +145,14 @@ def build(points_ply, out_ply, res, max_faces, spacing, work, log=print, smooth_
     # Išlyginimas (Taubin – nemažina tūrio ir nesuapvalina pastatų kaip paprastas vidurkinimas): pašalina taškų
     # debesies triukšmo „raukšles“ – lygesnis paviršius, tekstūra be trikampių raštų
     m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
+    if os.environ.get("ATEA_BLOCKS", "1") != "0":
+        # Pastatai – blokai ir Poisson atveju (kai OpenMVS nėra): Poisson stiklo fasadus „ištirpdo“ dar labiau
+        import massing
+        blocks = massing.apply(np.asarray(m.vertices), np.asarray(m.triangles), P, max_faces, log=log)
+        if blocks is not None:
+            m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(blocks[0]), o3d.utility.Vector3iVector(blocks[1]))
+            if blocks[2] and planes_out:
+                save_planes(planes_out, blocks[2])
     if len(m.triangles) > max_faces:
         n = len(m.triangles)
         m = m.simplify_quadric_decimation(max_faces)
