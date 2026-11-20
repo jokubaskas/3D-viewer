@@ -212,7 +212,17 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     m.remove_non_manifold_edges()
     if smooth_iters:
         m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
-    if facades and len(m.triangles):
+    blocks = None
+    if facades and len(m.triangles) and os.environ.get("ATEA_BLOCKS", "1") != "0":
+        # Pastatai – blokai (tiesios vertikalios sienos, stogas iš aukščių žemėlapio); nestačiakampiai – kaip tinkle
+        import massing
+        blocks = massing.apply(np.asarray(m.vertices), np.asarray(m.triangles), P, max_faces, log=log)
+    if blocks is not None:
+        Vb, Fb, planes = blocks
+        m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(Vb), o3d.utility.Vector3iVector(Fb))
+        if planes and planes_out:
+            save_planes(planes_out, planes)
+    elif facades and len(m.triangles):
         # Sienos ieškomos pačiame tinkle (tolygūs taškai paviršiuje): debesyje stiklinių fasadų taškų per mažai
         S = np.asarray(m.sample_points_uniformly(min(3_000_000, 3 * len(m.triangles))).points)
         planes = wall_planes(S, voxel=0.15, dist=0.5, min_pts=2000, log=log)
@@ -247,7 +257,7 @@ def finish(mesh_ply, out_ply, points_ply, max_faces, spacing, log=print, smooth_
     return len(m.triangles)
 
 
-def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, wall_edge=1.5):
+def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, wall_edge=1.5, planes_out=None):
     """2,5D tinklas (kaip ODM pagal nutylėjimą ir greiti įrankiai statmenoms drono nuotraukoms): aukščių žemėlapis
     (aukščiausias patikimas taškas langelyje) → tinklelio trikampiai. Pastatų sienos – vertikalios nuo stogo krašto iki
     žemės, stogai plokšti; stiklo atspindžių taškai pastato viduje ir po stogu neturi įtakos. Kur taškų nėra (ploto
@@ -320,6 +330,13 @@ def dsm_mesh(points, out_ply, max_faces, cell=0.1, log=print, smooth_iters=10, w
     m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(Vd), o3d.utility.Vector3iVector(Fd))
     m.remove_duplicated_vertices()
     m.remove_unreferenced_vertices()
+    if os.environ.get("ATEA_BLOCKS", "1") != "0":
+        import massing
+        blocks = massing.apply(np.asarray(m.vertices), np.asarray(m.triangles), P, max_faces, log=log)
+        if blocks is not None:
+            m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(blocks[0]), o3d.utility.Vector3iVector(blocks[1]))
+            if blocks[2] and planes_out:
+                save_planes(planes_out, blocks[2])
     m.compute_vertex_normals()
     o3d.io.write_triangle_mesh(out_ply, m)
     log("2,5D tinklas: %d × %d langelių po %.0f cm (užpildyta %d), %d → %d trikampių (sienos: %d, iki %.1f m)" % (
