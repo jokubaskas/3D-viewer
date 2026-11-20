@@ -95,7 +95,7 @@ def rectilinear(hm, cell, reg=2.0):
     return M
 
 
-def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=1.25, prof_step=0.5, log=print):
+def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=3.0, prof_step=0.5, log=print):
     """Vienas pastatas: stačiakampis (taisyklingas) pado kontūras pasuktame tinklelyje, stogas iš DSM, sienos vertikalios."""
     c, s = np.cos(th), np.sin(th)
     R = np.array([[c, s], [-s, c]])                       # pasaulis → (u, v)
@@ -249,14 +249,14 @@ def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=1.
         for ci_, side in ((0, -1), (-1, 1)):
             c = (L, s[ci_]) if ax == 0 else (s[ci_], L)
             ends.setdefault(c, []).append((r_, side))
-    ext = [[0.0, 0.0] for _ in runs]
+    ext = [[None, None] for _ in runs]
     for c, lst in ends.items():
         if len(lst) != 2:
             continue
         for (ra, sa), (rb, sb) in (lst, lst[::-1]):
             sgb = runs[rb][2]
             # kaimyno išorės normalė išilgai šios sienos krypties (į galą): +1 – iškilus kampas
-            ext[ra][0 if sa < 0 else 1] = float(np.percentile(profs[rb][1], 75)) * (1.0 if sgb == sa else -1.0)
+            ext[ra][0 if sa < 0 else 1] = (rb, 1.0 if sgb == sa else -1.0)
     walls = []
     for (ax, L, sg, s, zt, zg), prof, (e0, e1) in zip(runs, profs, ext):
         length = (len(s) - 1) * cell
@@ -264,27 +264,31 @@ def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=1.
         x = np.linspace(s[0], s[-1], k + 1)
         ztx = np.interp(x, s, zt)
         zgx = np.interp(x, s, zg) - 0.5
-        xw = x.copy()
-        xw[0] -= e0 / cell
-        xw[-1] += e1 / cell
         nz = max(1, int(np.ceil((ztx - zgx).max() / wall_step)))
         tz = np.linspace(0, 1, nz + 1)
         Zw = zgx[:, None] + (ztx - zgx)[:, None] * tz[None, :]          # (k+1, nz+1)
+        # sienos galai – iki kaimyninės sienos fasado tame pačiame aukštyje (kampas be tarpo ir be „pelekų“)
+        Xw = np.broadcast_to(x[:, None], Zw.shape).copy()
+        for col, e, sgn in ((0, e0, -1.0), (-1, e1, 1.0)):
+            if e is not None:
+                zl_n, pr_n = profs[e[0]]
+                Xw[col] += sgn * e[1] * np.interp(Zw[col], zl_n, pr_n) / cell
         zl_, pr_ = prof
         Ls = L + sg * np.interp(Zw, zl_, pr_) / cell          # (k+1, nz+1)
         o = float(np.interp(ztx.mean(), zl_, pr_))          # viršaus poslinkis – juostai iki stogo
         Lt = L + sg * o / cell
 
         def to3(lpos, xs, Z):
-            if ax == 0:
-                return np.c_[np.broadcast_to(lo[0] + lpos * cell, Z.shape).ravel(), np.broadcast_to((lo[1] + xs * cell)[:, None], Z.shape).ravel(), Z.ravel()]
-            return np.c_[np.broadcast_to((lo[0] + xs * cell)[:, None], Z.shape).ravel(), np.broadcast_to(lo[1] + lpos * cell, Z.shape).ravel(), Z.ravel()]
+            xs = np.broadcast_to(xs if np.ndim(xs) == 2 else np.asarray(xs)[:, None], Z.shape)
+            a_ = np.broadcast_to(lo[ax] + lpos * cell, Z.shape).ravel()
+            b_ = (lo[1 - ax] + xs * cell).ravel()
+            return np.c_[a_, b_, Z.ravel()] if ax == 0 else np.c_[b_, a_, Z.ravel()]
         out = np.array([sg, 0.0]) if ax == 0 else np.array([0.0, sg])
-        P3 = to3(Ls, xw, Zw)
+        P3 = to3(Ls, Xw, Zw)
         grids = [(P3, Zw.shape)]
         if abs(o) > 0.05:
             # juosta tarp stogo krašto ir sienos viršaus
-            Pb = np.concatenate([to3(L, x, ztx[:, None]), to3(Lt, xw, ztx[:, None])]).reshape(2, -1, 3).transpose(1, 0, 2).reshape(-1, 3)
+            Pb = np.concatenate([to3(L, x, ztx[:, None]), to3(Lt, Xw[:, -1], ztx[:, None])]).reshape(2, -1, 3).transpose(1, 0, 2).reshape(-1, 3)
             grids.append((Pb, (len(x), 2)))
         for G3, shp in grids:
             idx = nV + np.arange(len(G3)).reshape(shp)
@@ -303,7 +307,7 @@ def build_block(P, xy, th, dtm_info, cell=0.25, reg=2.0, wall_step=1.0, apron=1.
     ri, rj = np.nonzero(rc)
     rid = np.full((nu + 1, nv + 1), -1)
     rid[ri, rj] = nV + np.arange(len(ri))
-    Vs.append(np.c_[lo[0] + ri * cell, lo[1] + rj * cell, Gc[ri, rj] - 0.05])
+    Vs.append(np.c_[lo[0] + ri * cell, lo[1] + rj * cell, Gc[ri, rj] - 0.1])
     i, j = np.nonzero(ring)
     a, b, cc, d = rid[i, j], rid[i + 1, j], rid[i + 1, j + 1], rid[i, j + 1]
     Fs.append(np.r_[np.c_[a, b, cc], np.c_[a, cc, d]])
