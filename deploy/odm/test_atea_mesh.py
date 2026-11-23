@@ -477,3 +477,18 @@ def test_fill_unseen_colors_from_point_cloud(tmp_path):
     used = img.reshape(-1, 3)
     red = (used[:, 0] > 150) & (used[:, 2] < 80)
     assert red.mean() > 0.9
+
+
+def test_refine_decimate():
+    """RefineMesh sumažina tik iki galutinio biudžeto, ne pagal automatinę (per mažą) raišką."""
+    assert atea_mesh._refine_decimate(None, 4_000_000) == 0.0
+    assert atea_mesh._refine_decimate(3_000_000, 4_000_000) == 1.0
+    assert atea_mesh._refine_decimate(8_000_000, 4_000_000) == 0.5
+    assert atea_mesh._refine_decimate(500_000_000, 4_000_000) == 0.05
+
+
+def test_ply_count(tmp_path):
+    p = tmp_path / "m.ply"
+    trimesh.creation.box().export(p, encoding="binary")
+    assert atea_mesh._ply_count(str(p), "face") == 12
+    assert atea_mesh._ply_count(str(p), "vertex") == 8
