@@ -4,6 +4,7 @@ import { icon } from '../icons.js';
 import { t, locale } from '../i18n.js';
 import { api, uploadFile, fileUrl } from './api.js';
 import { openVideo, openReport } from './viewer.js';
+import { modelFiles } from './files.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const fmtDate = (s) => (s ? new Date(s * 1000).toLocaleString(locale(), { dateStyle: 'medium', timeStyle: 'short' }) : '—');
@@ -389,27 +390,44 @@ export function createPortalUI(app) {
     }
   }
 
-  /** Modelio failai iš serverio → 3D peržiūra (failai lieka tik naršyklės atmintyje). */
+  /**
+   * Modelio failai iš serverio → 3D peržiūra (failai lieka tik naršyklės atmintyje). Siunčiami tik peržiūrai reikalingi
+   * failai (pvz. prie GLB įkeltas taškų debesis LAZ ar ortofoto – ne) ir po kelis vienu metu: per Cloudflare vienas
+   * ryšys lėtesnis nei keli kartu. Antrą kartą naršyklė failus ima iš savo talpyklos (serveris atsako 304).
+   */
   async function openModel(it) {
-    const files = [];
-    const total = it.size || 1;
-    let got = 0;
+    const need = modelFiles(it.files);
+    const total = need.reduce((s, f) => s + (f.size || 0), 0) || 1;
+    const got = new Map();
+    const progress = () => {
+      const n = [...got.values()].reduce((s, v) => s + v, 0);
+      app.loading(true, t('Atsisiunčiama… {p} %', { p: Math.min(100, Math.round((100 * n) / total)) }), Math.min(1, n / total));
+    };
     app.loading(true, t('Atsisiunčiama…'), 0);
+    const files = new Array(need.length);
     try {
-      for (const f of it.files) {
-        const r = await fetch(fileUrl(it, f, true), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const reader = r.body.getReader();
-        const parts = [];
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          parts.push(value);
-          got += value.length;
-          app.loading(true, t('Atsisiunčiama… {p} %', { p: Math.round((100 * got) / total) }), got / total);
+      let next = 0;
+      const worker = async () => {
+        while (next < need.length) {
+          const k = next++;
+          const f = need[k];
+          const r = await fetch(fileUrl(it, f, true), { credentials: 'same-origin' });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const reader = r.body.getReader();
+          const parts = [];
+          let n = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            parts.push(value);
+            n += value.length;
+            got.set(k, n);
+            progress();
+          }
+          files[k] = new File(parts, f.name.split('/').pop());
         }
-        files.push(new File(parts, f.name.split('/').pop()));
-      }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, need.length) }, worker));
     } catch (e) {
       app.loading(false);
       throw new Error(t('Nepavyko atsisiųsti: {e}', { e: e.message }));
@@ -517,3 +535,4 @@ export function createPortalUI(app) {
     },
   };
 }
+

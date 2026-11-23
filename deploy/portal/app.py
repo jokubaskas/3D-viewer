@@ -887,12 +887,28 @@ def files_get(iid: int, fid: int, name: str, req: Request, download: int = 0):
     # Naršyklėje atidaromi tik saugūs tipai; HTML, SVG ir kt. – tik atsisiunčiami (kitaip jų skriptai veiktų
     # mūsų svetainės vardu su vartotojo sesija)
     inline = not download and ext in INLINE
-    res = FileResponse(FILES / f["disk"], filename=base, media_type=INLINE.get(ext) if inline else "application/octet-stream", content_disposition_type="inline" if inline else "attachment")
-    res.headers["Cache-Control"] = "private, no-store"
-    res.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"
+    path = FILES / f["disk"]
+    try:
+        st = path.stat()
+    except OSError:
+        raise HTTPException(404, "Nėra") from None
+    # Naršyklė failą laiko savo talpykloje ir kitą kartą tik pasitikrina (304, be turinio): pakartotinis modelio ar
+    # ataskaitos atidarymas – iškart. „private“ – ne Cloudflare ar kitų tarpinių serverių talpykloje (tik šio
+    # vartotojo naršyklėje); teisės tikrinamos kiekvieną kartą (ir 304 atveju)
+    etag = '"%s"' % hashlib.sha256(f"{f['disk']}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()[:32]
+    sec = {"Cache-Control": "private, no-cache", "ETag": etag,
+           "Content-Security-Policy": "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"}
+    if etag in [t.strip() for t in req.headers.get("if-none-match", "").split(",")]:
+        return Response(status_code=304, headers=sec)
+    # Tekstiniai modelio failai (OBJ, MTL, …) – kaip tekstas: Cloudflare juos suspaudžia (brotli) – OBJ ~3–4 × mažesnis
+    mt = INLINE.get(ext) if inline else ("text/plain; charset=utf-8" if ext in TEXT_DL else "application/octet-stream")
+    res = FileResponse(path, filename=base, media_type=mt, content_disposition_type="inline" if inline else "attachment",
+                       stat_result=st)
+    res.headers.update(sec)
     return res
 
 
+TEXT_DL = {"obj", "mtl", "gltf", "txt", "csv", "json", "gpx", "xyz", "pts"}
 INLINE = {
     "pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp",
     "mp4": "video/mp4", "webm": "video/webm", "txt": "text/plain; charset=utf-8", "csv": "text/plain; charset=utf-8",
