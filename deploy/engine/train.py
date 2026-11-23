@@ -77,6 +77,8 @@ def main():
     ap.add_argument("--max-points", type=int, default=1_500_000)
     ap.add_argument("--depth-weight", type=float, default=0.3, help="gylio priežiūros iš ODM taškų svoris (pradžioje)")
     ap.add_argument("--max-ratio", type=float, default=10.0, help="didžiausias splato ilgio ir pločio santykis (adatos)")
+    ap.add_argument("--coarse", type=float, default=0.4,
+                    help="tokia dalis pradžios žingsnių mokoma perpus mažesnėmis nuotraukomis (~3× greičiau, kokybė ta pati)")
     ap.add_argument("--sh-reg", type=float, default=0.01, help="atspindžių (SH) koeficientų bauda – iš naujų kampų mažiau triukšmo")
     ap.add_argument("--device", default="cuda", help=argparse.SUPPRESS)  # testams: cpu
     a = ap.parse_args()
@@ -136,8 +138,8 @@ def main():
     depth_cache = {}
 
     def depth_target(i, H, W, Kc):
-        if i in depth_cache:
-            return depth_cache[i]
+        if (i, H) in depth_cache:
+            return depth_cache[(i, H)]
         V = torch.tensor(cams[i]["viewmat"], device=dev, dtype=torch.float32)
         pc = pts_t @ V[:3, :3].T + V[:3, 3]
         z = pc[:, 2]
@@ -149,11 +151,13 @@ def main():
         ok &= (ui >= 0) & (ui < ws) & (vi >= 0) & (vi < hs)
         dmin = torch.full((hs * ws,), float("inf"), device=dev)
         dmin.scatter_reduce_(0, (vi * ws + ui)[ok], z[ok], reduce="amin")
-        depth_cache[i] = dmin.view(hs, ws)
-        return depth_cache[i]
+        depth_cache[(i, H)] = dmin.view(hs, ws)
+        return depth_cache[(i, H)]
     t0 = time.time()
     cancel = os.path.join(a.out_dir, "cancel")
     order = []
+    coarse_end = int(a.steps * a.coarse)
+    t_warm, s_warm = None, 0  # laikas po įšilimo (pirmi žingsniai – CUDA kompiliavimas, nuotraukų skaitymas)
     write_status(a.out_dir, state="training", message="Mokoma", cameras=len(cams))
     for step in range(a.steps):
         if not order:
@@ -162,6 +166,12 @@ def main():
         i = order.pop()
         gt_u8, Kc = imgs.get(i)
         gt = gt_u8.to(dev, non_blocking=True).float() / 255.0
+        if step < coarse_end:
+            # Grubus etapas: forma ir spalvos mokomos perpus mažesne raiška, smulkios detalės – vėliau pilna
+            gt = F.avg_pool2d(gt.permute(2, 0, 1)[None], 2)[0].permute(1, 2, 0)
+            Kc = Kc.copy()
+            Kc[:2] *= 0.5
+            Kc[:2, 2] -= 0.25  # pikselio centras: (c + 0.5) / 2 − 0.5
         H, W = gt.shape[:2]
         viewmat = torch.tensor(cams[i]["viewmat"], device=dev, dtype=torch.float32)[None]
         Kt = torch.tensor(Kc, device=dev, dtype=torch.float32)[None]
@@ -197,10 +207,19 @@ def main():
         strategy.step_post_backward(params, optimizers, state, step, info, lr=sched.get_last_lr()[0])
         if step % 100 == 0 or step == a.steps - 1:
             el = time.time() - t0
-            eta = el / (step + 1) * (a.steps - step - 1)
-            write_status(a.out_dir, step=step + 1, eta=round(eta), splats=int(params["means"].shape[0]), loss=round(float(l1.detach()), 4))
+            if t_warm is None and step >= 100:
+                t_warm, s_warm = time.time(), step
+            eta = None
+            if t_warm is not None and step - s_warm >= 100:
+                rate = (time.time() - t_warm) / (step - s_warm)
+                left_c = max(0, coarse_end - step - 1)
+                left_f = a.steps - step - 1 - left_c
+                # grubaus etapo metu pilnos raiškos žingsniai įvertinami ~3× lėtesni
+                eta = rate * (left_c + left_f * (3.0 if step < coarse_end else 1.0))
+            write_status(a.out_dir, step=step + 1, eta=round(eta) if eta is not None else None, splats=int(params["means"].shape[0]), loss=round(float(l1.detach()), 4))
             if step % 1000 == 0:
-                print("žingsnis %d/%d, l1 %.4f, splatų %d, liko ~%d min." % (step, a.steps, float(l1.detach()), params["means"].shape[0], eta / 60), flush=True)
+                print("žingsnis %d/%d, l1 %.4f, splatų %d, liko ~%s min." % (step, a.steps, float(l1.detach()), params["means"].shape[0],
+                      "?" if eta is None else int(eta / 60)), flush=True)
             if os.path.exists(cancel):
                 write_status(a.out_dir, state="cancelled", message="Atšaukta")
                 return

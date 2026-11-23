@@ -317,3 +317,74 @@ def test_flatten_car_roofs_on_sloped_site(tmp_path):
     out = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)
     nb, nr = len(bld.vertices), len(row.vertices)
     assert np.allclose(out[nb:nb + nr], row.vertices, atol=1e-5)
+
+
+def _box_walls(z0, z1, half=10.0, step=0.5):
+    """Pastato sienos (be stogo ir be apačios) nuo z0 iki z1 – kaip stiklinis pirmas aukštas be taškų."""
+    box = trimesh.creation.box(extents=[2 * half, 2 * half, z1 - z0])
+    box.apply_translation([0, 0, (z0 + z1) / 2])
+    box.update_faces(np.abs(box.face_normals[:, 2]) < 0.5)
+    box.remove_unreferenced_vertices()
+    V, F = trimesh.remesh.subdivide_to_size(box.vertices, box.faces, step)
+    return trimesh.Trimesh(V, F, process=True)
+
+
+def test_extend_facades_to_ground():
+    """Stiklinis pirmas aukštas: sienos prasideda 4 m virš žemės – nuleidžiamos iki žemės, viršutinis kraštas ne."""
+    walls = _box_walls(4.0, 15.0)
+    ground = _ground(-30, 30, -30, 30)
+    ground.update_faces(~((np.abs(ground.triangles_center[:, 0]) < 10) & (np.abs(ground.triangles_center[:, 1]) < 10)))
+    ground.remove_unreferenced_vertices()
+    mesh = trimesh.util.concatenate([walls, ground])
+    V, F = np.asarray(mesh.vertices), np.asarray(mesh.faces)
+    facades = []
+    for n in ([1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]):
+        n = np.array(n, float)
+        u = np.cross([0, 0, 1.0], n)
+        facades.append((n * 10.0 + [0, 0, 9.5], n, u, -10.0, 10.0))
+    V2, F2, ne, h = atea_mesh._extend_facades(V, F, facades)
+    assert ne > 0 and abs(h - 4.0) < 0.1
+    new = trimesh.Trimesh(V2, F2[len(F):], process=False)
+    # naujos sienelės – vertikalios, nuo 0 iki 4 m, atsuktos į tą pačią pusę kaip siena
+    assert np.abs(new.face_normals[:, 2]).max() < 1e-6
+    assert new.vertices[np.unique(new.faces)][:, 2].min() > -0.1
+    assert new.vertices[np.unique(new.faces)][:, 2].max() < 4.0 + 1e-6
+    c = new.triangles_center
+    assert (np.einsum("ij,ij->i", new.face_normals, np.c_[c[:, :2], np.zeros(len(c))]) > 0).all()  # į išorę, kaip sienos
+    # viršutinis sienų kraštas (15 m) nenuleistas – ten nėra sienos virš kraštinės
+    assert not (V2[len(V):, 2] > 4.0 + 1e-6).any()
+
+
+def test_extend_facades_fills_wall_hole():
+    """Skylė sienoje (stiklo juosta 6–9 m): viršutinė dalis nuleidžiama tik iki apatinės dalies viršaus."""
+    lower = _box_walls(0.0, 6.0)
+    upper = _box_walls(9.0, 15.0)
+    ground = _ground(-30, 30, -30, 30)
+    ground.update_faces(~((np.abs(ground.triangles_center[:, 0]) < 10) & (np.abs(ground.triangles_center[:, 1]) < 10)))
+    ground.remove_unreferenced_vertices()
+    mesh = trimesh.util.concatenate([lower, upper, ground])
+    V, F = np.asarray(mesh.vertices), np.asarray(mesh.faces)
+    n = np.array([1.0, 0, 0])
+    V2, F2, ne, h = atea_mesh._extend_facades(V, F, [(n * 10 + [0, 0, 7.5], n, np.cross([0, 0, 1.0], n), -10.0, 10.0)])
+    assert ne > 0 and abs(h - 3.0) < 0.1
+    assert V2[len(V):, 2].min() > 6.0 - 1e-6
+
+
+def test_remove_floating_keeps_facade_fragment():
+    """Atskira (tarpu nuo pastato) aukšta vertikali fasado dalis virš žemės – ne „plaukiojantis gabalas“."""
+    ground = _ground(-30, 30, -30, 30)
+    wall = _grid(-5, 5, 6, 14, 0.5, lambda x, z: 12.0)
+    mesh = trimesh.util.concatenate([ground, wall])
+    F, n, a = atea_mesh._remove_floating(np.asarray(mesh.vertices), np.asarray(mesh.faces), np.asarray(mesh.area_faces))
+    assert n == 0 and len(F) == len(mesh.faces)
+
+
+def test_min_point_distance_free_space(tmp_path, monkeypatch):
+    """Pakankamai RAM – laisvos erdvės palaikymas įjungiamas net kai taškai retinami (stiklo fasadams)."""
+    tree = types.SimpleNamespace(openmvs=str(tmp_path), filtered_point_cloud=str(tmp_path / "x.ply"))
+    monkeypatch.setattr(atea_mesh, "_ply_vertices", lambda p: 69_200_000)
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 49.3e9)
+    dist, low, fss = atea_mesh._min_point_distance(tree)
+    assert fss and low and 3.0 < dist < 3.6
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 16e9)
+    assert atea_mesh._min_point_distance(tree)[2] is False

@@ -50,6 +50,8 @@ def _refine_level(args, low_mem=False):
 # ~11 GB, grafų pjūviui – daugiau. Imama atsargiai 500 B taškui ir naudojama tik dalis laisvos RAM, kad Docker
 # (WSL) nepradėtų keisti atminties disku ir „nesustingtų“.
 BYTES_PER_POINT = 500
+BYTES_PER_POINT_FSS = 700  # su laisvos erdvės palaikymu (papildomi svoriai kiekvienam tetraedrui)
+FSS_MIN_MEM = 24e9         # mažiau laisvos RAM – be laisvos erdvės palaikymo
 MEM_SHARE = 0.55
 BASE_DIST = 2.5  # px – OpenMVS numatytasis --min-point-distance
 
@@ -78,17 +80,20 @@ def _ply_vertices(path):
 
 
 def _min_point_distance(tree):
-    """(--min-point-distance, ar mažai RAM): taškai retinami tiek, kad tinklas tilptų į laisvą atmintį."""
+    """(--min-point-distance, ar mažai RAM, laisvos erdvės palaikymas). Laisvos erdvės palaikymas – stiklo fasadams
+    būtinas (be jo stiklinis pirmas aukštas ir fasadų dalys dingsta, pastatas „kabo“), todėl jis įjungiamas visada,
+    kai RAM pakanka, o taškai retinami tiek, kad su juo tilptų į laisvą atmintį."""
     mem = _mem_available()
     n = _ply_vertices(os.path.join(tree.openmvs, "scene_dense_dense_filtered.ply")) or _ply_vertices(tree.filtered_point_cloud)
     if not mem or not n:
-        return BASE_DIST, False
-    target = mem * MEM_SHARE / BYTES_PER_POINT
+        return BASE_DIST, False, False
+    fss = mem >= FSS_MIN_MEM
+    target = mem * MEM_SHARE / (BYTES_PER_POINT_FSS if fss else BYTES_PER_POINT)
     log.ODM_INFO("Atea: tankus debesis %s mln. taškų, laisva RAM %.1f GB (telpa ~%s mln.)" % (round(n / 1e6, 1), mem / 1e9, round(target / 1e6, 1)))
     if n <= target:
-        return BASE_DIST, mem < 24e9
+        return BASE_DIST, not fss, fss
     # Įterpiamų taškų skaičius mažėja ~ atstumo kvadratu
-    return min(12.0, round(BASE_DIST * math.sqrt(n / target), 1)), True
+    return min(12.0, round(BASE_DIST * math.sqrt(n / target), 1)), True, fss
 
 
 def _crop(mesh_in, mesh_out, filtered_pc):
@@ -143,30 +148,37 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
 
         # 1) Tinklas iš taškų su matomumu (taškai retinami pagal laisvą RAM; tinklas iš karto sumažinamas, kad
         #    tikslinimui reikėtų mažiau atminties)
-        dist, low_mem = _min_point_distance(tree)
+        dist, low_mem, fss = _min_point_distance(tree)
         faces = max(int(max_vertex) * 4, 1000000)
         # Laisvos erdvės palaikymas: paviršiai, kuriuose mažai taškų (stiklas, atspindžiai, vienspalvės sienos),
         # atkuriami pagal tai, kur matymo spinduliai praeina laisvai – mažiau skylių ir „ištirpusių“ fasadų.
-        # Reikia daugiau RAM, todėl tik kai jos pakanka (ne low_mem).
-        fss = 0 if low_mem else 1
+        fss = 1 if fss else 0
         log.ODM_INFO("Atea: OpenMVS tinklas (ReconstructMesh) iš %s, min. atstumas tarp taškų %s px%s%s"
                      % (os.path.basename(scene), dist, " (sumažinta dėl RAM)" if dist > BASE_DIST else "",
                         ", laisvos erdvės palaikymas" if fss else ""))
         recon = os.path.join(work, "mesh.mvs")
-        def reconstruct(dev):
+        def reconstruct(dev, fss):
             system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
                        '--min-point-distance %s --free-space-support %s --target-face-num %s --remove-spurious 20 --close-holes 100 --smooth 1 -v 0'
                        % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, fss, faces))
-        try:
-            reconstruct(dev_gpu)
-        except system.SubprocessException:
-            if not gpu:
-                raise
-            log.ODM_WARNING("Atea: ReconstructMesh su GPU nepavyko – kartojama procesoriumi")
+        def reconstruct_any(fss):
             try:
-                reconstruct(dev_cpu)
+                reconstruct(dev_gpu, fss)
             except system.SubprocessException:
-                reconstruct("")
+                if not gpu:
+                    raise
+                log.ODM_WARNING("Atea: ReconstructMesh su GPU nepavyko – kartojama procesoriumi")
+                try:
+                    reconstruct(dev_cpu, fss)
+                except system.SubprocessException:
+                    reconstruct("", fss)
+        try:
+            reconstruct_any(fss)
+        except system.SubprocessException:
+            if not fss:
+                raise
+            log.ODM_WARNING("Atea: ReconstructMesh su laisvos erdvės palaikymu nepavyko (RAM?) – kartojama be jo")
+            reconstruct_any(0)
         mesh_ply = os.path.join(work, "mesh.ply")
         if not io.file_exists(mesh_ply):
             raise Exception("ReconstructMesh nesukūrė tinklo")
@@ -309,13 +321,14 @@ def _find_planes(S, SN, per, cand_mask, ok_normal, rng, tree, remaining, max_pla
 
 
 def _flatten(mesh):
-    """Fasadų ir stogų lyginimas. Grąžina (naujos viršūnės, pataisytų viršūnių skaičius, plokštumų skaičius)."""
+    """Fasadų ir stogų lyginimas. Grąžina (naujos viršūnės, pataisytų viršūnių skaičius, plokštumų skaičius,
+    fasadai [(centras, normalė, ašis, u0, u1)])."""
     import numpy as np
     import trimesh
 
     V = np.asarray(mesh.vertices, dtype=np.float64).copy()
     if len(V) < 2000:
-        return V, 0, 0
+        return V, 0, 0, []
     rng = np.random.default_rng(0)
     # Taškai tolygiai pagal plotą (ne pagal viršūnes – jų tankis tinkle netolygus) su paviršiaus normalėmis
     ns = 150000
@@ -378,7 +391,7 @@ def _flatten(mesh):
 
     if not planes:
         log.ODM_INFO("Atea: fasadų plokštumų nerasta")
-        return V, 0, 0
+        return V, 0, 0, []
 
     # Kiekvienai viršūnei – atstumas iki kiekvienos plokštumos, kurios ribose ir tolerancijoje ji yra.
     # Traukiamos tik į plokštumą atsuktos viršūnės (normalė ~ plokštumos normalė): žemė prie sienos, palangės,
@@ -430,7 +443,7 @@ def _flatten(mesh):
     if roofs_info:
         log.ODM_INFO("Atea: stogai (aukštis virš fasado apačios, plotas): %s" % ", ".join(roofs_info))
 
-    return V, moved, len(planes)
+    return V, moved, len(planes), [(p[0], p[1], p[2], p[4], p[5]) for p in planes[:nfac]]
 
 
 def _save(mesh_path, V, F):
@@ -460,11 +473,116 @@ def flatten_facades(mesh_path, args=None):
     if not io.file_exists(mesh_path):
         return 0
     mesh = trimesh.load(mesh_path, process=False, force="mesh")
-    V, moved, n = _flatten(mesh)
+    V, moved, n, _ = _flatten(mesh)
     if moved:
         _save(mesh_path, V, np.asarray(mesh.faces))
         log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (n, moved))
     return moved
+
+
+# ---------------------------------------------------------------- fasadų pratęsimas žemyn
+# Stiklinis pirmas aukštas (vitrinos, atspindžiai) ir stiklo juostos fasade iš statmenų nuotraukų beveik neturi taškų:
+# fasado apačioje lieka tarpas – pastatas „kabo“ virš žemės, o pro skyles sienose matosi kiaurai. Rastos fasado
+# plokštumos apatinis kraštas (tinklo kraštinės plokštumoje, virš kurių yra siena) nuleidžiamas vertikaliai žemyn iki
+# žemės prie fasado arba iki žemiau toje pačioje plokštumoje esančios sienos dalies (skylė sienoje). Naujos sienelės
+# tekstūruojamos iš nuotraukų kaip ir visos kitos.
+CURTAIN_ON = 0.25    # m – kraštinės viršūnės ne toliau tiek nuo fasado plokštumos
+CURTAIN_MIN = 0.4    # m – trumpesni tarpai nepildomi (maži nelygumai)
+CURTAIN_MAX = 20.0   # m – ilgiau nenuleidžiama (už modelio krašto / neaiški žemė)
+CURTAIN_R = 4.0      # m – žemės paieškos spindulys aplink kraštinę
+CURTAIN_STEP = 2.0   # m – naujų sienelių aukštis (ilgi siauri trikampiai blogai tekstūruojami)
+
+
+def _extend_facades(V, F, facades):
+    """Grąžina (V, F, pratęstų kraštinių skaičius, didžiausias nuleidimas m)."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    V = np.asarray(V, dtype=np.float64)
+    F = np.asarray(F)
+    nf = len(F)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    opp = np.concatenate([F[:, 2], F[:, 0], F[:, 1]])  # trečioji sienelės viršūnė
+    _, inv, cnt = np.unique(np.sort(E, axis=1), axis=0, return_inverse=True, return_counts=True)
+    bmask = cnt[inv.ravel()] == 1
+    if not bmask.any():
+        return V, F, 0, 0.0
+    BE, BO = E[bmask], opp[bmask]
+
+    # Žemė: į viršų atsuktos viršūnės (vertex normalės iš sienelių)
+    fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    vn = np.zeros_like(V)
+    for k in range(3):
+        np.add.at(vn, F[:, k], fn)
+    vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
+    up = np.flatnonzero(vn[:, 2] > 0.7)
+    if len(up) == 0:
+        return V, F, 0, 0.0
+    up_tree = cKDTree(V[up, :2])
+
+    bottom = {}   # viršūnė → apačios aukštis
+    edges = []
+    for c, n, u, u0, u1 in facades:
+        d = (V - c) @ n
+        t = (V - c) @ u
+        onp = (np.abs(d) < CURTAIN_ON) & (t > u0) & (t < u1)
+        a, b = BE[:, 0], BE[:, 1]
+        sel = onp[a] & onp[b]
+        # apatinis kraštas: sienelė virš kraštinės, kraštinė ne stati
+        sel &= V[BO, 2] > np.maximum(V[a, 2], V[b, 2]) + 0.05
+        L = np.linalg.norm(V[b] - V[a], axis=1)
+        sel &= np.abs(V[b, 2] - V[a, 2]) < 0.7 * np.maximum(L, 1e-9)
+        idx = np.flatnonzero(sel)
+        if not len(idx):
+            continue
+        wall = np.flatnonzero(np.abs(d) < CURTAIN_ON)
+        wall_t, wall_z = t[wall], V[wall, 2]
+        for i in idx:
+            for v in BE[i]:
+                v = int(v)
+                if v in bottom:
+                    continue
+                z = V[v, 2]
+                # žemė prie fasado: į viršų atsuktos viršūnės ne plokštumoje, žemiau kraštinės
+                near = up[up_tree.query_ball_point(V[v, :2], CURTAIN_R)]
+                near = near[(np.abs(d[near]) > 0.5) & (V[near, 2] < z - CURTAIN_MIN)]
+                if len(near) < 3:
+                    bottom[v] = None
+                    continue
+                zb = float(np.percentile(V[near, 2], 10))
+                # žemiau toje pačioje plokštumoje esanti siena (skylė sienoje) – iki jos viršaus
+                below = (np.abs(wall_t - t[v]) < 0.5) & (wall_z < z - CURTAIN_MIN) & (wall_z > zb)
+                if below.any():
+                    zb = float(wall_z[below].max())
+                bottom[v] = zb if CURTAIN_MIN <= z - zb <= CURTAIN_MAX else None
+        edges += [tuple(int(x) for x in BE[i]) for i in idx]
+
+    edges = [(a, b) for a, b in set(edges) if bottom.get(a) is not None and bottom.get(b) is not None]
+    if not edges:
+        return V, F, 0, 0.0
+    verts = sorted({v for e in edges for v in e})
+    h = max(V[v, 2] - bottom[v] for v in verts)
+    K = max(1, int(np.ceil(h / CURTAIN_STEP)))
+    # kiekvienai viršūnei – K naujų viršūnių vertikaliai žemyn (lygiais intervalais iki jos apačios)
+    col = {}
+    newV = []
+    base = len(V)
+    for v in verts:
+        z0, z1 = V[v, 2], bottom[v]
+        ids = [v]
+        for k in range(1, K + 1):
+            p = V[v].copy()
+            p[2] = z0 + (z1 - z0) * k / K
+            ids.append(base + len(newV))
+            newV.append(p)
+        col[v] = ids
+    newF = []
+    for a, b in edges:  # sienelėje kraštinė a→b, naujose – b→a (ta pati orientacija)
+        A, B = col[a], col[b]
+        for k in range(K):
+            newF += [(B[k], A[k], A[k + 1]), (B[k], A[k + 1], B[k + 1])]
+    V = np.vstack([V, np.array(newV)])
+    F = np.vstack([F, np.array(newF, dtype=F.dtype)])
+    return V, F, len(edges), float(h)
 
 
 # ---------------------------------------------------------------- tinklo valymas
@@ -475,6 +593,7 @@ def flatten_facades(mesh_path, args=None):
 SPECK = 2.0        # m²
 FLOAT_MAX = 200.0  # m²
 FLOAT_GAP = 1.0    # m
+FACADE_H = 2.0     # m – vertikalus ir bent tokio aukščio atskiras gabalas laikomas fasado dalimi (nešalinamas)
 # Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
 # neapfotografuotos vietos, modelio kraštas) paliekamos – ten nėra duomenų. Užpildoma prieš tekstūravimą, todėl
 # užpildyta vieta gauna tikrą tekstūrą iš nuotraukų.
@@ -502,6 +621,8 @@ def _remove_floating(V, F, face_area):
     big = max(min(FLOAT_MAX, 0.05 * area.sum()), SPECK)
     mv = np.flatnonzero(lab == main)
     tree = cKDTree(V[mv, :2])
+    fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
+    fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
     drop = np.zeros(len(area), dtype=bool)
     for c in np.flatnonzero((area > 0) & (area < big)):
         if c == main:
@@ -511,6 +632,11 @@ def _remove_floating(V, F, face_area):
             continue
         cv = np.flatnonzero(lab == c)
         P = V[cv]
+        # Fasado atplaiša (stiklinė siena atskirta nuo pastato tarpu) – daugiausia vertikali ir aukšta: paliekama
+        fm = flab == c
+        if (P[:, 2].max() - P[:, 2].min() > FACADE_H
+                and face_area[fm][np.abs(fn[fm, 2]) < VERT].sum() > 0.5 * area[c]):
+            continue
         lo, hi = P[:, :2].min(axis=0), P[:, :2].max(axis=0)
         r = float(np.linalg.norm(hi - lo)) / 2 + 3.0
         near = tree.query_ball_point((lo + hi) / 2, r)
@@ -592,13 +718,22 @@ def improve_mesh(mesh_path, args=None):
             V, F = np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces)
     except Exception as e:
         log.ODM_WARNING("Atea: plaukiojančių gabalų šalinimas praleistas (%s)" % str(e))
+    facades = []
     try:
-        V2, moved, n = _flatten(mesh)
+        V2, moved, n, facades = _flatten(mesh)
         if moved:
             V, changed = V2, True
             log.ODM_INFO("Atea: fasadai išlyginti – %s plokštumų, pataisyta %s viršūnių" % (n, moved))
     except Exception as e:
         log.ODM_WARNING("Atea: fasadų lyginimas praleistas (%s)" % str(e))
+    if facades:
+        try:
+            V2, F2, n, h = _extend_facades(V, F, facades)
+            log.ODM_INFO("Atea: fasadai pratęsti žemyn iki žemės / žemiau esančios sienos – %s kraštinių (iki %.1f m)" % (n, h))
+            if n:
+                V, F, changed = V2, F2, True
+        except Exception as e:
+            log.ODM_WARNING("Atea: fasadų pratęsimas praleistas (%s)" % str(e))
     try:
         V2, F2, n = _fill_holes(V, F)
         log.ODM_INFO("Atea: užpildyta mažų skylių %s" % n)
