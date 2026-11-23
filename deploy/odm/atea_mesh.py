@@ -750,3 +750,239 @@ def improve_mesh(mesh_path, args=None):
         log.ODM_WARNING("Atea: skylių užpildymas praleistas (%s)" % str(e))
     if changed:
         _save(mesh_path, V, F)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Nematytų sienelių spalva. texrecon (mvs-texturing) sienelės, kurių nė viena nuotrauka nemato kampu iki 75° ir be
+# užstojimo, su --keep-unseen-faces gauna vieną bendrą 3×3 px pleistrą – po siūlių lyginimo jos tampa vienodai
+# pilkos (medžių šonai, atraminės sienos, stiklinio pirmo aukšto apačia). Be jo – jos išmetamos ir lieka kiaurymės.
+# Čia tos sienelės (visos turi identiškas UV koordinates) gauna savo tekstūrą iš tankaus taškų debesies: OpenMVS
+# kiekvieno taško spalvą paėmė iš jį tikrai mačiusių nuotraukų (be 75° ribos), todėl medžio šonas tampa žalias,
+# siena – sienos spalvos. Kur taškų nėra – artimiausių taškų spalva (sklandus tęsinys, ne pilka dėmė).
+UNSEEN_MIN = 20                 # tiek sienelių su identiškomis UV – texrecon „nematytų“ pleistras
+UNSEEN_UV_EXT = 2e-3            # pleistro UV dydis (3 px 1024–8192 px atlase)
+FILL_RES = 0.03                 # m/px – tekstūros raiška (didinama, jei netelpa)
+FILL_MAX_TEXELS = 4096 * 4096
+FILL_CELL_MIN, FILL_CELL_MAX = 4, 32
+FILL_K = 8                      # kaimyninių taškų skaičius
+FILL_R = 2.0                    # m – taškų paieškos spindulys
+FILL_MTL = "material_atea_unseen"
+
+_PLY_TYPES = {"char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1", "short": "<i2", "int16": "<i2",
+              "ushort": "<u2", "uint16": "<u2", "int": "<i4", "int32": "<i4", "uint": "<u4", "uint32": "<u4",
+              "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8"}
+
+
+def _read_ply_points(path):
+    """Dvejetainis (little endian) PLY taškų debesis → (xyz, rgb uint8, normalės arba None), be viso failo kopijos."""
+    import numpy as np
+    with open(path, "rb") as f:
+        head = b""
+        while not head.endswith(b"end_header\n"):
+            line = f.readline()
+            if not line:
+                raise ValueError("netinkama PLY antraštė")
+            head += line
+    lines = head.decode("latin-1").split("\n")
+    if not any(l.startswith("format binary_little_endian") for l in lines):
+        raise ValueError("PLY ne binary_little_endian")
+    fields, n, in_vertex = [], 0, False
+    for l in lines:
+        p = l.split()
+        if not p:
+            continue
+        if p[0] == "element":
+            if in_vertex:
+                break
+            in_vertex = p[1] == "vertex"
+            n = int(p[2]) if in_vertex else n
+        elif p[0] == "property" and in_vertex:
+            if p[1] == "list":
+                raise ValueError("PLY taškai su sąrašais")
+            fields.append((p[2], _PLY_TYPES[p[1]]))
+    if not n:
+        raise ValueError("PLY be taškų")
+    a = np.memmap(path, dtype=np.dtype(fields), mode="r", offset=len(head), shape=(n,))
+    names = a.dtype.names
+    col = next((c for c in (("red", "green", "blue"), ("diffuse_red", "diffuse_green", "diffuse_blue"))
+                if all(x in names for x in c)), None)
+    if col is None:
+        raise ValueError("PLY be spalvų")
+    nrm = ("nx", "ny", "nz") if all(x in names for x in ("nx", "ny", "nz")) else None
+    return a, col, nrm
+
+
+def _point_colors(pc_path, P, FN, faces_P):
+    """Kiekvienam taškui P (m×3) – spalva iš tankaus debesies (svoris pagal atstumą ir normalių sutapimą)."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    a, col, nrm = _read_ply_points(pc_path)
+    # Tik taškai šalia nematytų sienelių (debesis – dešimtys milijonų)
+    cell = FILL_R
+    lo = faces_P.reshape(-1, 3).min(axis=0) - 2 * cell
+    keyc = np.unique(np.floor((faces_P.reshape(-1, 3) - lo) / cell).astype(np.int64), axis=0)
+    off = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)])
+    keyc = np.unique((keyc[:, None, :] + off[None]).reshape(-1, 3), axis=0)
+    dims = keyc.max(axis=0) + 2
+    want = np.unique((keyc[:, 0] * dims[1] + keyc[:, 1]) * dims[2] + keyc[:, 2])
+    sel = []
+    step = 5_000_000
+    for s in range(0, len(a), step):
+        xyz = np.stack([a["x"][s:s + step], a["y"][s:s + step], a["z"][s:s + step]], axis=1).astype(np.float64)
+        q = np.floor((xyz - lo) / cell).astype(np.int64)
+        ok = np.all((q >= 0) & (q < dims), axis=1)
+        k = (q[:, 0] * dims[1] + q[:, 1]) * dims[2] + q[:, 2]
+        ok &= np.isin(k, want)
+        sel.append(np.nonzero(ok)[0] + s)
+    sel = np.concatenate(sel)
+    if len(sel) < FILL_K:
+        raise ValueError("šalia nematytų sienelių nėra taškų")
+    sub = a[sel]
+    X = np.stack([sub["x"], sub["y"], sub["z"]], axis=1).astype(np.float64)
+    C = np.stack([sub[c] for c in col], axis=1).astype(np.float64)
+    if C.max() > 255:
+        C = C / 257.0
+    N = np.stack([sub[c] for c in nrm], axis=1).astype(np.float64) if nrm else None
+    tree = cKDTree(X)
+    out = np.zeros((len(P), 3), dtype=np.float64)
+    step = 1_000_000
+    for s in range(0, len(P), step):
+        p, fn = P[s:s + step], FN[s:s + step]
+        d, i = tree.query(p, k=FILL_K, distance_upper_bound=FILL_R, workers=-1)
+        valid = i < len(X)
+        i = np.where(valid, i, 0)
+        w = np.where(valid, 1.0 / (d + 0.02) ** 2, 0.0)
+        if N is not None:
+            w *= 0.05 + np.clip(np.abs(np.einsum("mkc,mc->mk", N[i], fn)), 0, 1)
+        ws = w.sum(axis=1)
+        c = np.einsum("mk,mkc->mc", w, C[i]) / np.maximum(ws, 1e-12)[:, None]
+        far = ws <= 0
+        if far.any():
+            _, j = tree.query(p[far], k=1, workers=-1)
+            c[far] = C[j]
+        out[s:s + step] = c
+    return np.clip(np.rint(out), 0, 255).astype(np.uint8)
+
+
+def _write_png(path, img):
+    try:
+        import cv2
+        if not cv2.imwrite(path, img[:, :, ::-1]):
+            raise IOError(path)
+    except ImportError:
+        from PIL import Image
+        Image.fromarray(img).save(path)
+
+
+def fill_unseen(obj_path, pc_path):
+    """texrecon OBJ: nematytoms sienelėms – nauja tekstūra iš taškų debesies. Grąžina perdažytų sienelių skaičių."""
+    import numpy as np
+    with open(obj_path) as f:
+        lines = f.read().split("\n")
+    v_l = [l[2:] for l in lines if l.startswith("v ")]
+    vt_l = [l[3:] for l in lines if l.startswith("vt ")]
+    V = np.array(" ".join(v_l).split(), dtype=np.float64).reshape(-1, 3)
+    VT = np.array(" ".join(vt_l).split(), dtype=np.float64).reshape(-1, 2)
+    f_idx = [i for i, l in enumerate(lines) if l.startswith("f ")]
+    tok = " ".join(lines[i][2:] for i in f_idx).replace("/", " ").split()
+    per = len(lines[f_idx[0]][2:].replace("/", " ").split()) if f_idx else 0
+    if per not in (6, 9):
+        raise ValueError("netikėtas OBJ sienelių formatas")
+    F = np.array(tok, dtype=np.int64).reshape(-1, per) - 1
+    fv = F[:, 0::per // 3]
+    ft = F[:, 1::per // 3]
+    fn_ = F[:, 2::3] if per == 9 else None
+    T = VT[ft]                                                  # (n,3,2)
+    ext = T.max(axis=1) - T.min(axis=1)
+    tiny = np.all(ext < UNSEEN_UV_EXT, axis=1)
+    key = np.rint(T.reshape(-1, 6) * 1e6).astype(np.int64)
+    _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    unseen = tiny & (cnt[inv.ravel()] >= UNSEEN_MIN)
+    m = int(unseen.sum())
+    if not m:
+        return 0
+    U = np.nonzero(unseen)[0]
+    P3 = V[fv[U]]                                               # (m,3,3)
+    A, B, C = P3[:, 0], P3[:, 1], P3[:, 2]
+    FN = np.cross(B - A, C - A)
+    FN /= np.maximum(np.linalg.norm(FN, axis=1), 1e-12)[:, None]
+    emax = np.max(np.linalg.norm(P3 - np.roll(P3, 1, axis=1), axis=2), axis=1)
+    res = FILL_RES
+    while True:
+        s = np.clip(np.ceil(emax / res).astype(np.int64) + 1, FILL_CELL_MIN, FILL_CELL_MAX)
+        if int((s * s).sum()) <= FILL_MAX_TEXELS or s.max() == FILL_CELL_MIN:
+            break
+        res *= 1.25
+    total = int((s * s).sum())
+    W = 1 << max(6, int(math.ceil(math.log2(math.sqrt(total * 1.15)))))
+    W = min(W, 8192)
+    order = np.argsort(-s, kind="stable")
+    X0 = np.zeros(m, dtype=np.int64)
+    Y0 = np.zeros(m, dtype=np.int64)
+    x = y = row = 0
+    for j in order:
+        sj = int(s[j])
+        if x + sj > W:
+            x, y, row = 0, y + row, 0
+        X0[j], Y0[j] = x, y
+        x += sj
+        row = max(row, sj)
+    H = y + row
+    H = (H + 3) // 4 * 4
+    if H > 16384:
+        raise ValueError("nematytų sienelių per daug (%s)" % m)
+    # Tekselių 3D taškai (trikampis A-B-C → langelio kampai; už įstrižainės – kraštas, kad nebūtų siūlių)
+    pts, nrm, pix = [], [], []
+    for sv in np.unique(s):
+        sv = int(sv)
+        g = np.nonzero(s == sv)[0]
+        ii, jj = np.meshgrid(np.arange(sv), np.arange(sv), indexing="xy")
+        u = (ii.ravel() / (sv - 1.0))
+        v = (jj.ravel() / (sv - 1.0))
+        tot = u + v
+        sc = np.where(tot > 1, 1.0 / np.maximum(tot, 1e-9), 1.0)
+        u, v = u * sc, v * sc
+        p = A[g][:, None] + u[None, :, None] * (B[g] - A[g])[:, None] + v[None, :, None] * (C[g] - A[g])[:, None]
+        pts.append(p.reshape(-1, 3))
+        nrm.append(np.repeat(FN[g], sv * sv, axis=0))
+        pix.append(np.stack([(X0[g][:, None] + ii.ravel()[None]).ravel(),
+                             (Y0[g][:, None] + jj.ravel()[None]).ravel()], axis=1))
+    pts, nrm, pix = np.concatenate(pts), np.concatenate(nrm), np.concatenate(pix)
+    cols = _point_colors(pc_path, pts, nrm, P3)
+    img = np.zeros((H, W, 3), dtype=np.uint8)
+    img[:] = np.median(cols, axis=0).astype(np.uint8)
+    img[pix[:, 1], pix[:, 0]] = cols
+    # OBJ: naujos UV, sienelės perkeliamos į naują medžiagą
+    base = os.path.splitext(obj_path)[0]
+    png_name = os.path.basename(base) + "_" + FILL_MTL + "_map_Kd.png"
+    _write_png(os.path.join(os.path.dirname(obj_path), png_name), img)
+    uvA = np.stack([X0 + 0.5, Y0 + 0.5], axis=1)
+    uvB = np.stack([X0 + s - 0.5, Y0 + 0.5], axis=1)
+    uvC = np.stack([X0 + 0.5, Y0 + s - 0.5], axis=1)
+    uv = np.stack([uvA, uvB, uvC], axis=1) / [W, H]
+    uv[..., 1] = 1.0 - uv[..., 1]
+    nvt = len(VT)
+    new_vt = ["vt %.7f %.7f" % (a_, b_) for a_, b_ in uv.reshape(-1, 2)]
+    new_f = ["usemtl " + FILL_MTL]
+    for r, fi in enumerate(U):
+        t = [nvt + 3 * r + k + 1 for k in range(3)]
+        if fn_ is not None:
+            new_f.append("f " + " ".join("%d/%d/%d" % (fv[fi, k] + 1, t[k], fn_[fi, k] + 1) for k in range(3)))
+        else:
+            new_f.append("f " + " ".join("%d/%d" % (fv[fi, k] + 1, t[k]) for k in range(3)))
+        lines[f_idx[fi]] = None
+    mtllib = next((l.split(None, 1)[1].strip() for l in lines if l and l.startswith("mtllib ")), None)
+    while lines and lines[-1] == "":
+        lines.pop()
+    out = [l for l in lines if l is not None] + new_vt + new_f
+    tmp = obj_path + ".atea_tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, obj_path)
+    if mtllib:
+        with open(os.path.join(os.path.dirname(obj_path), mtllib), "a") as f:
+            f.write("newmtl %s\nKa 1.000000 1.000000 1.000000\nKd 1.000000 1.000000 1.000000\n"
+                    "Ks 0.000000 0.000000 0.000000\nTr 0.000000\nillum 1\nNs 1.000000\nmap_Kd %s\n" % (FILL_MTL, png_name))
+    log.ODM_INFO("Atea: nematytos sienelės nudažytos pagal taškų debesį – %s (tekstūra %s×%s, %.0f mm/px)"
+                 % (m, W, H, res * 1000))
+    return m
