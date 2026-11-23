@@ -200,7 +200,9 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         best = mesh_ply
         refined = os.path.join(work, "mesh_refine.mvs")
         n_rec = _ply_count(mesh_ply, "face")
-        decimate = _refine_decimate(n_rec, int(max_vertex) * (1 if low_mem else 2))
+        # Biudžetas – visas --mesh-size×2 net kai taškai retinti dėl RAM: retinimas riboja ReconstructMesh (Delaunay),
+        # o RefineMesh su 2 mln. sienelių užtruko ~5 min. – vietos detalumui (mašinos, stogo įranga) pakanka
+        decimate = _refine_decimate(n_rec, int(max_vertex) * 2)
         log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh): %s sienelių, sumažinimas %s"
                      % (n_rec, decimate if decimate else "auto"))
         def refine(dev):
