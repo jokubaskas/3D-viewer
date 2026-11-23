@@ -183,7 +183,7 @@ export function createOdmUI(app) {
               <div class="row" style="align-items:flex-start;flex-direction:column;gap:6px">
                 <span>Kokybė</span>
                 <div class="seg" id="odm-preset" style="width:100%">
-                  ${Object.entries(PRESETS).map(([k, p]) => `<button data-preset="${k}" class="${k === 'high' ? 'active' : ''}">${p.label}</button>`).join('')}
+                  ${Object.entries(PRESETS).map(([k, p]) => `<button data-preset="${k}" class="${k === 'odm' ? 'active' : ''}">${p.label}</button>`).join('')}
                 </div>
                 <span class="muted small" id="odm-preset-desc">${PRESETS.high.desc}</span>
               </div>
@@ -440,7 +440,7 @@ export function createOdmUI(app) {
     }
   });
 
-  let preset = 'high';
+  let preset = 'odm';
   function setPreset(k) {
     preset = k;
     page.querySelectorAll('#odm-preset button').forEach((x) => x.classList.toggle('active', x.dataset.preset === k));
@@ -501,9 +501,11 @@ export function createOdmUI(app) {
     const entries = uniqueUploadNames(photos);
     const geoTxt = buildGeoTxt(entries, $('#odm-hmode').value, geoidFn());
     // Variklis sritį ir aukščius ima iš kartu įkeliamų failų (boundary.geojson, geo.txt), kontrolinius taškus – iš gcp_list.txt
+    // Tikslus 3D tinklas (OpenMVS ReconstructMesh + RefineMesh) – tik jei serveris turi Atea ODM atvaizdą (deploy/odm)
+    const mvsMesh = !engine && preset !== 'orthoOnly' && (await client.supports('mesh-method'));
     const options = engine
       ? engineOptions(preset)
-      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter });
+      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter, mvsMesh });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
     if (boundary) items.push({ name: 'boundary.geojson', file: new Blob([JSON.stringify(boundary)], { type: 'application/geo+json' }) });
@@ -637,7 +639,7 @@ export function createOdmUI(app) {
     // Serverio užduotis → projektų sąrašas (pvz. perkėlus serverį į kitą kompiuterį ar atidarius kitoje naršyklėje)
     const adopt = (x) => {
       const opt = (n) => (x.options || []).find((o) => o.name === n)?.value;
-      const preset = x.engine === 'atea' ? (opt('quality') === 'fast' ? 'fast' : 'high') : opt('fast-orthophoto') || opt('skip-3dmodel') ? 'orthoOnly' : '';
+      const preset = x.engine === 'atea' ? (opt('quality') === 'fast' ? 'fast' : 'high') : opt('fast-orthophoto') || opt('skip-3dmodel') ? 'orthoOnly' : opt('pc-quality') === 'ultra' ? 'odm' : '';
       saveProject({ uuid: x.uuid, name: x.name || x.uuid.slice(0, 8), server: x._server || server.url, created: x.dateCreated || Date.now(), photos: x.imagesCount, preset, ortho: !opt('skip-orthophoto'), status: 'server', statusCode: x.status.code, progress: x.progress });
     };
     box.querySelectorAll('[data-sact]').forEach((b) =>
@@ -788,7 +790,7 @@ export function createOdmUI(app) {
     const info = await c.taskInfo(p.uuid);
     const presetKeys = new Set(Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})));
     const keep = (info.options || []).filter((o) => !presetKeys.has(o.name) && !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
-    const choices = Object.entries(PRESETS).filter(([k]) => (engine ? isEnginePreset(k) : k === 'orthoOnly'));
+    const choices = Object.entries(PRESETS).filter(([k]) => (engine ? isEnginePreset(k) : !isEnginePreset(k)));
     const preset = await new Promise((resolve) => {
       const d = document.createElement('dialog');
       d.className = 'dialog';
@@ -930,6 +932,8 @@ export function createOdmUI(app) {
         if (prev !== STATUS.COMPLETED && p.statusCode === STATUS.COMPLETED) {
           app.toast(t('Modelis „{n}“ paruoštas!', { n: p.name }), 'info', 8000);
           notify(t('Modelis „{n}“ paruoštas', { n: p.name }));
+          // ODM aukščiausia kokybė – realistiškas vaizdas (Gaussian Splatting) iš tų pačių kamerų paleidžiamas iškart
+          if (p.preset === 'odm' && splat.available && !splat.jobs[p.uuid]) splatTrain(p).catch((e) => app.toast(t('Realistiškas vaizdas nepaleistas: {e}', { e: e.message }), 'error', 7000));
         }
         if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
         p.pollError = null;
