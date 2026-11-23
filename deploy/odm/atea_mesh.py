@@ -67,16 +67,29 @@ def _mem_available():
     return None
 
 
-def _ply_vertices(path):
+def _ply_count(path, element):
     try:
         with open(path, "rb") as f:
             head = f.read(4096).decode("latin-1")
         for line in head.split("\n"):
-            if line.startswith("element vertex"):
+            if line.startswith("element %s " % element):
                 return int(line.split()[2])
     except Exception:
         pass
     return None
+
+
+def _ply_vertices(path):
+    return _ply_count(path, "vertex")
+
+
+def _refine_decimate(faces, target):
+    """RefineMesh --decimate. Numatytasis (0 – auto) tinklą prieš tikslinimą sumažina pagal pusės raiškos nuotraukas
+    (matyta: iki ~0,9 mln. sienelių visai vietovei) – mašinos, medžiai, smulkūs objektai lieka „gumuliukai“. Todėl
+    sumažinama tik iki tikslinio sienelių skaičiaus (galutinis --mesh-size biudžetas), o ne pagal automatinę raišką."""
+    if not faces:
+        return 0.0
+    return max(0.05, min(1.0, round(target / float(faces), 3)))
 
 
 def _min_point_distance(tree):
@@ -186,12 +199,16 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         # 2) Tikslinimas pagal nuotraukas (nepavykus – naudojamas netikslintas tinklas)
         best = mesh_ply
         refined = os.path.join(work, "mesh_refine.mvs")
-        log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh)")
+        n_rec = _ply_count(mesh_ply, "face")
+        decimate = _refine_decimate(n_rec, int(max_vertex) * (1 if low_mem else 2))
+        log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh): %s sienelių, sumažinimas %s"
+                     % (n_rec, decimate if decimate else "auto"))
         def refine(dev):
             system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --scales 2 --regularity-weight 0.35 -v 0'
+                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --decimate %s '
+                       '--scales 2 --regularity-weight 0.35 -v 0'
                        % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args, low_mem),
-                          6 if low_mem else 8, 32 if low_mem else 16))
+                          6 if low_mem else 8, 32 if low_mem else 16, decimate))
         try:
             try:
                 refine(dev_gpu)
@@ -205,6 +222,7 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
                     refine("")
             if io.file_exists(os.path.join(work, "mesh_refine.ply")):
                 best = os.path.join(work, "mesh_refine.ply")
+                log.ODM_INFO("Atea: patikslintas tinklas – %s sienelių" % _ply_count(best, "face"))
         except Exception as e:
             log.ODM_WARNING("Atea: tikslinimas nepavyko (%s) – naudojamas netikslintas OpenMVS tinklas" % str(e))
 
@@ -218,6 +236,7 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
                    '--target-face-num %s -v 0' % (_bin("ReconstructMesh"), cropped, out_mesh, int(max_vertex) * 2))
         if not io.file_exists(out_mesh):
             raise Exception("galutinis tinklas nesukurtas")
+        log.ODM_INFO("Atea: galutinis tinklas – %s sienelių" % _ply_count(out_mesh, "face"))
         if not getattr(args, "optimize_disk_space", False):
             for f in ("mesh.mvs", "mesh_refine.mvs"):
                 p = os.path.join(work, f)
@@ -595,6 +614,8 @@ FLOAT_MAX = 200.0  # m²
 FLOAT_GAP = 1.0    # m
 FLOAT_NEAR = 1.0   # m
 FACADE_H = 2.0     # m – vertikalus ir bent tokio aukščio atskiras gabalas laikomas fasado dalimi (nešalinamas)
+ROOF_MIN = 20.0    # m² – didelė, daugiausia horizontali plokštuma virš žemės laikoma stogu (nešalinama), net jei nuo
+ROOF_FLAT = 0.9    # sienų atskirta tarpu (stiklinis fasadas be taškų); |n.z| > ROOF_FLAT daugiau nei pusei ploto
 # Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
 # neapfotografuotos vietos, modelio kraštas) paliekamos – ten nėra duomenų. Užpildoma prieš tekstūravimą, todėl
 # užpildyta vieta gauna tikrą tekstūrą iš nuotraukų.
@@ -638,6 +659,9 @@ def _remove_floating(V, F, face_area):
         fm = flab == c
         if (P[:, 2].max() - P[:, 2].min() > FACADE_H
                 and face_area[fm][np.abs(fn[fm, 2]) < VERT].sum() > 0.5 * area[c]):
+            continue
+        # Stogas (ar jo dalis), atskirtas nuo fasadų – didelė plokščia sritis; ore kabantys triukšmo gabalai nėra plokšti
+        if area[c] >= ROOF_MIN and face_area[fm][np.abs(fn[fm, 2]) > ROOF_FLAT].sum() > 0.5 * area[c]:
             continue
         lo, hi = P[:, :2].min(axis=0), P[:, :2].max(axis=0)
         r = float(np.linalg.norm(hi - lo)) / 2 + 3.0
@@ -762,7 +786,7 @@ def improve_mesh(mesh_path, args=None):
 UNSEEN_MIN = 20                 # tiek sienelių su identiškomis UV – texrecon „nematytų“ pleistras
 UNSEEN_UV_EXT = 2e-3            # pleistro UV dydis (3 px 1024–8192 px atlase)
 FILL_RES = 0.03                 # m/px – tekstūros raiška (didinama, jei netelpa)
-FILL_MAX_TEXELS = 4096 * 4096
+FILL_MAX_TEXELS = 8192 * 4096
 FILL_CELL_MIN, FILL_CELL_MAX = 4, 32
 FILL_K = 8                      # kaimyninių taškų skaičius
 FILL_R = 2.0                    # m – taškų paieškos spindulys
