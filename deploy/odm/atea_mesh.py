@@ -83,15 +83,6 @@ def _ply_vertices(path):
     return _ply_count(path, "vertex")
 
 
-def _refine_decimate(faces, target):
-    """RefineMesh --decimate. Numatytasis (0 – auto) tinklą prieš tikslinimą sumažina pagal pusės raiškos nuotraukas
-    (matyta: iki ~0,9 mln. sienelių visai vietovei) – mašinos, medžiai, smulkūs objektai lieka „gumuliukai“. Todėl
-    sumažinama tik iki tikslinio sienelių skaičiaus (galutinis --mesh-size biudžetas), o ne pagal automatinę raišką."""
-    if not faces:
-        return 0.0
-    return max(0.05, min(1.0, round(target / float(faces), 3)))
-
-
 def _min_point_distance(tree):
     """(--min-point-distance, ar mažai RAM, laisvos erdvės palaikymas). Laisvos erdvės palaikymas – stiklo fasadams
     būtinas (be jo stiklinis pirmas aukštas ir fasadų dalys dingsta, pastatas „kabo“), todėl jis įjungiamas visada,
@@ -199,16 +190,16 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         # 2) Tikslinimas pagal nuotraukas (nepavykus – naudojamas netikslintas tinklas)
         best = mesh_ply
         refined = os.path.join(work, "mesh_refine.mvs")
+        # RefineMesh tinklą sumažina automatiškai (--decimate numatytasis). Bandyta mažinti mažiau (iki 2–4 mln. sienelių) –
+        # mašinos detalesnės, bet stiklinis fasadas be tekstūros tikslinant subyra (skylės, išsibarstę logotipai)
         n_rec = _ply_count(mesh_ply, "face")
-        decimate = _refine_decimate(n_rec, int(max_vertex) * (1 if low_mem else 2))
-        log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh): %s sienelių, sumažinimas %s"
-                     % (n_rec, decimate if decimate else "auto"))
+        log.ODM_INFO("Atea: tinklo tikslinimas pagal nuotraukas (RefineMesh): %s sienelių" % n_rec)
         def refine(dev):
             system.run('"%s" -i "%s" -m "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s --decimate %s '
+                       '--resolution-level %s --min-resolution 640 --max-views %s --max-face-area %s '
                        '--scales 2 --regularity-weight 0.35 -v 0'
                        % (_bin("RefineMesh"), recon, mesh_ply, refined, wdir, threads, dev, _refine_level(args, low_mem),
-                          6 if low_mem else 8, 32 if low_mem else 16, decimate))
+                          6 if low_mem else 8, 32 if low_mem else 16))
         try:
             try:
                 refine(dev_gpu)
