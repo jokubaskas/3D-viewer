@@ -64,6 +64,18 @@ def test_flow_and_isolation(env):
     # Range (vaizdo įrašų peršokimas)
     r = ca.get(url, headers={"Range": "bytes=10-19"})
     assert r.status_code == 206 and r.content == b"0123456789"
+    # Talpykla naršyklėje: antrą kartą – 304 be turinio; teisės tikrinamos ir tada
+    r = ca.get(url)
+    et = r.headers["etag"]
+    assert "private" in r.headers["cache-control"] and "no-store" not in r.headers["cache-control"]
+    r = ca.get(url, headers={"If-None-Match": et})
+    assert r.status_code == 304 and r.content == b""
+    assert cb.get(url, headers={"If-None-Match": et}).status_code == 404
+    assert client().get(url, headers={"If-None-Match": et}).status_code == 401
+    # OBJ atsisiunčiamas kaip tekstas (Cloudflare suspaudžia), bet ne atidaromas naršyklėje
+    o = adm.put(f"/api/items/{it['id']}/files", params={"name": "m.obj"}, content=b"v 0 0 0\n" * 200, headers=H).json()
+    r = ca.get(f"/api/items/{it['id']}/files/{o['id']}/m.obj?download=1")
+    assert r.headers["content-type"].startswith("text/plain") and "attachment" in r.headers["content-disposition"]
     # Klientas negali keisti / kurti / matyti vartotojų
     assert ca.get("/api/users").status_code == 403
     assert ca.post("/api/items", json={"kind": "model", "title": "x"}, headers=H).status_code == 403
