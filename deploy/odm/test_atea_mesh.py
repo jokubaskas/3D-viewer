@@ -388,3 +388,79 @@ def test_min_point_distance_free_space(tmp_path, monkeypatch):
     assert fss and low and 3.0 < dist < 3.6
     monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 16e9)
     assert atea_mesh._min_point_distance(tree)[2] is False
+
+
+def _write_ply_points(path, X, C, N):
+    dt = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("nx", "<f4"), ("ny", "<f4"), ("nz", "<f4"),
+                   ("red", "u1"), ("green", "u1"), ("blue", "u1"), ("views", "u1")])
+    a = np.zeros(len(X), dtype=dt)
+    for k, c in enumerate("xyz"):
+        a[c] = X[:, k]
+        a["n" + c] = N[:, k]
+    for k, c in enumerate(("red", "green", "blue")):
+        a[c] = C[:, k]
+    head = "ply\nformat binary_little_endian 1.0\nelement vertex %d\n" % len(X)
+    head += "".join("property %s %s\n" % ("float" if t == "<f4" else "uchar", n) for n, (t, _) in
+                    ((n, (dt[n].str.replace("|", ""), 0)) for n in dt.names))
+    head += "end_header\n"
+    with open(path, "wb") as f:
+        f.write(head.encode())
+        f.write(a.tobytes())
+
+
+def test_fill_unseen_colors_from_point_cloud(tmp_path):
+    am = atea_mesh
+    # 10×10 m plokštuma: kairė pusė (x<5) – „nematyta“ (identiškos mažytės UV), dešinė – įprastos UV
+    n = 10
+    xs = np.arange(n + 1, dtype=float)
+    V = np.array([[x, y, 0.0] for y in xs for x in xs])
+    faces, unseen = [], []
+    for j in range(n):
+        for i in range(n):
+            a, b, c, d = j * (n + 1) + i, j * (n + 1) + i + 1, (j + 1) * (n + 1) + i + 1, (j + 1) * (n + 1) + i
+            for tri in ((a, b, c), (a, c, d)):
+                faces.append(tri)
+                unseen.append(i < 5)
+    lines = ["mtllib m.mtl"] + ["v %f %f %f" % tuple(v) for v in V]
+    vt, fl = [], ["usemtl material0000"]
+    for k, (tri, u) in enumerate(zip(faces, unseen)):
+        if u:
+            uvs = [(0.5002, 0.5001), (0.5001, 0.5001), (0.5001, 0.5002)]
+        else:
+            uvs = [((k % 50) / 60.0, (k // 50) / 10.0 + 0.01 * q) for q in range(3)]
+        base = len(vt)
+        vt += uvs
+        fl.append("f " + " ".join("%d/%d/1" % (tri[q] + 1, base + q + 1) for q in range(3)))
+    lines += ["vt %f %f" % t for t in vt] + ["vn 0 0 1"] + fl
+    obj = tmp_path / "odm_textured_model_geo.obj"
+    obj.write_text("\n".join(lines) + "\n")
+    (tmp_path / "m.mtl").write_text("newmtl material0000\nmap_Kd a.png\n")
+    # Taškai: kairėje raudoni, dešinėje mėlyni; dar pilki taškai 3 m žemiau (normalė į šoną – mažas svoris)
+    g = np.random.default_rng(0).uniform(0, 10, size=(20000, 2))
+    X = np.c_[g, np.zeros(len(g))]
+    C = np.where(g[:, :1] < 5, [[200, 20, 20]], [[20, 20, 200]])
+    N = np.tile([0, 0, 1.0], (len(X), 1))
+    _write_ply_points(str(tmp_path / "pc.ply"), X, C, N)
+    m = am.fill_unseen(str(obj), str(tmp_path / "pc.ply"))
+    assert m == sum(unseen)
+    txt = obj.read_text().split("\n")
+    assert "usemtl " + am.FILL_MTL in txt
+    k = txt.index("usemtl " + am.FILL_MTL)
+    new_faces = [l for l in txt[k + 1:] if l.startswith("f ")]
+    assert len(new_faces) == m
+    assert sum(1 for l in txt if l.startswith("f ")) == len(faces)
+    nvt = sum(1 for l in txt if l.startswith("vt "))
+    assert max(int(t.split("/")[1]) for l in new_faces for t in l.split()[1:]) == nvt
+    mtl = (tmp_path / "m.mtl").read_text()
+    assert "newmtl " + am.FILL_MTL in mtl
+    png = mtl.strip().split("\n")[-1].split()[1]
+    try:
+        from PIL import Image
+        img = np.asarray(Image.open(tmp_path / png).convert("RGB"))
+    except ImportError:
+        cv2 = pytest.importorskip("cv2")
+        img = cv2.imread(str(tmp_path / png))[:, :, ::-1]
+    # Nudažyta raudonai (kairės pusės taškai), ne mėlynai ar pilkai
+    used = img.reshape(-1, 3)
+    red = (used[:, 0] > 150) & (used[:, 2] < 80)
+    assert red.mean() > 0.9

@@ -6,6 +6,7 @@
 #   flatten – po 3D tinklo sukūrimo: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas
 #   sky     – dangaus kaukė (--sky-removal) išplečiama į pastato pusę ~2 % nuotraukos: ODM ją skaičiuoja 384×384 px
 #             vaizde ir ištempia, todėl pastatų kraštai prieš dangų (stogo parapetas) būdavo „nukandami“ – dantytas kraštas
+#   unseen  – po texrecon: sienelės, kurių nematė nė viena nuotrauka (vienoda pilka), nudažomos pagal taškų debesį
 #   fuse    – parinktis --pc-fuse-views: kiek nuotraukų turi patvirtinti tašką tankinant (numatyta 2, kaip ODM;
 #             3 – mažiau atspindžių triukšmo stikle, bet dingsta ir blizgių automobilių stogų taškai)
 import sys
@@ -15,6 +16,7 @@ CONFIG = ROOT + "/opendm/config.py"
 MESHING = ROOT + "/stages/odm_meshing.py"
 OPENMVS = ROOT + "/stages/openmvs.py"
 SKYFILTER = ROOT + "/opendm/skyremoval/skyfilter.py"
+MVSTEX = ROOT + "/stages/mvstex.py"
 
 GROUPS = {
   'mesh': ('atea_mesh.openmvs_mesh', {
@@ -59,6 +61,20 @@ GROUPS = {
          "                  atea_mesh.improve_mesh(tree.odm_mesh, args)\n"
          "              except Exception as e:\n"
          "                  log.ODM_WARNING('Atea: tinklo valymas praleistas (%s)' % str(e))\n"),
+    ],
+  }),
+  'unseen': ('atea_mesh.fill_unseen', {
+    MVSTEX: [
+        ("                if r['primary'] and (not r['nadir'] or args.skip_3dmodel):\n                    # GlTF?\n",
+         "                # Atea: nematytos sienelės (vienoda pilka) – spalva iš taškų debesies (deploy/odm/atea_mesh.py)\n"
+         "                if not r['nadir'] and args.texturing_keep_unseen_faces:\n"
+         "                    try:\n"
+         "                        from opendm import atea_mesh\n"
+         "                        atea_mesh.fill_unseen(odm_textured_model_obj, tree.filtered_point_cloud)\n"
+         "                    except Exception as e:\n"
+         "                        log.ODM_WARNING('Atea: nematytų sienelių dažymas praleistas (%s)' % str(e))\n"
+         "\n"
+         "                if r['primary'] and (not r['nadir'] or args.skip_3dmodel):\n                    # GlTF?\n"),
     ],
   }),
   'fuse': ('pc_fuse_views', {
