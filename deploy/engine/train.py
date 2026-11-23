@@ -129,6 +129,12 @@ def main():
     state = strategy.initialize_state()
 
     imgs = Images(cams, a.max_size)
+    # Visos nuotraukos nuskaitomos ir sumažinamos iš anksto, lygiagrečiai – kitaip pirmas ciklas lėtas (po vieną nuotrauką
+    # kiekviename žingsnyje), GPU laukia, o likusio laiko įvertinimas išpučiamas
+    write_status(a.out_dir, message="Nuskaitomos nuotraukos")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as ex:
+        list(ex.map(imgs.get, range(len(cams))))
 
     # Gylio priežiūra: ODM tankus taškų debesis projektuojamas į kiekvieną nuotrauką; langelyje (DEPTH_CELL px)
     # paliekamas artimiausias taškas. Splatai baudžiami, jei jų gylis neatitinka – nebelieka „debesėlių“ ore ir

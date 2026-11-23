@@ -593,6 +593,7 @@ def _extend_facades(V, F, facades):
 SPECK = 2.0        # m²
 FLOAT_MAX = 200.0  # m²
 FLOAT_GAP = 1.0    # m
+FLOAT_NEAR = 1.0   # m
 FACADE_H = 2.0     # m – vertikalus ir bent tokio aukščio atskiras gabalas laikomas fasado dalimi (nešalinamas)
 # Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
 # neapfotografuotos vietos, modelio kraštas) paliekamos – ten nėra duomenų. Užpildoma prieš tekstūravimą, todėl
@@ -621,6 +622,7 @@ def _remove_floating(V, F, face_area):
     big = max(min(FLOAT_MAX, 0.05 * area.sum()), SPECK)
     mv = np.flatnonzero(lab == main)
     tree = cKDTree(V[mv, :2])
+    tree3 = cKDTree(V[mv])
     fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
     fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
     drop = np.zeros(len(area), dtype=bool)
@@ -643,8 +645,13 @@ def _remove_floating(V, F, face_area):
         if not near:
             continue  # po juo nieko nėra – nežinoma, paliekama
         ground = V[mv[near], 2].min()
-        if P[:, 2].min() > ground + FLOAT_GAP:
-            drop[c] = True
+        if P[:, 2].min() <= ground + FLOAT_GAP:
+            continue
+        # Prie pagrindinio tinklo (≤ FLOAT_NEAR) priglusęs gabalas – pastato dalis, atskirta tik skyle (stogo įranga,
+        # fasado juosta), ne ore kabantis triukšmas
+        if tree3.query(P[:: max(1, len(P) // 2000)], distance_upper_bound=FLOAT_NEAR)[0].min() <= FLOAT_NEAR:
+            continue
+        drop[c] = True
     keep = ~drop[flab]
     return F[keep], int(drop.sum()), float(area[drop].sum())
 

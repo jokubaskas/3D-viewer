@@ -17,8 +17,11 @@ export const PRESETS = {
     desc: 'OpenDroneMap su didžiausiu detalumu: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis, tikslus 3D tinklas (OpenMVS) ir realistiškas vaizdas – sukuriamas automatiškai baigus. Reikia NVIDIA GPU ir ~32 GB RAM.',
     // ultra – gylio žemėlapiai ½ nuotraukos raiškos (GPU); pc-filter 3 – mažiau „plaukiojančių“ taškų (stiklo atspindžių);
     // ignore-gsd – tekstūros ir tankinimas pilnos raiškos nuotraukomis (fasadai ryškūs); 2 mln. trikampių;
-    // sky-removal – įstrižose nuotraukose dangaus taškai ant pastatų kraštų (statmenoms ODM netaiko)
-    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    // sky-removal – įstrižose nuotraukose dangaus taškai ant pastatų kraštų (statmenoms ODM netaiko);
+    // keep-unseen-faces – nuotraukose nematomos sienelės (stiklinio pirmo aukšto apačia, žemė prie sienų, po medžiais)
+    // nebeišmetamos (kitaip modelyje kiaurymės), jų spalva užpildoma iš kaimyninių; be globalaus siūlių lyginimo –
+    // jis ant aštrių pastato kampų išveda purpurines / mėlynas dėmes (vietinis lyginimas lieka)
+    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'sky-removal': true, 'texturing-keep-unseen-faces': true, 'texturing-skip-global-seam-leveling': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
   },
   fast: {
     label: 'Greitas',
