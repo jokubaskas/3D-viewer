@@ -605,6 +605,7 @@ FLOAT_MAX = 200.0  # m²
 FLOAT_GAP = 1.0    # m
 FLOAT_NEAR = 1.0   # m
 FACADE_H = 2.0     # m – vertikalus ir bent tokio aukščio atskiras gabalas laikomas fasado dalimi (nešalinamas)
+FACADE_NEAR = 3.0  # m – gabalas tiek arti pagrindinio tinklo fasado laikomas sienos / stogo krašto atplaiša (nešalinamas)
 ROOF_MIN = 20.0    # m² – didelė, daugiausia horizontali plokštuma virš žemės laikoma stogu (nešalinama), net jei nuo
 ROOF_FLAT = 0.9    # sienų atskirta tarpu (stiklinis fasadas be taškų); |n.z| > ROOF_FLAT daugiau nei pusei ploto
 # Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
@@ -623,8 +624,9 @@ def _vertex_components(F, nv):
     return connected_components(g, directed=False)[1]
 
 
-def _remove_floating(V, F, face_area):
-    """Grąžina (F be plaukiojančių dalių, pašalintų dalių skaičius, pašalintas plotas m²)."""
+def _remove_floating(V, F, face_area, info=None):
+    """Grąžina (F be plaukiojančių dalių, pašalintų dalių skaičius, pašalintas plotas m²).
+    Į `info` (jei duotas sąrašas) surašomi pašalintų gabalų aprašai žurnalui."""
     import numpy as np
     from scipy.spatial import cKDTree
     lab = _vertex_components(F, len(V))
@@ -637,6 +639,11 @@ def _remove_floating(V, F, face_area):
     tree3 = cKDTree(V[mv])
     fn = np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]])
     fn /= np.maximum(np.linalg.norm(fn, axis=1, keepdims=True), 1e-12)
+    # Pagrindinio tinklo fasadų (vertikalių sienelių) viršūnės: gabalas šalia jų – sienos / stogo krašto atplaiša
+    # (stiklas, atspindžiai), o ne ore kabantis triukšmas. Ją pašalinus siena lieka kiaura.
+    mf = (flab == main) & (np.abs(fn[:, 2]) < VERT)
+    fv = np.unique(F[mf])
+    ftree = cKDTree(V[fv]) if len(fv) else None
     drop = np.zeros(len(area), dtype=bool)
     for c in np.flatnonzero((area > 0) & (area < big)):
         if c == main:
@@ -664,9 +671,18 @@ def _remove_floating(V, F, face_area):
             continue
         # Prie pagrindinio tinklo (≤ FLOAT_NEAR) priglusęs gabalas – pastato dalis, atskirta tik skyle (stogo įranga,
         # fasado juosta), ne ore kabantis triukšmas
-        if tree3.query(P[:: max(1, len(P) // 2000)], distance_upper_bound=FLOAT_NEAR)[0].min() <= FLOAT_NEAR:
+        S = P[:: max(1, len(P) // 2000)]
+        if tree3.query(S, distance_upper_bound=FLOAT_NEAR)[0].min() <= FLOAT_NEAR:
+            continue
+        if ftree is not None and ftree.query(S, distance_upper_bound=FACADE_NEAR)[0].min() <= FACADE_NEAR:
             continue
         drop[c] = True
+        if info is not None:
+            vert = face_area[fm][np.abs(fn[fm, 2]) < VERT].sum() / area[c]
+            flat = face_area[fm][np.abs(fn[fm, 2]) > ROOF_FLAT].sum() / area[c]
+            m = P.mean(axis=0)
+            info.append("%.1f m², z %.1f–%.1f (žemė %.1f), vert. %d %%, plokšč. %d %%, centras (%.1f; %.1f)"
+                        % (area[c], P[:, 2].min(), P[:, 2].max(), ground, 100 * vert, 100 * flat, m[0], m[1]))
     keep = ~drop[flab]
     return F[keep], int(drop.sum()), float(area[drop].sum())
 
@@ -731,8 +747,11 @@ def improve_mesh(mesh_path, args=None):
     F = np.asarray(mesh.faces)
     changed = False
     try:
-        F2, n, a = _remove_floating(V, F, np.asarray(mesh.area_faces))
+        info = []
+        F2, n, a = _remove_floating(V, F, np.asarray(mesh.area_faces), info)
         log.ODM_INFO("Atea: pašalinta plaukiojančių gabalų %s (%.1f m²)" % (n, a))
+        for d in info[:20]:
+            log.ODM_INFO("Atea:   pašalinta: %s" % d)
         if n:
             F, changed = F2, True
             mesh = trimesh.Trimesh(V, F, process=False)

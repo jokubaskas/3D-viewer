@@ -484,3 +484,17 @@ def test_ply_count(tmp_path):
     trimesh.creation.box().export(p, encoding="binary")
     assert atea_mesh._ply_count(str(p), "face") == 12
     assert atea_mesh._ply_count(str(p), "vertex") == 8
+
+
+def test_remove_floating_keeps_piece_near_wall():
+    """Gumbuotas gabalas (atspindžių triukšmas) 2 m nuo pastato sienos aukštyje – sienos dalis, ne šiukšlė."""
+    ground = _ground(-30, 30, -30, 30)
+    wall = _grid(-10, 10, 0, 16, 0.5, lambda x, z: 10.0)
+    blob = trimesh.creation.icosphere(subdivisions=3, radius=2.0)
+    blob.apply_translation([0, 6.0, 10])     # 2 m nuo sienos (y=10), virš žemės, nevertikalus ir neplokščias
+    mesh = trimesh.util.concatenate([ground, wall, blob])
+    # siena prijungta prie žemės: bendros viršūnės z=0 sujungiamos
+    mesh.merge_vertices()
+    info = []
+    F, n, a = atea_mesh._remove_floating(np.asarray(mesh.vertices), np.asarray(mesh.faces), np.asarray(mesh.area_faces), info)
+    assert n == 0 and info == []
