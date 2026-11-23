@@ -6,9 +6,13 @@ import { LKS94 } from '../src/geo/tm.js';
 
 const opts = (list) => Object.fromEntries(list.map((o) => [o.name, o.value]));
 
-test('režimai: Greitas ir Aukšta kokybė – Atea variklis, Tik ortofoto – ODM', () => {
-  assert.deepEqual(Object.keys(PRESETS), ['fast', 'high', 'orthoOnly']);
-  assert.ok(isEnginePreset('fast') && isEnginePreset('high') && !isEnginePreset('orthoOnly'));
+test('režimai: ODM aukščiausia kokybė ir Tik ortofoto – ODM, Greitas ir Aukšta kokybė – Atea variklis', () => {
+  assert.deepEqual(Object.keys(PRESETS), ['odm', 'fast', 'high', 'orthoOnly']);
+  assert.ok(isEnginePreset('fast') && isEnginePreset('high') && !isEnginePreset('orthoOnly') && !isEnginePreset('odm'));
+  const o = opts(buildOdmOptions('odm', { mvsMesh: true }));
+  assert.equal(o['pc-quality'], 'ultra');
+  assert.equal(o['mesh-method'], 'openmvs');
+  assert.equal(o['ignore-gsd'], true);
   assert.deepEqual(engineOptions('fast'), [{ name: 'quality', value: 'fast' }]);
   assert.deepEqual(engineOptions('high'), [{ name: 'quality', value: 'high' }]);
   assert.equal(presetLabel('standard'), 'Standartinis (ODM)'); // seni projektai sąraše

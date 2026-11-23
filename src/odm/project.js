@@ -12,6 +12,14 @@ export const HEIGHT_MODES = {
 // DSM / DTM; „Aukšta kokybė“ – ir realistiškas vaizdas (splatai), automatiškai prijungiamas prie 3D modelio.
 // „Tik ortofoto“ – ODM greitas 2D žemėlapis (be 3D).
 export const PRESETS = {
+  odm: {
+    label: 'ODM – aukščiausia kokybė',
+    desc: 'OpenDroneMap su didžiausiu detalumu: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis, tikslus 3D tinklas (OpenMVS) ir realistiškas vaizdas – sukuriamas automatiškai baigus. Reikia NVIDIA GPU ir ~32 GB RAM.',
+    // ultra – gylio žemėlapiai ½ nuotraukos raiškos (GPU); pc-filter 3 – mažiau „plaukiojančių“ taškų (stiklo atspindžių);
+    // ignore-gsd – tekstūros ir tankinimas pilnos raiškos nuotraukomis (fasadai ryškūs); 2 mln. trikampių;
+    // sky-removal – įstrižose nuotraukose dangaus taškai ant pastatų kraštų (statmenoms ODM netaiko)
+    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'sky-removal': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+  },
   fast: {
     label: 'Greitas',
     engine: true,
