@@ -379,6 +379,19 @@ def test_remove_floating_keeps_facade_fragment():
     assert n == 0 and len(F) == len(mesh.faces)
 
 
+def test_remove_floating_keeps_detached_roof():
+    """Stogas, atskirtas nuo sienų tarpu (stiklinis fasadas be taškų), paliekamas; ore kabantis gumulas – ne."""
+    ground = _ground(-30, 30, -30, 30)
+    roof = _ground(-6, 6, -6, 6)
+    roof.apply_translation([0, 0, 25])           # 144 m², 25 m virš žemės, be sienų
+    blob = trimesh.creation.icosphere(subdivisions=3, radius=2.0)
+    blob.apply_translation([15, 15, 8])
+    mesh = trimesh.util.concatenate([ground, roof, blob])
+    F, n, a = atea_mesh._remove_floating(np.asarray(mesh.vertices), np.asarray(mesh.faces), np.asarray(mesh.area_faces))
+    assert n == 1
+    assert len(F) == len(ground.faces) + len(roof.faces)
+
+
 def test_min_point_distance_free_space(tmp_path, monkeypatch):
     """Pakankamai RAM – laisvos erdvės palaikymas įjungiamas net kai taškai retinami (stiklo fasadams)."""
     tree = types.SimpleNamespace(openmvs=str(tmp_path), filtered_point_cloud=str(tmp_path / "x.ply"))

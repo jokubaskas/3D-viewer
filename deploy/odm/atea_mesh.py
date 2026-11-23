@@ -595,6 +595,8 @@ FLOAT_MAX = 200.0  # m²
 FLOAT_GAP = 1.0    # m
 FLOAT_NEAR = 1.0   # m
 FACADE_H = 2.0     # m – vertikalus ir bent tokio aukščio atskiras gabalas laikomas fasado dalimi (nešalinamas)
+ROOF_MIN = 20.0    # m² – didelė, daugiausia horizontali plokštuma virš žemės laikoma stogu (nešalinama), net jei nuo
+ROOF_FLAT = 0.9    # sienų atskirta tarpu (stiklinis fasadas be taškų); |n.z| > ROOF_FLAT daugiau nei pusei ploto
 # Mažos skylės (stogo kraštas, palangės): uždaroma, jei kontūro perimetras < HOLE_PERIM m. Didelės (po pastatu,
 # neapfotografuotos vietos, modelio kraštas) paliekamos – ten nėra duomenų. Užpildoma prieš tekstūravimą, todėl
 # užpildyta vieta gauna tikrą tekstūrą iš nuotraukų.
@@ -638,6 +640,9 @@ def _remove_floating(V, F, face_area):
         fm = flab == c
         if (P[:, 2].max() - P[:, 2].min() > FACADE_H
                 and face_area[fm][np.abs(fn[fm, 2]) < VERT].sum() > 0.5 * area[c]):
+            continue
+        # Stogas (ar jo dalis), atskirtas nuo fasadų – didelė plokščia sritis; ore kabantys triukšmo gabalai nėra plokšti
+        if area[c] >= ROOF_MIN and face_area[fm][np.abs(fn[fm, 2]) > ROOF_FLAT].sum() > 0.5 * area[c]:
             continue
         lo, hi = P[:, :2].min(axis=0), P[:, :2].max(axis=0)
         r = float(np.linalg.norm(hi - lo)) / 2 + 3.0
