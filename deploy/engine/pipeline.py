@@ -651,14 +651,19 @@ class Pipeline:
         if os.path.exists(marker):
             os.remove(marker)
         if openmvs_available():
-            try:
-                self._dense_openmvs()
-                open(marker, "w").close()
-                return
-            except Cancelled:
-                raise
-            except Exception as e:  # pragma: no cover – GPU / atminties klaidos realiame darbe
-                self.log("OpenMVS nepavyko (%s) – naudojamas COLMAP PatchMatch" % e)
+            # Nepavykus (dažniausiai – per maža GPU atmintis didelei raiškai) bandoma mažesne raiška: COLMAP
+            # PatchMatch su Poisson tinklu stikliniams pastatams gerokai prastesnis (be OpenMVS tinklo ir patikslinimo)
+            size = int(os.environ.get("ATEA_MVS_SIZE", self.q["mvs_size"]))
+            for s in dict.fromkeys([size, min(size, 2048), min(size, 1536), min(size, 1024)]):
+                try:
+                    self._dense_openmvs(s)
+                    open(marker, "w").close()
+                    return
+                except Cancelled:
+                    raise
+                except Exception as e:  # pragma: no cover – GPU / atminties klaidos realiame darbe
+                    self.log("OpenMVS gylio žemėlapiai (%d px) nepavyko (%s)" % (s, e))
+            self.log("DĖMESIO: OpenMVS nepavyko jokia raiška – naudojamas COLMAP PatchMatch (modelis bus prastesnis)")
         self._dense_colmap()
 
     def _run_tool(self, args, quiet=()):
@@ -700,7 +705,7 @@ class Pipeline:
         if pr.returncode != 0:
             raise RuntimeError("%s baigėsi klaida (%d)" % (os.path.basename(args[0]), pr.returncode))
 
-    def _dense_openmvs(self):
+    def _dense_openmvs(self, size=None):
         import pycolmap
         ws = os.path.join(self.work, "openmvs")
         shutil.rmtree(ws, ignore_errors=True)
@@ -719,7 +724,7 @@ class Pipeline:
         threads = str(max(1, (os.cpu_count() or 4)))
         self._run_tool([os.path.join(OPENMVS, "DensifyPointCloud"), scene, "-o", os.path.join(ws, "dense.mvs"),
                         "-w", ws, "--dense-config-file", os.path.join(ws, "Densify.ini"),
-                        "--resolution-level", "0", "--max-resolution", os.environ.get("ATEA_MVS_SIZE", str(self.q["mvs_size"])),
+                        "--resolution-level", "0", "--max-resolution", str(size or self.q["mvs_size"]),
                         "--min-resolution", "640", "--number-views", os.environ.get("ATEA_MVS_VIEWS", str(self.q["mvs_views"])),
                         "--number-views-fuse", fuse, "--sub-resolution-levels", "1", "--max-threads", threads,
                         "--cuda-device", OPENMVS_DEVICE, "-v", "1"],  # numatytas archyvas: debesis su matomumu (tinklui)
