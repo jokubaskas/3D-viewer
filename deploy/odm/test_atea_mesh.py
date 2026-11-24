@@ -540,3 +540,18 @@ def test_flatten_rounded_corner_no_bump(tmp_path):
     # Kampo apvalinimas neištiesinamas: anksčiau viršūnės buvo nustumiamos ~0.35 m (iki plokštumų sankirtos)
     d = np.linalg.norm(out - tower.vertices, axis=1)
     assert d.max() < 0.2 and np.percentile(d, 99) < 0.12, (d.max(), np.percentile(d, 99))
+
+
+def test_hole_report():
+    """Skylių suvestinė: išorinis kraštas neskaičiuojamas; 6×6 ir 1×1 m skylės randamos, mažesnės nei 2 m perimetro – ne."""
+    g = _ground(-20, 20, -20, 20)
+    c = g.triangles_center
+    small = (np.abs(c[:, 0] - 5) < 0.5) & (np.abs(c[:, 1] - 5) < 0.5)
+    tiny = np.zeros(len(c), dtype=bool)
+    tiny[np.argmin(np.linalg.norm(c[:, :2] - [12, 12], axis=1))] = True  # vienas trikampis, ~1.7 m perimetro
+    large = (np.abs(c[:, 0] + 8) < 3) & (np.abs(c[:, 1] + 8) < 3)
+    g.update_faces(~(small | large | tiny))
+    n, per, info = atea_mesh._hole_report(np.asarray(g.vertices, dtype=float), np.asarray(g.faces))
+    assert n == 2
+    assert abs(per - 28.0) < 0.3  # 24 + 4 m (žemė su triukšmu)
+    assert "centras (-8.0; -8.0)" in info[0] and "6.0×6.0 m" in info[0]
