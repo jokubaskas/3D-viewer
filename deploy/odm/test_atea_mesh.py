@@ -555,3 +555,76 @@ def test_hole_report():
     assert n == 2
     assert abs(per - 28.0) < 0.3  # 24 + 4 m (žemė su triukšmu)
     assert "centras (-8.0; -8.0)" in info[0] and "6.0×6.0 m" in info[0]
+
+
+def _building_with_hole(hole):
+    """Pastatas 40×20×30 m su stogu ir žeme; pašalinamos sienelės, kurių centras tenkina hole(c)."""
+    box = trimesh.creation.box(extents=[40, 20, 30])
+    box.apply_translation([0, 0, 15])
+    box.update_faces(box.face_normals[:, 2] > -0.5)
+    box.remove_unreferenced_vertices()
+    V, F = trimesh.remesh.subdivide_to_size(box.vertices, box.faces, 0.5)
+    b = trimesh.Trimesh(V, F, process=True)
+    b.update_faces(~hole(b.triangles_center))
+    b.remove_unreferenced_vertices()
+    ground = _ground(-40, 40, -30, 30, step=1.0)
+    ground.update_faces(~((np.abs(ground.triangles_center[:, 0]) < 20) & (np.abs(ground.triangles_center[:, 1]) < 10)))
+    ground.remove_unreferenced_vertices()
+    return b, ground
+
+
+def _box_facades():
+    out = []
+    for n, h in (([1, 0, 0], 20.0), ([-1, 0, 0], 20.0), ([0, 1, 0], 10.0), ([0, -1, 0], 10.0)):
+        n = np.array(n, float)
+        u = np.cross([0, 0, 1.0], n)
+        w = 10.0 if h == 20.0 else 20.0
+        out.append((n * h + [0, 0, 15.0], n, u, -w, w))
+    return out
+
+
+def test_fill_wall_hole_to_roof_edge():
+    """Skylė sienos viršuje iki stogo krašto (30 × 12 m) užpildoma plokščia siena; žemė ir išorinis kraštas – ne."""
+    b, ground = _building_with_hole(lambda c: (np.abs(c[:, 1] + 10) < 1e-6) & (np.abs(c[:, 0]) < 15) & (c[:, 2] > 18))
+    mesh = trimesh.util.concatenate([b, ground])
+    V, F = np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces)
+    h0 = atea_mesh._hole_report(V, F)[0]  # + pastato pagrindo ir žemės kraštai (horizontalūs)
+    info = []
+    V2, F2, n, a = atea_mesh._fill_wall_holes(V, F, _box_facades(), info)
+    assert n == 1 and abs(a - 360) < 15, (n, a, info)
+    assert atea_mesh._hole_report(V2, F2)[0] == h0 - 1
+    new = trimesh.Trimesh(V2, F2[len(F):], process=False)
+    used = new.vertices[np.unique(new.faces)]
+    assert np.abs(used[:, 1] + 10).max() < 1e-6          # ant sienos plokštumos
+    assert used[:, 2].min() > 18 - 0.6 and used[:, 2].max() < 30 + 1e-6
+    assert (new.face_normals[:, 1] < -0.99).all()          # į išorę, kaip siena
+    assert abs(new.area - 360) < 15
+
+
+def test_fill_wall_hole_across_corner():
+    """Skylė per pastato kampą užpildoma abiem sienom (kampas atkuriamas), ne įstrižai per pastato vidų."""
+    b, ground = _building_with_hole(lambda c: (c[:, 2] > 10) & (c[:, 2] < 22) & (
+        ((np.abs(c[:, 1] + 10) < 1e-6) & (c[:, 0] > 8)) | ((np.abs(c[:, 0] - 20) < 1e-6) & (c[:, 1] < -4))))
+    mesh = trimesh.util.concatenate([b, ground])
+    V, F = np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces)
+    h0 = atea_mesh._hole_report(V, F)[0]
+    V2, F2, n, a = atea_mesh._fill_wall_holes(V, F, _box_facades())
+    assert n == 1
+    assert atea_mesh._hole_report(V2, F2)[0] == h0 - 1
+    X = V2[len(V):]
+    on = np.minimum(np.abs(X[:, 1] + 10), np.abs(X[:, 0] - 20))
+    assert on.max() < 1e-6
+    new = trimesh.Trimesh(V2, F2[len(F):], process=False)
+    assert abs(new.area - 12 * (12 + 6)) < 0.1 * 216, new.area
+
+
+def test_fill_wall_holes_skips_ground_and_free_walls():
+    """Skylė žemėje ir skylė sienoje be rastos fasado plokštumos – nepildomos."""
+    b, ground = _building_with_hole(lambda c: (np.abs(c[:, 1] + 10) < 1e-6) & (np.abs(c[:, 0]) < 15) & (c[:, 2] > 18))
+    c = ground.triangles_center
+    ground.update_faces(~((np.abs(c[:, 0] + 30) < 4) & (np.abs(c[:, 1]) < 4)))
+    mesh = trimesh.util.concatenate([b, ground])
+    V, F = np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces)
+    facades = [f for f in _box_facades() if f[1][1] > -0.5]  # be pietinės sienos
+    V2, F2, n, a = atea_mesh._fill_wall_holes(V, F, facades)
+    assert n == 0 and len(F2) == len(F)

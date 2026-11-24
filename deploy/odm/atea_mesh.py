@@ -837,8 +837,434 @@ def _fill_holes(V, F):
     return V, F, filled
 
 
+# ---------------------------------------------------------------- didelės skylės fasaduose
+# Stiklo juostos, kurios statmenose nuotraukose atspindi dangų, kartais neturi nė vieno taško – fasade lieka didelė
+# kiaurymė (pvz. 50 × 13 m nuo sienos vidurio iki stogo krašto), pro kurią matosi vidus. Skylė, kurios kontūras
+# daugiausia guli ant rastų fasado plokštumų, užtempiama „plėvele“ (harmoninis paviršius, ištemptas ant kontūro), o
+# jos viršūnės priglaudžiamos prie artimiausio fasado – per kampą einanti skylė užsipildo abiem sienom su kampu.
+# Užpildoma prieš tekstūravimą: nauja siena gauna tikrą tekstūrą iš nuotraukų.
+WALL_HOLE_MAX_PERIM = 400.0  # m
+WALL_HOLE_MAX_AREA = 3000.0  # m²
+WALL_HOLE_MAX_EDGES = 8000
+WALL_HOLE_VERT = 0.5         # kontūro „ploto normalė“ |n.z| < tiek – skylė stačia (ne žemėje / stoge)
+WALL_HOLE_ON = 1.0           # m – kontūro viršūnė tiek arti fasado plokštumos laikoma esančia ant jo
+WALL_HOLE_SHARE = 0.6        # tiek kontūro turi būti ant fasadų
+WALL_HOLE_SNAP = 6.0         # m – užpildo viršūnės tiek arti fasado priglaudžiamos prie jo
+WALL_HOLE_MAX_PTS = 60000
+
+
+def _boundary_loops(F):
+    """Uždari krašto kontūrai [viršūnių sąrašas] ta kryptimi, kuria kraštinės eina sienelėse."""
+    import numpy as np
+    from collections import defaultdict
+    F = np.asarray(F)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    _, inv, cnt = np.unique(np.sort(E, axis=1), axis=0, return_inverse=True, return_counts=True)
+    bd = E[cnt[inv.ravel()] == 1]
+    out = defaultdict(list)
+    for a, b in bd.tolist():
+        out[a].append(b)
+    loops = []
+    for start in list(out):
+        while out[start]:
+            loop, v = [], start
+            while out[v]:
+                loop.append(v)
+                v = out[v].pop()
+                if v == start:
+                    break
+            if v == start and len(loop) >= 3:
+                loops.append(loop)
+    return loops
+
+
+def _inside(Q, poly):
+    """Ar taškai Q (n×2) daugiakampio poly (m×2) viduje (spindulio metodas, dalimis – ribota atmintis)."""
+    import numpy as np
+    a, b = poly, np.roll(poly, -1, axis=0)
+    out = np.zeros(len(Q), dtype=bool)
+    step = max(1, 4000000 // max(1, len(poly)))
+    for i in range(0, len(Q), step):
+        x, y = Q[i:i + step, :1], Q[i:i + step, 1:]
+        cross = (a[:, 1] > y) != (b[:, 1] > y)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            xi = a[:, 0] + (y - a[:, 1]) * (b[:, 0] - a[:, 0]) / (b[:, 1] - a[:, 1])
+        out[i:i + step] = (cross & (x < xi)).sum(axis=1) % 2 == 1
+    return out
+
+
+def _orient(p, a, b, c):
+    return (p[b, 0] - p[a, 0]) * (p[c, 1] - p[a, 1]) - (p[b, 1] - p[a, 1]) * (p[c, 0] - p[a, 0])
+
+
+def _recover_edges(p, T, need, max_flips=200000):
+    """Delaunay trikampiavime atkuria privalomas kraštines (kontūrą) kraštinių apvertimu (Sloan). Grąžina T arba None."""
+    import numpy as np
+    T = np.asarray(T).copy()
+    neg = _orient(p, T[:, 0], T[:, 1], T[:, 2]) < 0
+    T[neg] = T[neg][:, [0, 2, 1]]
+    tris = T.tolist()
+    emap = {}
+    vt = {}
+    for i, (a, b, c) in enumerate(tris):
+        emap[(a, b)] = i
+        emap[(b, c)] = i
+        emap[(c, a)] = i
+        for v in (a, b, c):
+            vt.setdefault(v, set()).add(i)
+
+    def o(a, b, c):
+        return (p[b, 0] - p[a, 0]) * (p[c, 1] - p[a, 1]) - (p[b, 1] - p[a, 1]) * (p[c, 0] - p[a, 0])
+
+    def crosses(a, b, c, d):  # atkarpos ab ir cd kertasi viduje
+        return o(a, b, c) * o(a, b, d) < 0 and o(c, d, a) * o(c, d, b) < 0
+
+    def third(i, a, b):
+        t = tris[i]
+        return next(x for x in t if x != a and x != b)
+
+    flips = 0
+    for a, b in need.tolist():
+        if (a, b) in emap or (b, a) in emap:
+            continue
+        # kertančios kraštinės: einama nuo a link b per trikampius
+        queue = []
+        start = vt.get(a, ())
+        cur = None
+        for i in start:
+            t = tris[i]
+            j = t.index(a)
+            c, d = t[(j + 1) % 3], t[(j + 2) % 3]
+            if crosses(a, b, c, d):
+                cur = (c, d)
+                break
+        if cur is None:
+            return None
+        guard = 0
+        while True:
+            queue.append(cur)
+            c, d = cur
+            i = emap.get((d, c))
+            if i is None:
+                return None
+            x = third(i, d, c)
+            if x == b:
+                break
+            cur = (c, x) if crosses(a, b, c, x) else (x, d)
+            guard += 1
+            if guard > 100000:
+                return None
+        while queue:
+            c, d = queue.pop(0)
+            i, j = emap.get((c, d)), emap.get((d, c))
+            if i is None or j is None:
+                if (c, d) in emap or (d, c) in emap:
+                    continue
+                return None
+            x, y = third(i, c, d), third(j, d, c)
+            # keturkampis c-y-d-x turi būti iškilas
+            if not (o(c, y, x) > 0 and o(y, d, x) > 0 and o(c, y, d) > 0 and o(d, x, c) > 0):
+                queue.append((c, d))
+                flips += 1
+                if flips > max_flips:
+                    return None
+                continue
+            for e in ((c, d), (d, x), (x, c), (d, c), (c, y), (y, d)):
+                emap.pop(e, None)
+            vt[c].discard(j)
+            vt[d].discard(i)
+            vt[x].add(j)
+            vt[y].add(i)
+            tris[i] = [c, y, x]
+            tris[j] = [y, d, x]
+            for t, k in ((tris[i], i), (tris[j], j)):
+                emap[(t[0], t[1])] = k
+                emap[(t[1], t[2])] = k
+                emap[(t[2], t[0])] = k
+            flips += 1
+            if flips > max_flips:
+                return None
+            if {x, y} != {a, b} and crosses(a, b, x, y):
+                queue.append((x, y))
+    return np.array(tris)
+
+
+def _flood_inside(T, seeds):
+    """Trikampiai (prieš laikrodžio rodyklę), pasiekiami nuo kryptinių kraštinių `seeds` kairės pusės nekertant jų."""
+    import numpy as np
+    emap = {}
+    for i, (a, b, c) in enumerate(T.tolist()):
+        emap[(a, b)] = i
+        emap[(b, c)] = i
+        emap[(c, a)] = i
+    wall = set(map(tuple, seeds.tolist())) | set(map(tuple, seeds[:, ::-1].tolist()))
+    stack = []
+    for e in map(tuple, seeds.tolist()):
+        if e not in emap:
+            return None
+        stack.append(emap[e])
+    seen = set()
+    while stack:
+        i = stack.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        a, b, c = T[i]
+        for x, y in ((a, b), (b, c), (c, a)):
+            if (x, y) in wall:
+                continue
+            j = emap.get((y, x))
+            if j is not None and j not in seen:
+                stack.append(j)
+    return T[sorted(seen)]
+
+
+def _planar_patch(V, loop, spacing):
+    """Skylė, kurios kontūras projekcijoje į jos plokštumą – paprastas daugiakampis: trikampiuojama plokštumoje
+    (tolygūs trikampiai, be persilenkimų). Grąžina (naujos viršūnės, sienelės kaip _membrane) arba None."""
+    import numpy as np
+    from scipy.spatial import Delaunay, cKDTree
+    P = V[loop]
+    if len(set(loop)) != len(loop):
+        return None
+    vec = np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+    n = vec / np.linalg.norm(vec)
+    e1 = np.cross([0.0, 0.0, 1.0], n)
+    if np.linalg.norm(e1) < 1e-6:
+        return None
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    o = P.mean(axis=0)
+    Q = np.c_[(P - o) @ e1, (P - o) @ e2]
+    off = (P - o) @ n
+    nb = len(loop)
+    sq = Q[:, 0] * np.roll(Q[:, 1], -1) - np.roll(Q[:, 0], -1) * Q[:, 1]
+    A = 0.5 * sq.sum()  # > 0 – kontūras prieš laikrodžio rodyklę
+    # Dantytas tinklo kraštas (trikampių „dantys“) Delaunay trikampiavimui trukdo: smailūs iškilūs kontūro kampai
+    # nukerpami (ausys), kol naujas kraštas ne ilgesnis kaip 2 tarpai
+    ring = list(range(nb))
+    ears = []
+    tree = cKDTree(Q)
+    for _ in range(2):
+        i = 0
+        while i < len(ring) and len(ring) > 3:
+            p_, v_, n_ = ring[i - 1], ring[i], ring[(i + 1) % len(ring)]
+            a, b, c = Q[p_], Q[v_], Q[n_]
+            cr = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            u1, u2 = a - b, c - b
+            cosang = u1 @ u2 / max(np.linalg.norm(u1) * np.linalg.norm(u2), 1e-12)
+            if cr * A > 0 and cosang > -0.5 and np.linalg.norm(c - a) <= 2 * spacing:
+                inside = False
+                for j in tree.query_ball_point(b, np.linalg.norm(c - a) + 1e-9):
+                    if j in (p_, v_, n_):
+                        continue
+                    x = Q[j]
+                    d1 = (b[0] - a[0]) * (x[1] - a[1]) - (b[1] - a[1]) * (x[0] - a[0])
+                    d2 = (c[0] - b[0]) * (x[1] - b[1]) - (c[1] - b[1]) * (x[0] - b[0])
+                    d3 = (a[0] - c[0]) * (x[1] - c[1]) - (a[1] - c[1]) * (x[0] - c[0])
+                    if (d1 * cr >= 0) and (d2 * cr >= 0) and (d3 * cr >= 0):
+                        inside = True
+                        break
+                if not inside:
+                    ears.append((p_, v_, n_))
+                    ring.pop(i)
+                    i += 1
+                    continue
+            i += 1
+    ring = np.array(ring)
+    R = Q[ring]
+    nr = len(ring)
+    lo, hi = R.min(axis=0), R.max(axis=0)
+    h = spacing
+    if (hi - lo).prod() / (0.87 * h * h) > 4 * WALL_HOLE_MAX_PTS:
+        h = np.sqrt((hi - lo).prod() / (0.87 * 4 * WALL_HOLE_MAX_PTS))
+    xs = np.arange(lo[0], hi[0] + h, h)
+    ys = np.arange(lo[1], hi[1] + h, 0.87 * h)
+    X, Y = np.meshgrid(xs, ys)
+    X = X + (np.arange(len(ys)) % 2)[:, None] * 0.5 * h
+    G = np.c_[X.ravel(), Y.ravel()]
+    G = G[_inside(G, R)]
+    if len(G):
+        # ne arčiau kaip pusė tarpo iki kontūro kraštinių (ne tik viršūnių) – taškas ant kraštinės ją „perkirstų“
+        R2 = np.roll(R, -1, axis=0)
+        m = np.maximum(1, np.ceil(np.linalg.norm(R2 - R, axis=1) / (0.25 * h)).astype(int))
+        tt = np.concatenate([np.arange(k) / k for k in m])
+        ii = np.repeat(np.arange(nr), m)
+        S = R[ii] + (R2[ii] - R[ii]) * tt[:, None]
+        G = G[cKDTree(S).query(G)[0] > 0.5 * h]
+    if len(G) > WALL_HOLE_MAX_PTS:
+        return None
+    # Rėmas aplink: kolinearūs kontūro taškai iškiloje dangoje qhull'o praleidžiami, todėl kontūras turi būti viduje
+    span = float((hi - lo).max()) + 10 * h
+    frame = np.array([[lo[0] - span, lo[1] - span], [hi[0] + span, lo[1] - span],
+                      [hi[0] + span, hi[1] + span], [lo[0] - span, hi[1] + span]])
+    pts = np.vstack([R, G, frame])
+    T = Delaunay(pts).simplices
+    k = np.arange(nr)
+    ring_edges = np.c_[k, (k + 1) % nr]
+    T = _recover_edges(pts, T, ring_edges)
+    if T is None:
+        return None
+    # Vidiniai trikampiai – užliejimu nuo kontūro vidinės pusės iki kontūro kraštinių (ne pagal centrą – siauri
+    # trikampiai prie triukšmingo krašto klaidintų)
+    T = _flood_inside(T, ring_edges if A > 0 else ring_edges[:, ::-1])
+    if T is None or not (T < nr + len(G)).all():
+        return None
+    # indeksai: kontūro viršūnės – pozicija loop'e, vidinės – nb + k
+    T = np.where(T < nr, ring[np.minimum(T, nr - 1)], T - nr + nb)
+    if ears:
+        T = np.vstack([T, np.array(ears)])
+    pts = np.vstack([Q, G])
+    a, b, c = pts[T[:, 0]], pts[T[:, 1]], pts[T[:, 2]]
+    sa = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    keep = np.abs(sa) > 1e-12
+    T, sa = T[keep], sa[keep]
+    # Patikra: visos kontūro kraštinės yra ir trikampių plotas lygus daugiakampio plotui
+    if abs(0.5 * np.abs(sa).sum() - abs(A)) > 1e-3 * abs(A) + 1e-6:
+        return None
+    # ir užpildas – vientisas paviršius: kontūro kraštinės po vieną kartą, visos kitos – lygiai du kartus
+    E = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+    u, cnt = np.unique(E, axis=0, return_counts=True)
+    k = np.arange(nb)
+    need = np.sort(np.c_[k, (k + 1) % nb], axis=1)
+    once = set(map(tuple, u[cnt == 1].tolist()))
+    if (cnt > 2).any() or once != set(map(tuple, need.tolist())):
+        return None
+    # Naujose sienelėse kontūras eina priešinga kryptimi nei esamose
+    flip = (sa > 0) == (A > 0)
+    T[flip] = T[flip][:, [0, 2, 1]]
+    Xn = np.zeros((len(G), 3))
+    if len(G):
+        d, j = cKDTree(Q).query(G, k=min(8, nb))
+        w = 1.0 / np.maximum(d, 1e-6) ** 2
+        go = (w * off[j]).sum(axis=1) / w.sum(axis=1)
+        Xn = o + G[:, :1] * e1 + G[:, 1:] * e2 + go[:, None] * n
+    T = np.where(T < nb, -T - 1, T - nb)
+    return Xn, T
+
+
+def _membrane(V, loop, spacing):
+    """Kontūrą užtempiantis paviršius: (naujos viršūnės, sienelės su indeksais: < 0 – loop[-i-1], ≥ 0 – naujos)."""
+    import numpy as np
+    from scipy.spatial import Delaunay
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.linalg import spsolve
+    P = V[loop]
+    seg = np.linalg.norm(np.roll(P, -1, axis=0) - P, axis=1)
+    per = seg.sum()
+    ang = 2 * np.pi * np.concatenate([[0.0], np.cumsum(seg)[:-1]]) / per
+    B = np.c_[np.cos(ang), np.sin(ang)]
+    nb = len(loop)
+    # Kontūro „ploto“ dydis – vidinių taškų skaičiui (disko tinklelis atvaizduojamas į skylę)
+    area = 0.5 * np.linalg.norm(np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0))
+    n_in = int(min(WALL_HOLE_MAX_PTS, max(0.0, area / (0.87 * spacing ** 2))))
+    I = np.zeros((0, 2))
+    if n_in > 0:
+        h = np.sqrt(np.pi / (0.87 * n_in))
+        xs = np.arange(-1, 1 + h, h)
+        ys = np.arange(-1, 1 + h, h * 0.87)
+        G = np.array([(x + (0.5 * h if j % 2 else 0.0), y) for j, y in enumerate(ys) for x in xs])
+        r = np.linalg.norm(G, axis=1)
+        I = G[r < 1 - 0.5 * max(h, 2 * np.pi / nb)]
+    pts = np.vstack([B, I])
+    T = Delaunay(pts).simplices
+    # Orientacija: kontūras diske eina prieš laikrodžio rodyklę, naujose sienelėse – atvirkščiai (pagal laikrodžio)
+    a, b, c = pts[T[:, 0]], pts[T[:, 1]], pts[T[:, 2]]
+    sa = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    T = T[np.abs(sa) > 1e-14]
+    sa = sa[np.abs(sa) > 1e-14]
+    T[sa > 0] = T[sa > 0][:, [0, 2, 1]]
+    ni = len(I)
+    X = np.zeros((ni, 3))
+    if ni:
+        # Vidinės viršūnės – kaimynų vidurkis (harmoninis paviršius, kraštas fiksuotas)
+        e = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]])
+        e = np.unique(np.sort(e, axis=1), axis=0)
+        e = np.vstack([e, e[:, ::-1]])
+        e = e[e[:, 0] >= nb]
+        r, c2 = e[:, 0] - nb, e[:, 1]
+        deg = np.bincount(r, minlength=ni).astype(float)
+        inner = c2 >= nb
+        A = coo_matrix((np.r_[deg, -np.ones(inner.sum())], (np.r_[np.arange(ni), r[inner]], np.r_[np.arange(ni), c2[inner] - nb])),
+                       shape=(ni, ni)).tocsr()
+        rhs = np.zeros((ni, 3))
+        np.add.at(rhs, r[~inner], P[c2[~inner]])
+        for k in range(3):
+            X[:, k] = spsolve(A, rhs[:, k])
+    T = np.where(T < nb, -T - 1, T - nb)
+    return X, T
+
+
+def _fill_wall_holes(V, F, facades, info=None):
+    """Grąžina (V, F, užpildytų skylių skaičius, užpildytas plotas m²)."""
+    import numpy as np
+    V = np.asarray(V, dtype=np.float64)
+    F = np.asarray(F)
+    if not facades or len(F) == 0:
+        return V, F, 0, 0.0
+    loops = _boundary_loops(F)
+    if not loops:
+        return V, F, 0, 0.0
+    pers = [float(np.linalg.norm(V[l] - V[np.roll(l, -1)], axis=1).sum()) for l in loops]
+    outer = int(np.argmax(pers))
+    C = np.array([f[0] for f in facades])
+    N = np.array([f[1] for f in facades])
+    U = np.array([f[2] for f in facades])
+    U0 = np.array([f[3] for f in facades])
+    U1 = np.array([f[4] for f in facades])
+
+    def facade_dist(Pt, margin):
+        """Atstumas iki artimiausio fasado (tik jo ribose) ir to fasado numeris."""
+        d = np.einsum("pk,fk->pf", Pt, N) - np.einsum("fk,fk->f", C, N)
+        t = np.einsum("pk,fk->pf", Pt, U) - np.einsum("fk,fk->f", C, U)
+        ok = (t > U0 - margin) & (t < U1 + margin)
+        ad = np.where(ok, np.abs(d), np.inf)
+        k = np.argmin(ad, axis=1)
+        return ad[np.arange(len(Pt)), k], k, d[np.arange(len(Pt)), k]
+
+    newV, newF, filled, area_sum = [], [], 0, 0.0
+    nv = len(V)
+    for i, loop in enumerate(loops):
+        if i == outer or pers[i] <= HOLE_PERIM or pers[i] > WALL_HOLE_MAX_PERIM or len(loop) > WALL_HOLE_MAX_EDGES:
+            continue
+        P = V[loop]
+        vec = 0.5 * np.cross(P, np.roll(P, -1, axis=0)).sum(axis=0)
+        area = float(np.linalg.norm(vec))
+        if area <= 0 or area > WALL_HOLE_MAX_AREA or abs(vec[2]) / area >= WALL_HOLE_VERT:
+            continue
+        seg = np.linalg.norm(np.roll(P, -1, axis=0) - P, axis=1)
+        dist, _, _ = facade_dist(P, 2.0)
+        share = seg[dist <= WALL_HOLE_ON].sum() / pers[i]
+        if share < WALL_HOLE_SHARE:
+            continue
+        sp = max(float(np.median(seg)), 0.2)
+        r = _planar_patch(V, loop, sp)
+        X, T = r if r is not None else _membrane(V, loop, sp)
+        if len(X):
+            dist, k, d = facade_dist(X, 1.0)
+            snap = dist <= WALL_HOLE_SNAP
+            X[snap] -= d[snap, None] * N[k[snap]]
+        base = nv + sum(len(x) for x in newV)
+        lv = np.asarray(loop)
+        T = np.where(T < 0, lv[np.where(T < 0, -T - 1, 0)], T + base)
+        T = T[(T[:, 0] != T[:, 1]) & (T[:, 1] != T[:, 2]) & (T[:, 0] != T[:, 2])]
+        newV.append(X)
+        newF.append(T)
+        filled += 1
+        area_sum += area
+        if info is not None:
+            lo, hi = P.min(axis=0), P.max(axis=0)
+            info.append("perimetras %.0f m, %.0f m², centras (%.1f; %.1f), z %.1f–%.1f, ant fasadų %d %%"
+                        % (pers[i], area, (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2], hi[2], 100 * share))
+    if filled:
+        V = np.vstack([V] + newV)
+        F = np.vstack([F] + [t.astype(F.dtype) for t in newF])
+    return V, F, filled, area_sum
+
+
 def improve_mesh(mesh_path, args=None):
-    """ODM 3D tinklo etapo pabaigoje: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas.
+    """ODM 3D tinklo etapo pabaigoje: plaukiojančių gabalų šalinimas, fasadų lyginimas, didelių skylių fasaduose ir
+    mažų skylių užpildymas.
     Kiekvienas žingsnis atskirai – jei vienas nepavyksta, kiti vis tiek atliekami."""
     import numpy as np
     import trimesh
@@ -883,6 +1309,17 @@ def improve_mesh(mesh_path, args=None):
                 V, F, changed = V2, F2, True
         except Exception as e:
             log.ODM_WARNING("Atea: fasadų pratęsimas praleistas (%s)" % str(e))
+    if facades:
+        try:
+            info = []
+            V2, F2, n, a = _fill_wall_holes(V, F, facades, info)
+            log.ODM_INFO("Atea: užpildyta didelių skylių fasaduose %s (%.0f m²)" % (n, a))
+            for d in info:
+                log.ODM_INFO("Atea:   užpildyta: %s" % d)
+            if n:
+                V, F, changed = V2, F2, True
+        except Exception as e:
+            log.ODM_WARNING("Atea: didelių skylių fasaduose užpildymas praleistas (%s)" % str(e))
     try:
         V2, F2, n = _fill_holes(V, F)
         log.ODM_INFO("Atea: užpildyta mažų skylių %s" % n)
