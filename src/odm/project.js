@@ -17,11 +17,13 @@ export const PRESETS = {
     desc: 'OpenDroneMap su didžiausiu detalumu: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis, tikslus 3D tinklas (OpenMVS) ir realistiškas vaizdas – sukuriamas automatiškai baigus. Reikia NVIDIA GPU ir ~32 GB RAM.',
     // ultra – gylio žemėlapiai ½ nuotraukos raiškos (GPU); pc-filter 3 – mažiau „plaukiojančių“ taškų (stiklo atspindžių);
     // ignore-gsd – tekstūros ir tankinimas pilnos raiškos nuotraukomis (fasadai ryškūs); 2 mln. trikampių;
-    // sky-removal – įstrižose nuotraukose dangaus taškai ant pastatų kraštų (statmenoms ODM netaiko);
+    // sky-removal – tik įstrižoms nuotraukoms (buildOdmOptions, oblique): ODM statmenų nuotraukų neatskiria, kai kameroje
+    // nėra gimbal posvyrio, ir dangaus DI kaukė uždengia stiklą, atspindintį dangų – tankinime ten nelieka taškų ir
+    // stiklinio pastato viršus / stogas tinkle lieka kiauras (TES_ODM: 50×10 m skylė jau po ReconstructMesh);
     // keep-unseen-faces – nuotraukose nematomos sienelės (stiklinio pirmo aukšto apačia, žemė prie sienų, po medžiais)
     // nebeišmetamos (kitaip modelyje kiaurymės), jų spalva užpildoma iš kaimyninių; be globalaus siūlių lyginimo –
     // jis ant aštrių pastato kampų išveda purpurines / mėlynas dėmes (vietinis lyginimas lieka)
-    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'sky-removal': true, 'texturing-keep-unseen-faces': true, 'texturing-skip-global-seam-leveling': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'texturing-keep-unseen-faces': true, 'texturing-skip-global-seam-leveling': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
   },
   fast: {
     label: 'Greitas',
@@ -289,8 +291,10 @@ export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.g
 /** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
 export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false, rollingShutter = false } = {}) {
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false, rollingShutter = false, oblique = false } = {}) {
   const o = { ...PRESETS[presetKey].options };
+  // Dangaus kaukės – tik kai yra įstrižų nuotraukų (jose matosi dangus už pastatų kraštų); 3D tinklui
+  if (oblique && !o['skip-3dmodel']) o['sky-removal'] = true;
   // Eilutinio užrakto kameros: ODM pats parenka nuskaitymo laiką pagal kameros modelį
   if (rollingShutter) o['rolling-shutter'] = true;
   // Tikslus 3D tinklas (Atea ODM atvaizdas, deploy/odm): OpenMVS ReconstructMesh + RefineMesh vietoj Poisson –

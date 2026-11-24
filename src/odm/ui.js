@@ -505,7 +505,7 @@ export function createOdmUI(app) {
     const mvsMesh = !engine && preset !== 'orthoOnly' && (await client.supports('mesh-method'));
     const options = engine
       ? engineOptions(preset)
-      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter, mvsMesh });
+      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter, oblique: (analysis?.oblique || 0) / Math.max(1, analysis?.used?.length || 0) >= 0.05, mvsMesh });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
     if (boundary) items.push({ name: 'boundary.geojson', file: new Blob([JSON.stringify(boundary)], { type: 'application/geo+json' }) });
@@ -788,7 +788,8 @@ export function createOdmUI(app) {
       return;
     }
     const info = await c.taskInfo(p.uuid);
-    const presetKeys = new Set(Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})));
+    // sky-removal – nebe ODM režimo parinktis (tik įstrižoms nuotraukoms); senose užduotyse ji uždengdavo stiklą – neperkeliama
+    const presetKeys = new Set([...Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})), 'sky-removal']);
     const keep = (info.options || []).filter((o) => !presetKeys.has(o.name) && !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
     const choices = Object.entries(PRESETS).filter(([k]) => (engine ? isEnginePreset(k) : !isEnginePreset(k)));
     const preset = await new Promise((resolve) => {

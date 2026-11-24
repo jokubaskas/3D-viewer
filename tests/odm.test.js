@@ -73,4 +73,8 @@ test('rolling shutter: įjungiama tik eilutinio užrakto kameroms', () => {
   assert.equal(analyzePhotos(m3e).rollingShutter, false);
   assert.equal(opts(buildOdmOptions('orthoOnly', { rollingShutter: true }))['rolling-shutter'], true);
   assert.equal(opts(buildOdmOptions('orthoOnly'))['rolling-shutter'], undefined);
+  // dangaus kaukės – tik įstrižoms nuotraukoms (statmenose jos uždengia dangų atspindintį stiklą)
+  assert.equal(opts(buildOdmOptions('odm'))['sky-removal'], undefined);
+  assert.equal(opts(buildOdmOptions('odm', { oblique: true }))['sky-removal'], true);
+  assert.equal(opts(buildOdmOptions('orthoOnly', { oblique: true }))['sky-removal'], undefined);
 });
