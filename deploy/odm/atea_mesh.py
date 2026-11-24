@@ -100,6 +100,66 @@ def _min_point_distance(tree):
     return min(12.0, round(BASE_DIST * math.sqrt(n / target), 1)), True, fss
 
 
+# Skylių diagnostika: kuriame etape (ReconstructMesh / RefineMesh / apkarpymas / valymas) atsiranda kiaurymės.
+HOLE_REPORT_MIN = 2.0           # m – mažesnio perimetro skylės neskaičiuojamos
+HOLE_REPORT_MAX_FACES = 20000000
+
+
+def _hole_report(V, F, top=6):
+    """Grąžina (skylių skaičius, bendras perimetras m, didžiausių aprašymai). Skylė – sujungta krašto kraštinių grupė;
+    ilgiausia (modelio išorinis kraštas) neskaičiuojama."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    F = np.asarray(F, dtype=np.int64)
+    n = len(V)
+    E = np.concatenate([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
+    E.sort(axis=1)
+    key = E[:, 0] * n + E[:, 1]
+    del E
+    u, cnt = np.unique(key, return_counts=True)
+    b = u[cnt == 1]
+    del key, u, cnt
+    if len(b) == 0:
+        return 0, 0.0, []
+    a, c = b // n, b % n
+    vs, inv = np.unique(np.concatenate([a, c]), return_inverse=True)
+    ia, ic = inv[:len(a)], inv[len(a):]
+    g = coo_matrix((np.ones(len(a)), (ia, ic)), shape=(len(vs), len(vs)))
+    nc, lab = connected_components(g, directed=False)
+    elab = lab[ia]
+    L = np.linalg.norm(V[a] - V[c], axis=1)
+    per = np.bincount(elab, weights=L, minlength=nc)
+    order = np.argsort(-per)[1:]  # be išorinio krašto
+    order = order[per[order] >= HOLE_REPORT_MIN]
+    info = []
+    for k in order[:top]:
+        P = V[vs[lab == k]]
+        lo, hi = P.min(axis=0), P.max(axis=0)
+        info.append("perimetras %.1f m, centras (%.1f; %.1f), z %.1f–%.1f, dydis %.1f×%.1f m"
+                    % (per[k], (lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, lo[2], hi[2], hi[0] - lo[0], hi[1] - lo[1]))
+    return len(order), float(per[order].sum()), info
+
+
+def _log_holes(stage, V=None, F=None, path=None):
+    """Įrašo į žurnalą skylių suvestinę. Klaida ar per didelis tinklas – tyliai praleidžiama."""
+    try:
+        if path is not None:
+            if _ply_count(path, "face") > HOLE_REPORT_MAX_FACES:
+                return
+            import numpy as np
+            import trimesh
+            m = trimesh.load(path, process=False, force="mesh")
+            V, F = np.asarray(m.vertices, dtype=np.float64), np.asarray(m.faces)
+        n, per, info = _hole_report(V, F)
+        log.ODM_INFO("Atea: skylės (%s): %s vnt. ≥ %.0f m perimetro, bendras perimetras %.0f m"
+                     % (stage, n, HOLE_REPORT_MIN, per))
+        for d in info:
+            log.ODM_INFO("Atea:   skylė: %s" % d)
+    except Exception as e:
+        log.ODM_WARNING("Atea: skylių suvestinė (%s) praleista (%s)" % (stage, str(e)))
+
+
 def _crop(mesh_in, mesh_out, filtered_pc):
     """Pašalina sieneles, kurių XY nepatenka šalia išfiltruotų taškų (ribos apkarpymas ir triukšmo filtras)."""
     import numpy as np
@@ -187,6 +247,8 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         if not io.file_exists(mesh_ply):
             raise Exception("ReconstructMesh nesukūrė tinklo")
 
+        _log_holes("ReconstructMesh", path=mesh_ply)
+
         # 2) Tikslinimas pagal nuotraukas (nepavykus – naudojamas netikslintas tinklas)
         best = mesh_ply
         refined = os.path.join(work, "mesh_refine.mvs")
@@ -217,6 +279,9 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         except Exception as e:
             log.ODM_WARNING("Atea: tikslinimas nepavyko (%s) – naudojamas netikslintas OpenMVS tinklas" % str(e))
 
+        if best != mesh_ply:
+            _log_holes("RefineMesh", path=best)
+
         # 3) Apkarpymas pagal ODM išfiltruotus taškus ir sumažinimas iki --mesh-size (kaip ODM Poisson atveju)
         cropped = os.path.join(work, "mesh_cropped.ply")
         if io.file_exists(tree.filtered_point_cloud):
@@ -228,6 +293,7 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         if not io.file_exists(out_mesh):
             raise Exception("galutinis tinklas nesukurtas")
         log.ODM_INFO("Atea: galutinis tinklas – %s sienelių" % _ply_count(out_mesh, "face"))
+        _log_holes("apkarpytas ir sumažintas", path=out_mesh)
         if not getattr(args, "optimize_disk_space", False):
             for f in ("mesh.mvs", "mesh_refine.mvs"):
                 p = os.path.join(work, f)
@@ -826,6 +892,7 @@ def improve_mesh(mesh_path, args=None):
         log.ODM_WARNING("Atea: skylių užpildymas praleistas (%s)" % str(e))
     if changed:
         _save(mesh_path, V, F)
+        _log_holes("po valymo", V, F)
 
 
 # ---------------------------------------------------------------------------------------------------------------
