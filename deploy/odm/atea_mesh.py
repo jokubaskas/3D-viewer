@@ -1262,6 +1262,42 @@ def _fill_wall_holes(V, F, facades, info=None):
     return V, F, filled, area_sum
 
 
+
+# Skylės vietoje likę atskiri stiklo atspindžių gabalai (plaukiojančių gabalų valymas juos palieka kaip fasado
+# atplaišas) po užpildymo kyšo prieš naują sieną ar už jos – matosi kaip gumbai. Jei gabalas beveik visas yra
+# arti užpildo, jis pašalinamas: sieną jau dengia užpildas.
+COVER_DIST = 2.5   # m
+COVER_SHARE = 0.8
+
+
+def _drop_covered_fragments(V, F, first_new):
+    """F be atskirų gabalų prie užpildytų skylių (viršūnės nuo first_new – užpildas). Grąžina (F, kiekis, plotas m²)."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    V = np.asarray(V, dtype=np.float64)
+    F = np.asarray(F)
+    if first_new >= len(V):
+        return F, 0, 0.0
+    lab = _vertex_components(F, len(V))
+    flab = lab[F[:, 0]]
+    fa = 0.5 * np.linalg.norm(np.cross(V[F[:, 1]] - V[F[:, 0]], V[F[:, 2]] - V[F[:, 0]]), axis=1)
+    area = np.bincount(flab, weights=fa, minlength=lab.max() + 1)
+    main = int(np.bincount(flab, minlength=lab.max() + 1).argmax())
+    patch_area = fa[(F >= first_new).any(axis=1)].sum()
+    tree = cKDTree(V[first_new:])
+    drop = np.zeros(len(area), dtype=bool)
+    for c in np.flatnonzero(area > 0):
+        if c == main or area[c] > patch_area:
+            continue
+        P = V[lab == c]
+        P = P[:: max(1, len(P) // 2000)]
+        d = tree.query(P, distance_upper_bound=COVER_DIST)[0]
+        if (d <= COVER_DIST).mean() >= COVER_SHARE:
+            drop[c] = True
+    keep = ~drop[flab]
+    return F[keep], int(drop.sum()), float(area[drop].sum())
+
+
 def improve_mesh(mesh_path, args=None):
     """ODM 3D tinklo etapo pabaigoje: plaukiojančių gabalų šalinimas, fasadų lyginimas, didelių skylių fasaduose ir
     mažų skylių užpildymas.
@@ -1317,7 +1353,14 @@ def improve_mesh(mesh_path, args=None):
             for d in info:
                 log.ODM_INFO("Atea:   užpildyta: %s" % d)
             if n:
+                nv0 = len(V)
                 V, F, changed = V2, F2, True
+                F, k, a = _drop_covered_fragments(V, F, nv0)
+                if k:
+                    mesh = trimesh.Trimesh(V, F, process=False)
+                    mesh.remove_unreferenced_vertices()
+                    V, F = np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces)
+                log.ODM_INFO("Atea: pašalinta stiklo atplaišų prieš / už užpildytos sienos %s (%.1f m²)" % (k, a))
         except Exception as e:
             log.ODM_WARNING("Atea: didelių skylių fasaduose užpildymas praleistas (%s)" % str(e))
     try:

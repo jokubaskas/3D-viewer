@@ -628,3 +628,19 @@ def test_fill_wall_holes_skips_ground_and_free_walls():
     facades = [f for f in _box_facades() if f[1][1] > -0.5]  # be pietinės sienos
     V2, F2, n, a = atea_mesh._fill_wall_holes(V, F, facades)
     assert n == 0 and len(F2) == len(F)
+
+
+def test_drop_fragments_in_front_of_filled_hole():
+    """Stiklo atplaiša skylėje (0.8 m prieš sieną) po užpildymo pašalinama; atplaiša prie kitos sienos – ne."""
+    b, ground = _building_with_hole(lambda c: (np.abs(c[:, 1] + 10) < 1e-6) & (np.abs(c[:, 0]) < 15) & (c[:, 2] > 18))
+    frag = trimesh.creation.box(extents=[3, 0.2, 2])
+    frag.apply_translation([0, -10.8, 24])
+    other = trimesh.creation.box(extents=[3, 0.2, 2])
+    other.apply_translation([0, 10.8, 24])
+    mesh = trimesh.util.concatenate([b, ground, frag, other])
+    V, F = np.asarray(mesh.vertices, dtype=float), np.asarray(mesh.faces)
+    V2, F2, n, a = atea_mesh._fill_wall_holes(V, F, _box_facades())
+    assert n == 1
+    F3, k, area = atea_mesh._drop_covered_fragments(V2, F2, len(V))
+    assert k == 1 and abs(area - frag.area) < 1e-6
+    assert len(F3) == len(F2) - len(frag.faces)
