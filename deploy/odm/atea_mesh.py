@@ -261,6 +261,12 @@ ROOF_MIN_H = 8.0  # m – ir bent tiek aukščiau to fasado apačios (2–3 auk�
 ROOF_MAX_AREA = 3000.0  # m² – didesnė „stogo“ plokštuma – greičiausiai aikštelė ar reljefas, ne stogas
 ROOF_NEAR = 3.0   # m – ir dalis stogo ne toliau kaip tiek nuo to fasado (ne tik panašus aukštis kitoje aikštelės vietoje)
 CORNER_COS = 0.87 # kampas tarp plokštumų > ~30° – sankirta laikoma briauna
+CORNER_SUPPORT = 0.3  # m – briaunos taškas turi būti tiek arti esamo tinklo (ne suapvalinto kampo „ore“)
+SMOOTH_K = 24     # aplinkos imties taškai paviršiaus krypčiai įvertinti
+SMOOTH_R = 1.5    # m
+SMOOTH_COS = 0.85 # aplinkos paviršius pasisukęs daugiau ~32° nuo plokštumos – netraukiama
+SMOOTH_FULL = 0.97  # iki ~14° – traukiama visiškai, tarp jų – silpniau
+FADE = 0.75       # tolerancijos dalis, nuo kurios traukimas silpnėja iki 0
 MAX_PLANES = 40
 ITERS = 150
 BIN = 1.0         # m – plokštumos ribų nustatymo tinklelis
@@ -409,15 +415,32 @@ def _flatten(mesh):
     VN = np.asarray(mesh.vertex_normals, dtype=np.float64)
     nv = len(V)
     D = np.full((len(planes), nv), np.nan)
+    Al = np.zeros((len(planes), nv))
     for i, (c, n, a1, a2, r0, r1, s0, s1, tol) in enumerate(planes):
         d = (V - c) @ n
         t1 = (V - c) @ a1
         t2 = (V - c) @ a2
         m = (np.abs(d) < tol) & (np.abs(VN @ n) > 0.3) & (t1 > r0) & (t1 < r1) & (t2 > s0) & (t2 < s1)
+        # Paviršius aplink viršūnę (~1.5 m) turi būti lygiagretus plokštumai. Suapvalintas pastato kampas ar
+        # išlenkta siena čia pasisuka – jos neištiesinamos (kitaip kampe atsiranda laužis / gumbas)
+        idx = np.flatnonzero(m)
+        if len(idx):
+            dist, nb = tree.query(V[idx], k=SMOOTH_K, distance_upper_bound=SMOOTH_R)
+            nb = np.where(np.isfinite(dist), nb, 0)
+            # tik šios plokštumos pusės paviršius (statmena kaimyninė siena aštriame kampe neskaičiuojama)
+            ok = np.isfinite(dist) & (np.abs((S[nb] - c) @ n) < tol) & (np.abs(SN[nb] @ n) > 0.5)
+            G = SN[nb] * ok[..., None]
+            G *= np.sign(G @ n)[..., None]
+            g = G.sum(axis=1)
+            g /= np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-12)
+            al = np.abs(g @ n)
+            Al[i, idx] = al
+            m[idx[al < SMOOTH_COS]] = False
         D[i, m] = d[m]
     hit = ~np.isnan(D)
     cnt = hit.sum(axis=0)
     Nm = np.array([p[1] for p in planes])
+    Tol = np.array([p[8] for p in planes])
     moved_v = np.zeros(nv, dtype=bool)
     shift = np.zeros_like(V)
 
@@ -427,23 +450,42 @@ def _flatten(mesh):
         k = np.argmax(hit[:, one], axis=0)
         d = D[k, one]
         ok = np.abs(np.einsum("ij,ij->i", VN[one], Nm[k])) > 0.3
-        shift[one[ok]] = -d[ok, None] * Nm[k[ok]]
+        # Tolerancijos pakraštyje traukiama vis silpniau: kitaip greta esančios viršūnės (viena priglausta, kita – ne)
+        # atsiduria iki TOL viena nuo kitos, tarp jų – ištemptos sienelės, siena atrodo suplėšyta
+        tol = Tol[k]
+        w = np.clip((tol - np.abs(d)) / (tol * (1 - FADE)), 0.0, 1.0)
+        # ir kuo labiau aplinka pasisukusi nuo plokštumos (kampo apvalinimo pradžia), tuo silpniau – be laužio
+        w *= np.clip((Al[k, one] - SMOOTH_COS) / (SMOOTH_FULL - SMOOTH_COS), 0.0, 1.0)
+        shift[one[ok]] = -(w * d)[ok, None] * Nm[k[ok]]
         moved_v[one[ok]] = True
 
     # Dvi ar daugiau – briauna: perkeliama ant dviejų artimiausių nelygiagrečių plokštumų sankirtos
     corners = 0
+    vtree = cKDTree(V)
     for v in np.flatnonzero(cnt >= 2):
         ks = np.flatnonzero(hit[:, v])
         ks = ks[np.argsort(np.abs(D[ks, v]))]
         a = ks[0]
+        # Dvi lygiagrečios plokštumos (fasado juosta ir įgilintas stiklas) iš abiejų viršūnės pusių – neaišku, kuriai ji
+        # priklauso; traukiant į artimesnę kaimynės išsiskirsto į skirtingus gylius ir siena „suplyšta“
+        if any(abs(Nm[a] @ Nm[k]) >= CORNER_COS and D[a, v] * D[k, v] < 0 for k in ks[1:]):
+            continue
         b = next((k for k in ks[1:] if abs(Nm[a] @ Nm[k]) < CORNER_COS), None)
         if b is None:
             shift[v] = -D[a, v] * Nm[a]
         else:
             N2 = Nm[[a, b]]
             r = D[[a, b], v]
-            shift[v] = -N2.T @ np.linalg.solve(N2 @ N2.T, r)
-            corners += 1
+            s2 = -N2.T @ np.linalg.solve(N2 @ N2.T, r)
+            # Aštrus kampas tik ten, kur tinklas jį tikrai turi. Suapvalinto kampo (stiklinis pastato kampas)
+            # plokštumų sankirta yra ore už sienos – viršūnės ten nustumiamos, ant sienos atsiranda gumbas.
+            if vtree.query(V[v] + s2)[0] <= CORNER_SUPPORT:
+                shift[v] = s2
+                corners += 1
+            elif abs(D[a, v]) < CORNER_SUPPORT / 2:
+                shift[v] = -D[a, v] * Nm[a]
+            else:
+                continue
         moved_v[v] = True
 
     V += shift

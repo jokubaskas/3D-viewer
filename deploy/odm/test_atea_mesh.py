@@ -498,3 +498,45 @@ def test_remove_floating_keeps_piece_near_wall():
     info = []
     F, n, a = atea_mesh._remove_floating(np.asarray(mesh.vertices), np.asarray(mesh.faces), np.asarray(mesh.area_faces), info)
     assert n == 0 and info == []
+
+
+def _rounded_tower(half=10.0, r=2.0, h=20.0, step=0.4):
+    """Vertikali sienų „juosta“ aplink suapvalintų kampų stačiakampį (kaip stiklinis pastatas su apvaliais kampais)."""
+    c = half - r
+    pts = []
+    for k, (cx, cy) in enumerate(((c, c), (-c, c), (-c, -c), (c, -c))):
+        a0 = 90 * k
+        for a in np.arange(a0, a0 + 90, np.degrees(step / r)):  # suapvalintas kampas
+            pts.append((cx + r * np.cos(np.radians(a)), cy + r * np.sin(np.radians(a))))
+        e = np.radians(a0 + 90)  # tiesi siena iki kito kampo
+        q0 = np.array([cx + r * np.cos(e), cy + r * np.sin(e)])
+        dirv = np.array([-np.sin(e), np.cos(e)])
+        for t in np.arange(0, 2 * c, step):
+            pts.append(tuple(q0 + dirv * t))
+    P = np.array(pts)
+    zs = np.arange(0, h + 1e-9, step)
+    n = len(P)
+    V = np.array([[p[0], p[1], z] for z in zs for p in P])
+    F = []
+    for j in range(len(zs) - 1):
+        for i in range(n):
+            a, b = j * n + i, j * n + (i + 1) % n
+            F += [[a, b, a + n], [b, b + n, a + n]]
+    return trimesh.Trimesh(V, np.array(F), process=False)
+
+
+def test_flatten_rounded_corner_no_bump(tmp_path):
+    """Suapvalinti pastato kampai nepaverčiami aštriais: viršūnės nenustumiamos į orą už sienos (gumbas ant fasado)."""
+    tower = _rounded_tower()
+    R = np.linalg.norm(tower.vertices[:, :2], axis=1)
+    ground = _ground(-30, 30, -30, 30)
+    ground.update_faces(np.linalg.norm(ground.triangles_center[:, :2], axis=1) > 15)
+    ground.remove_unreferenced_vertices()
+    mesh = trimesh.util.concatenate([tower, ground])
+    p = str(tmp_path / "odm_mesh.ply")
+    mesh.export(p, encoding="binary")
+    atea_mesh.flatten_facades(p)
+    out = np.asarray(trimesh.load(p, process=False, force="mesh").vertices)[:len(tower.vertices)]
+    # Kampo apvalinimas neištiesinamas: anksčiau viršūnės buvo nustumiamos ~0.35 m (iki plokštumų sankirtos)
+    d = np.linalg.norm(out - tower.vertices, axis=1)
+    assert d.max() < 0.2 and np.percentile(d, 99) < 0.12, (d.max(), np.percentile(d, 99))
