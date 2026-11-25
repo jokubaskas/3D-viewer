@@ -1,6 +1,7 @@
 // AI įrašas klientui: vaizdas su įrašytais rėmeliais, skaičiais ir laiku + ataskaita (HTML, CSV, JSON, įvykių kadrai).
 // Įrašoma ne pats grotuvas, o drobė, ant kurios kiekvieną kadrą piešiamas vaizdas ir paskutiniai AI rezultatai.
-import { classColor, detLabel, stateFamily } from './ai.js';
+import { classColor, classLabel, detLabel, stateFamily } from './ai.js';
+import { drawPlates } from './plates.js';
 import { t, locale } from '../i18n.js';
 import { drawLogo, logoSvg } from '../logo.js';
 import { telemetryLine } from './telemetry-ui.js';
@@ -74,6 +75,7 @@ export function drawComposite(g, el, last, o) {
       g.fillText(label, x + 4 * s, ly + th - 4 * s);
     }
     g.globalAlpha = 1;
+    if (o.plates) drawPlates(g, o.plates, last, { k: kk, ox: ox2, oy: oy2, s, W, H });
   }
   // Informacinė juosta viršuje: laikas, pavadinimas, skaičiai
   const lines = o.lines || [];
@@ -181,6 +183,7 @@ export class AiComposer {
     this.events = []; // {t, at, kind:'start'|'episode', group, n (daugiausia), end?, counts, img?:Blob}
     this._g = {}; // grupės būsena: {hits, firstT, firstAt, lastT, ep}
     this.max = {};
+    this.plates = new Map(); // valstybiniai numeriai šiame įraše: key → {text, firstT, lastT, pos, …}
     const el = player.el;
     const vw = el.videoWidth || el.naturalWidth || 1280, vh = el.videoHeight || el.naturalHeight || 720;
     const k = Math.min(1, 1920 / Math.max(vw, vh));
@@ -247,7 +250,7 @@ export class AiComposer {
     const el = this.player.el;
     if (!(el instanceof HTMLVideoElement || el instanceof HTMLImageElement)) return;
     try {
-      drawComposite(this.g, el, this.detector.last, { W: this.cv.width, H: this.cv.height, lines: this.hud() });
+      drawComposite(this.g, el, this.detector.last, { W: this.cv.width, H: this.cv.height, lines: this.hud(), plates: this.detector.platesOn ? this.detector.plates : null });
     } catch { /* kadras dar neparuoštas */ }
   }
 
@@ -259,6 +262,7 @@ export class AiComposer {
     const t1 = Math.max(0, Math.round(L.at - (L.ms || 0) - this.t0));
     const counts = { ...d.counts };
     const pos = this.dronePos(t1);
+    this.syncPlates(pos);
     this.track.push({
       t: t1,
       counts,
@@ -401,7 +405,21 @@ export class AiComposer {
     return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.82));
   }
 
+  /** Patvirtinti numeriai, perskaityti įrašo metu (numerių atpažinimas vyksta atskirai nuo aptikimo). */
+  syncPlates(pos) {
+    const d = this.detector;
+    if (!d.platesOn) return;
+    for (const r of d.plates.recs) {
+      if (!r.sure || r.lastAt < this.t0) continue;
+      const tl = Math.max(0, Math.round(r.lastAt - this.t0));
+      let p = this.plates.get(r.key);
+      if (!p) this.plates.set(r.key, (p = { firstT: tl, firstAt: this.started + tl, pos: pos || null, reads0: r.reads - 1 }));
+      Object.assign(p, { text: r.text, score: r.score, reads: r.reads - p.reads0, lastT: tl, img: r.img, cls: r.cls, id: r.id });
+    }
+  }
+
   stop() {
+    this.syncPlates(this.flight.pos(Math.max(0, Math.round(performance.now() - this.t0))));
     this._stopTick?.();
     this._stopTick = null;
     this.detector.listeners.delete(this._onResult);
@@ -430,6 +448,7 @@ const REPORT_CSS = `  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
   th { color: var(--mut); font-weight: 600; font-size: 12px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   td img { width: 220px; border-radius: 6px; display: block; }
+  .plate { display: inline-block; font: 700 18px/1.2 Consolas, 'DejaVu Sans Mono', monospace; letter-spacing: 1px; background: #fff; border: 2px solid #1f2326; border-radius: 4px; padding: 2px 8px; }
   a.geo { color: var(--mut); font-size: 12px; }
   svg.route { width: 100%; height: auto; border-radius: 8px; display: block; background: #2b3236; }
   svg.route a.t { cursor: pointer; }
@@ -564,6 +583,30 @@ export async function reportZip({ name, video, comp, settings }) {
   for (const [k, b] of Object.entries(flight.files)) files[k] = new Uint8Array(await b.arrayBuffer());
   if (fs) files['telemetrija.csv'] = strToU8(telemetryCsv(fs, comp.started));
 
+  // Valstybiniai numeriai (jei filtras buvo įjungtas): priartintos iškarpos, laikas ir drono vieta
+  const plates = [...(comp.plates?.values() || [])].sort((a, b) => a.firstT - b.firstT);
+  const plateRows = [];
+  for (const p of plates) {
+    let img = '';
+    if (p.img) {
+      const k = Math.max(1, 360 / p.img.width), c = document.createElement('canvas');
+      c.width = Math.round(p.img.width * k);
+      c.height = Math.round(p.img.height * k);
+      const g = c.getContext('2d');
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(p.img, 0, 0, c.width, c.height);
+      const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
+      if (b) {
+        img = `kadrai/numeris_${String(plateRows.length + 1).padStart(3, '0')}.jpg`;
+        files[img] = new Uint8Array(await b.arrayBuffer());
+      }
+    }
+    plateRows.push({ text: p.text, firstT: p.firstT, lastT: p.lastT, at: p.firstAt, reads: p.reads, score: +p.score.toFixed(2), class: p.cls, id: p.id, pos: p.pos, img });
+  }
+  const platesOn = !!settings.plates && !settings.model;
+  if (platesOn || plateRows.length)
+    files['numeriai.csv'] = strToU8('\ufeff' + [t('numeris'), t('pirma_s'), t('paskutine_s'), t('data_laikas'), t('perskaityta_kartu'), t('tikrumas'), t('tipas'), t('platuma'), t('ilguma'), t('kadras')].join(';') + '\n' + plateRows.map((p) => [p.text, (p.firstT / 1000).toFixed(1), (p.lastT / 1000).toFixed(1), fmtClock(new Date(p.at)), p.reads, p.score, classLabel(p.class), p.pos?.[0] ?? '', p.pos?.[1] ?? '', p.img].join(';')).join('\n') + '\n');
+
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
   const hasPos = comp.track.some((r) => r.pos);
@@ -573,7 +616,7 @@ export async function reportZip({ name, video, comp, settings }) {
   files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras'), t('platuma'), t('ilguma')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img, e.pos?.[0] ?? '', e.pos?.[1] ?? ''].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, flight: fs ? { dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S } : null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, flight: fs ? { dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S } : null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), ...(platesOn || plateRows.length ? { plates: plateRows } : {}), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -601,6 +644,11 @@ ${evRows.length ? `<table><tr><th>${esc(t('Laikas įraše'))}</th><th>${esc(t('D
 ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${i + 1}</b>` : ''}<a class="t" data-t="${Math.max(0, e.t - 1000) / 1000}">${fmtDur(e.t)}</a></td><td>${esc(fmtClock(new Date(e.at)))}</td><td>${e.group ? `<i class="dot" style="background:${esc(GROUPS[e.group]?.color || '#888')}"></i>` : ''}${esc(evText(e))}<br><span style="color:var(--mut);font-size:12px">${esc(countsText(e.counts))}</span>${e.pos ? `<br><a class="geo" href="https://maps.google.com/?q=${e.pos[0]},${e.pos[1]}" target="_blank">${esc(t('Drono vieta'))}: ${e.pos[0].toFixed(6)}, ${e.pos[1].toFixed(6)}${e.pos[2] != null ? ` · ${Math.round(e.pos[2])} m` : ''}</a>` : ''}</td><td>${e.img ? `<a href="${e.img}" target="_blank"><img src="${e.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
+${platesOn || plateRows.length ? `<section><h2>${esc(t('Valstybiniai numeriai'))}</h2>
+${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Vieta'))}</th><th>${esc(t('Priartinta'))}</th></tr>
+${plateRows.map((p) => `<tr><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td><td>${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""></a>` : ''}</td></tr>`).join('\n')}
+</table>` : `<p>${esc(t('Numerių neperskaityta.'))}</p>`}
+<p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Numeriai atpažinti automatiškai ir gali būti netikslūs. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.'))}</p></section>` : ''}
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">
 <tr><td>${esc(t('Šaltinis'))}</td><td>${esc(name)}</td></tr>
 <tr><td>${esc(t('Pradžia'))}</td><td>${esc(fmtClock(start))}</td></tr>
@@ -610,7 +658,7 @@ ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${
 ${comp.drone ? `<tr><td>${esc(t('Dronas'))}</td><td>${esc(comp.drone)}${comp.route.length > 1 ? ` · ${esc(t('maršrutas: marsrutas.gpx'))}` : ''}</td></tr>` : ''}
 <tr><td>${esc(t('AI modelis'))}</td><td>${esc(settings.modelName || t('Standartinis (COCO)'))}</td></tr>
 <tr><td>${esc(t('Jautrumas'))}</td><td>${Math.round((settings.threshold || 0) * 100)} %</td></tr>
-<tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv, duomenys.json, kadrai/${fs ? ', telemetrija.csv' : ''}${comp.route.length > 1 ? ', marsrutas.gpx, skrydis/' : ''}</td></tr>
+<tr><td>${esc(t('Failai'))}</td><td>${videoName}, skaiciai.csv, ivykiai.csv${platesOn || plateRows.length ? ', numeriai.csv' : ''}, duomenys.json, kadrai/${fs ? ', telemetrija.csv' : ''}${comp.route.length > 1 ? ', marsrutas.gpx, skrydis/' : ''}</td></tr>
 </table></section>
 <footer>${esc(t('Sukurta su Atea 3D Matuoklis. AI rezultatai yra automatiniai ir gali būti netikslūs.'))}</footer>
 </main>

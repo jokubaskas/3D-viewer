@@ -3,6 +3,7 @@
 Veikia jūsų serveryje / kompiuteryje, be interneto ir be mokamų paslaugų:
   * /detect  – transporto (automobilių, sunkvežimių, autobusų…) aptikimas vaizde iš viršaus.
                Modelis: RF-DETR (Roboflow, Apache 2.0), apmokytas su COCO.
+  * /plates  – valstybinių numerių atpažinimas transporto iškarpose (fast-alpr, MIT).
   * /segment – objekto kontūras vienu spustelėjimu (pvz. krūvos kraštas).
                Modelis: MobileSAM (Apache 2.0) – lengva Segment Anything versija.
 
@@ -162,12 +163,22 @@ def health():
         "segmenter": "MobileSAM (Apache 2.0)",
         "detector_loaded": _detector is not None,
         "segmenter_loaded": _sam is not None,
+        "plates": _has_alpr(),
         "raster": _has_rasterio(),
         "weights": sorted(os.listdir(MODELS_DIR)) if os.path.isdir(MODELS_DIR) else [],
         "custom_models": len(custom_models()),
         "active_model": active_model(),
         "training": _train_proc is not None and _train_proc.poll() is None,
     }
+
+
+def _has_alpr() -> bool:
+    try:
+        import fast_alpr  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
 
 
 def _has_rasterio() -> bool:
@@ -537,6 +548,71 @@ async def _detect(request, image, classes, threshold, tile, overlap, gsd, refine
 # ---------------------------------------------------------------------------
 # Savo modelio mokymas (train.py – atskiras procesas) ir modelių sąrašas
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Valstybiniai numeriai (fast-alpr, MIT): numerio vieta (YOLOv9) + simbolių atpažinimas (CCT OCR), ONNX CPU
+# ---------------------------------------------------------------------------
+_alpr = None
+_alpr_lock = threading.Lock()
+PLATE_MIN_SIDE = 384  # mažos iškarpos padidinamos – numerio detektorius dirba 384 px įvestimi
+
+
+def get_alpr():
+    global _alpr
+    with _alpr_lock:
+        if _alpr is None:
+            from fast_alpr import ALPR
+
+            t0 = time.time()
+            _alpr = ALPR()
+            print(f"[ai] numerių atpažinimas (fast-alpr) įkeltas per {time.time() - t0:.1f} s", flush=True)
+        return _alpr
+
+
+def _read_plates(img: np.ndarray) -> list:
+    h, w = img.shape[:2]
+    k = max(1.0, PLATE_MIN_SIDE / max(1, min(h, w)))
+    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    if k > 1:
+        bgr = cv2.resize(bgr, (round(w * k), round(h * k)), interpolation=cv2.INTER_CUBIC)
+    alpr = get_alpr()
+    with _alpr_lock:
+        results = alpr.predict(bgr)
+    out = []
+    for r in results:
+        b = r.detection.bounding_box
+        box = [round(b.x1 / k, 1), round(b.y1 / k, 1), round(b.x2 / k, 1), round(b.y2 / k, 1)]
+        text = ""
+        score = 0.0
+        if r.ocr is not None and r.ocr.text:
+            text = "".join(ch for ch in r.ocr.text.upper() if ch.isalnum())
+            conf = r.ocr.confidence
+            if isinstance(conf, (list, tuple, np.ndarray)):
+                conf = [float(c) for c in list(conf)[: max(1, len(text))]]
+                score = float(np.mean(conf)) if conf else 0.0
+            elif conf is not None:
+                score = float(conf)
+        out.append({"box": box, "text": text, "score": round(score, 3), "det": round(float(r.detection.confidence), 3)})
+    return out
+
+
+@app.post("/plates")
+async def plates(request: Request, images: list[UploadFile] = File(...)):
+    """Valstybinių numerių atpažinimas transporto priemonių iškarpose (naršyklė siunčia iškarpas iš kadro).
+
+    Grąžina kiekvienai iškarpai: [{box (iškarpos pikseliais), text, score (OCR tikrumas 0–1), det}].
+    Viskas vyksta šiame kompiuteryje – vaizdai niekur nesiunčiami ir nesaugomi.
+    """
+    out = []
+    try:
+        for f in images[:16]:
+            await _check(request)
+            img = read_image(await f.read())
+            out.append(await run_in_threadpool(_read_plates, img))
+    except Cancelled:
+        return {"cancelled": True, "results": out}
+    return {"results": out}
+
+
 def _job_dir(job: str) -> str:
     return os.path.join(CUSTOM_DIR, "_jobs", job)
 

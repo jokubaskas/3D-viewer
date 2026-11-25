@@ -21,6 +21,10 @@ RUN mkdir -p /models \
       || curl -fsSL -o /models/rf-detr-${DETECTOR}.pth https://storage.googleapis.com/rfdetr/${DETECTOR}_coco/checkpoint_best_regular.pth) \
   && curl -fsSL -o /models/mobile_sam.pt https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt
 
+# Valstybinių numerių atpažinimas (fast-alpr, MIT; ONNX CPU). Modeliai (~10 MB) atsisiunčiami kuriant vaizdą.
+RUN pip install --no-cache-dir "fast-alpr[onnx]==0.4.0" \
+  && python -c "from fast_alpr import ALPR; ALPR()"
+
 # C kompiliatorius: mokant GPU, PyTorch (Triton) vietoje kompiliuoja pagalbinius modulius – be jo
 # „RuntimeError: Failed to find C compiler“. Atskiras sluoksnis gale – kad nereikėtų iš naujo siųstis PyTorch.
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
