@@ -414,7 +414,7 @@ export class AiComposer {
       const tl = Math.max(0, Math.round(r.lastAt - this.t0));
       let p = this.plates.get(r.key);
       if (!p) this.plates.set(r.key, (p = { firstT: tl, firstAt: this.started + tl, pos: pos || null, reads0: r.reads - 1 }));
-      Object.assign(p, { text: r.text, score: Math.max(r.score || 0, r.fusedText === r.text ? r.fusedScore : 0), reads: r.reads - p.reads0, lastT: tl, img: r.img, fused: r.fused || null, fusedN: r.fusedN || 0, veh: r.veh || null, cls: r.cls, id: r.id });
+      Object.assign(p, { text: r.text, score: Math.max(r.score || 0, r.fusedText === r.text ? r.fusedScore : 0), reads: r.reads - p.reads0, lastT: tl, img: r.img, photo: r.photo || null, fused: r.fused || null, fusedN: r.fusedN || 0, veh: r.veh || null, cls: r.cls, id: r.id });
     }
   }
 
@@ -448,6 +448,12 @@ const REPORT_CSS = `  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
   th { color: var(--mut); font-weight: 600; font-size: 12px; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   td img { width: 220px; border-radius: 6px; display: block; }
+  tr.pm td { border-bottom: 0; }
+  tr.pr td { padding-top: 0; padding-bottom: 14px; }
+  .pv { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+  .pv img.car { width: 480px; max-width: 100%; }
+  .pv .pz img { width: 300px; }
+  .pv .pz span { display: block; margin-bottom: 4px; }
   .plate { display: inline-block; font: 700 18px/1.2 Consolas, 'DejaVu Sans Mono', monospace; letter-spacing: 1px; background: #fff; border: 2px solid #1f2326; border-radius: 4px; padding: 2px 8px; }
   a.geo { color: var(--mut); font-size: 12px; }
   svg.route { width: 100%; height: auto; border-radius: 8px; display: block; background: #2b3236; }
@@ -460,7 +466,7 @@ const REPORT_CSS = `  :root { --g: #008b01; --ink: #1f2326; --mut: #6b7570; }
   a.t { color: var(--g); font-weight: 600; text-decoration: none; cursor: pointer; }
   .meta td:first-child { color: var(--mut); width: 220px; }
   footer { text-align: center; color: var(--mut); font-size: 12px; }
-  @media print { video { display: none; } body { background: #fff; } section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; } td img { width: 160px; } }
+  @media print { video { display: none; } body { background: #fff; } section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; } td img { width: 160px; } .pv img.car { width: 320px; } .pv .pz img { width: 200px; } }
 `;
 
 // Ataskaitos sąveika (atidarius naršyklėje; programos peržiūroje tą patį daro portal/viewer.js)
@@ -604,11 +610,17 @@ export async function reportZip({ name, video, comp, settings }) {
     // Sujungtas iš kelių kadrų (ryškesnis) ir originalus pavienis kadras – įrodymui
     const fused = p.fused && p.fusedN > 1 ? await plateImg(p.fused, `kadrai/numeris_${nr}.jpg`) : '';
     const img = await plateImg(p.img, fused ? `kadrai/numeris_${nr}_originalas.jpg` : `kadrai/numeris_${nr}.jpg`);
-    plateRows.push({ text: p.text, firstT: p.firstT, lastT: p.lastT, at: p.firstAt, reads: p.reads, score: +p.score.toFixed(2), class: p.cls, id: p.id, pos: p.pos, img, fused, fusedFrames: fused ? p.fusedN : 0, vehicle: p.veh || null, vrows: vehicleRows(p.veh) });
+    // Automobilis su aplinka (numerio vieta pažymėta) – didžiausias matytas kadras
+    let photo = '';
+    if (p.photo) {
+      const b = await new Promise((r) => p.photo.toBlob(r, 'image/jpeg', 0.9));
+      if (b) files[(photo = `kadrai/automobilis_${nr}.jpg`)] = new Uint8Array(await b.arrayBuffer());
+    }
+    plateRows.push({ text: p.text, firstT: p.firstT, lastT: p.lastT, at: p.firstAt, reads: p.reads, score: +p.score.toFixed(2), class: p.cls, id: p.id, pos: p.pos, img, photo, fused, fusedFrames: fused ? p.fusedN : 0, vehicle: p.veh || null, vrows: vehicleRows(p.veh) });
   }
   const platesOn = !!settings.plates && !settings.model;
   if (platesOn || plateRows.length)
-    files['numeriai.csv'] = strToU8('\ufeff' + [t('numeris'), t('pirma_s'), t('paskutine_s'), t('data_laikas'), t('perskaityta_kartu'), t('tikrumas'), t('tipas'), t('platuma'), t('ilguma'), t('kadras'), t('originalas'), t('sujungta_kadru'), t('spalva'), t('kebulas'), t('marke'), t('modelis'), t('metai')].join(';') + '\n' + plateRows.map((p) => [p.text, (p.firstT / 1000).toFixed(1), (p.lastT / 1000).toFixed(1), fmtClock(new Date(p.at)), p.reads, p.score, classLabel(p.class), p.pos?.[0] ?? '', p.pos?.[1] ?? '', p.fused || p.img, p.fused ? p.img : '', p.fusedFrames || '', ...p.vrows.map((v) => v.value || v.note)].join(';')).join('\n') + '\n');
+    files['numeriai.csv'] = strToU8('\ufeff' + [t('numeris'), t('pirma_s'), t('paskutine_s'), t('data_laikas'), t('perskaityta_kartu'), t('tikrumas'), t('tipas'), t('platuma'), t('ilguma'), t('kadras'), t('originalas'), t('sujungta_kadru'), t('automobilio_kadras'), t('spalva'), t('kebulas'), t('marke'), t('modelis'), t('metai')].join(';') + '\n' + plateRows.map((p) => [p.text, (p.firstT / 1000).toFixed(1), (p.lastT / 1000).toFixed(1), fmtClock(new Date(p.at)), p.reads, p.score, classLabel(p.class), p.pos?.[0] ?? '', p.pos?.[1] ?? '', p.fused || p.img, p.fused ? p.img : '', p.fusedFrames || '', p.photo, ...p.vrows.map((v) => v.value || v.note)].join(';')).join('\n') + '\n');
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
@@ -648,8 +660,9 @@ ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
 ${platesOn || plateRows.length ? `<section><h2>${esc(t('Valstybiniai numeriai'))}</h2>
-${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Automobilis'))}</th><th>${esc(t('Vieta'))}</th><th>${esc(t('Priartinta'))}</th></tr>
-${plateRows.map((p) => `<tr><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td style="font-size:12.5px">${p.vrows.map((v) => `${esc(v.label)}: ${v.value ? `<b>${esc(v.value)}</b> <span style="color:var(--mut)">${Math.round(v.p * 100)} %</span>` : `<span style="color:var(--mut)">${esc(v.note)}</span>`}`).join('<br>')}</td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td><td>${p.fused ? `<a href="${p.fused}" target="_blank"><img src="${p.fused}" alt=""></a><span style="color:var(--mut);font-size:12px">${esc(t('Sujungta iš {n} kadrų', { n: p.fusedFrames }))}</span>` : ''}${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""${p.fused ? ' style="width:110px;margin-top:6px"' : ''}></a>${p.fused ? `<span style="color:var(--mut);font-size:12px">${esc(t('Originalus kadras'))}</span>` : ''}` : ''}</td></tr>`).join('\n')}
+${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Automobilis'))}</th><th>${esc(t('Vieta'))}</th></tr>
+${plateRows.map((p) => `<tr class="pm"><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td style="font-size:12.5px">${p.vrows.map((v) => `${esc(v.label)}: ${v.value ? `<b>${esc(v.value)}</b> <span style="color:var(--mut)">${Math.round(v.p * 100)} %</span>` : `<span style="color:var(--mut)">${esc(v.note)}</span>`}`).join('<br>')}</td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td></tr>
+<tr class="pr"><td colspan="4"><div class="pv">${p.photo ? `<a href="${p.photo}" target="_blank"><img class="car" src="${p.photo}" alt=""></a>` : ''}<div class="pz">${p.fused ? `<a href="${p.fused}" target="_blank"><img src="${p.fused}" alt=""></a><span style="color:var(--mut);font-size:12px">${esc(t('Sujungta iš {n} kadrų', { n: p.fusedFrames }))}</span>` : ''}${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""${p.fused ? ' style="width:150px;margin-top:8px"' : ''}></a>${p.fused ? `<span style="color:var(--mut);font-size:12px">${esc(t('Originalus kadras'))}</span>` : ''}` : ''}</div></div></td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Numerių neperskaityta.'))}</p>`}
 <p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Numeriai ir automobilio požymiai atpažinti automatiškai ir gali būti netikslūs; neužtikrinti požymiai pažymėti „neatpažinta“. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.'))}</p></section>` : ''}
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">

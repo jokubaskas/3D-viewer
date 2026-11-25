@@ -85,6 +85,25 @@ function near(a, b) {
   return prev[n];
 }
 
+/**
+ * Automobilio nuotrauka ataskaitai: automobilis su aplinka (+35 %) iš pilnos raiškos kadro, numerio vieta pažymėta.
+ * Imama didžiausia (arčiausiai matyta) – ryškiausia.
+ */
+function vehiclePhoto(native, vbox, pbox) {
+  const [x1, y1, x2, y2] = vbox, pw = (x2 - x1) * 0.35, ph = (y2 - y1) * 0.35;
+  const x = Math.max(0, x1 - pw), y = Math.max(0, y1 - ph);
+  const w = Math.min(native.width, x2 + pw) - x, h = Math.min(native.height, y2 + ph) - y;
+  const { c, k } = crop(native, x, y, w, h, 960);
+  if (pbox) {
+    const g = c.getContext('2d');
+    g.strokeStyle = '#ffd23f';
+    g.lineWidth = Math.max(2, c.width / 240);
+    const m = g.lineWidth * 1.5;
+    g.strokeRect((pbox[0] - x) * k - m, (pbox[1] - y) * k - m, (pbox[2] - pbox[0]) * k + 2 * m, (pbox[3] - pbox[1]) * k + 2 * m);
+  }
+  return c;
+}
+
 const blobOf = (c, q = 0.97) => new Promise((r) => c.toBlob(r, 'image/jpeg', q));
 const pngOf = (c) => new Promise((r) => c.toBlob(r, 'image/png'));
 
@@ -156,7 +175,7 @@ export class PlateBook {
         if (!best) return;
         const box = best.box.map((v, n) => (n % 2 ? p.y : p.x) + v / p.k);
         const rec = this.add(best.text, best.score, box, p.d, native, at, best.chars);
-        this.keepVehicle(rec, p);
+        this.keepVehicle(rec, p, native);
       });
       this.error = '';
       this.fuse(ai);
@@ -175,8 +194,12 @@ export class PlateBook {
    * AI paslaugoje – mažiau triukšmo ir suspaudimo artefaktų, numeris įskaitomesnis (tik tikri pikseliai).
    */
   /** Automobilio iškarpos požymiams (spalva, markė…): laikomos kelios didžiausios. */
-  keepVehicle(rec, p) {
+  keepVehicle(rec, p, native) {
     const side = Math.min(p.d.box[2] - p.d.box[0], p.d.box[3] - p.d.box[1]);
+    if (!rec.photo || side > (rec.photoSide || 0) * 1.1) {
+      rec.photo = vehiclePhoto(native, p.d.box, rec.box);
+      rec.photoSide = side;
+    }
     const v = (rec.vcrops ||= []);
     v.push({ c: p.c, side });
     v.sort((a, b) => b.side - a.side);
