@@ -396,10 +396,22 @@ def test_min_point_distance_free_space(tmp_path, monkeypatch):
     """Pakankamai RAM – laisvos erdvės palaikymas įjungiamas net kai taškai retinami (stiklo fasadams)."""
     tree = types.SimpleNamespace(openmvs=str(tmp_path), filtered_point_cloud=str(tmp_path / "x.ply"))
     monkeypatch.setattr(atea_mesh, "_ply_vertices", lambda p: 69_200_000)
+    monkeypatch.setattr(atea_mesh, "_mem_total", lambda: 50.98e9)
     monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 49.3e9)
     dist, low, fss = atea_mesh._min_point_distance(tree)
-    assert fss and low and 3.0 < dist < 3.6
-    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 16e9)
+    assert fss and low and dist == 3.5
+    # Laisva RAM kiekvieną kartą kita – rezultatas tas pats (anksčiau 3,3 / 3,5 px)
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 46.0e9)
+    assert atea_mesh._min_point_distance(tree) == (3.5, True, True)
+    # Nedidelis tankaus debesies skirtumas – tas pats
+    monkeypatch.setattr(atea_mesh, "_ply_vertices", lambda p: 69_700_000)
+    assert atea_mesh._min_point_distance(tree)[0] == 3.5
+    # Kiti procesai užėmė RAM – saugiklis retina daugiau
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 14e9)
+    d, _, f = atea_mesh._min_point_distance(tree)
+    assert d > 3.5 and f is False
+    monkeypatch.setattr(atea_mesh, "_mem_total", lambda: 16e9)
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 15e9)
     assert atea_mesh._min_point_distance(tree)[2] is False
 
 

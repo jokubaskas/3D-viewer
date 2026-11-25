@@ -9,6 +9,8 @@
 #   unseen  – po texrecon: sienelės, kurių nematė nė viena nuotrauka (vienoda pilka), nudažomos pagal taškų debesį
 #   mesh25d – ODM 2.5D tinklas (ortofotografijai): dem2mesh kartais nulūžta (Segmentation fault) sujungdamas dalis – tada
 #             bandoma dar 2 kartus su 2× ir 4× retesniu DSM, o ne nutraukiamas visas apdorojimas
+#   seed    – OpenSfM atsitiktinių skaičių generatoriai (Python random, numpy) pradedami nuo pastovios reikšmės: be to
+#             RANSAC trianguliuojant ir kitur kas kartą kitoks – to paties projekto kameros, taškai ir modelis skiriasi
 #   fuse    – parinktis --pc-fuse-views: kiek nuotraukų turi patvirtinti tašką tankinant (numatyta 2, kaip ODM;
 #             3 – mažiau atspindžių triukšmo stikle, bet dingsta ir blizgių automobilių stogų taškai)
 import sys
@@ -19,6 +21,7 @@ MESHING = ROOT + "/stages/odm_meshing.py"
 OPENMVS = ROOT + "/stages/openmvs.py"
 SKYFILTER = ROOT + "/opendm/skyremoval/skyfilter.py"
 MVSTEX = ROOT + "/stages/mvstex.py"
+OPENSFM_INIT = ROOT + "/SuperBuild/install/bin/opensfm/opensfm/__init__.py"
 
 GROUPS = {
   'mesh': ('atea_mesh.openmvs_mesh', {
@@ -95,6 +98,18 @@ GROUPS = {
          "                  dsm_resolution *= 2.0\n"
          "                  radius_steps = [type(r)(float(r) * 2.0) for r in radius_steps]\n"
          "                  log.ODM_WARNING('Atea: 2.5D tinklas nepavyko (%s) - kartojama su retesniu DSM (%s m)' % (str(e), dsm_resolution))\n"),
+    ],
+  }),
+  'seed': ('Atea: pastovus', {
+    OPENSFM_INIT: [
+        ("from opensfm import pysfm\n",
+         "from opensfm import pysfm\n"
+         "\n"
+         "# Atea: pastovus atsitiktinių skaičių pradinis taškas – tas pats projektas kiekvieną kartą duoda tas pačias kameras\n"
+         "import random as _atea_random\n"
+         "import numpy as _atea_np\n"
+         "_atea_random.seed(0)\n"
+         "_atea_np.random.seed(0)\n"),
     ],
   }),
   'fuse': ('pc_fuse_views', {
