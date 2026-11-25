@@ -1721,4 +1721,6 @@ export const EN = {
   "modelis": "model",
   "metai": "year",
   "Numeriai ir automobilio požymiai atpažinti automatiškai ir gali būti netikslūs; neužtikrinti požymiai pažymėti „neatpažinta“. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.": "Plates and vehicle attributes are recognised automatically and may be inaccurate; uncertain attributes are marked “not recognised”. The fused image is an average of several real video frames (nothing is synthesised); the original frame is shown alongside. They are personal data – store and share them only in line with GDPR.",
+  "Automobilis ir priartintas numeris": "Vehicle and zoomed plate",
+  "automobilio_kadras": "vehicle_frame",
 };
