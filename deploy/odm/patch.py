@@ -7,6 +7,8 @@
 #   sky     – dangaus kaukė (--sky-removal) išplečiama į pastato pusę ~2 % nuotraukos: ODM ją skaičiuoja 384×384 px
 #             vaizde ir ištempia, todėl pastatų kraštai prieš dangų (stogo parapetas) būdavo „nukandami“ – dantytas kraštas
 #   unseen  – po texrecon: sienelės, kurių nematė nė viena nuotrauka (vienoda pilka), nudažomos pagal taškų debesį
+#   mesh25d – ODM 2.5D tinklas (ortofotografijai): dem2mesh kartais nulūžta (Segmentation fault) sujungdamas dalis – tada
+#             bandoma dar 2 kartus su 2× ir 4× retesniu DSM, o ne nutraukiamas visas apdorojimas
 #   fuse    – parinktis --pc-fuse-views: kiek nuotraukų turi patvirtinti tašką tankinant (numatyta 2, kaip ODM;
 #             3 – mažiau atspindžių triukšmo stikle, bet dingsta ir blizgių automobilių stogų taškai)
 import sys
@@ -75,6 +77,24 @@ GROUPS = {
          "                        log.ODM_WARNING('Atea: nematytų sienelių dažymas praleistas (%s)' % str(e))\n"
          "\n"
          "                if r['primary'] and (not r['nadir'] or args.skip_3dmodel):\n                    # GlTF?\n"),
+    ],
+  }),
+  'mesh25d': ('Atea: 2.5D', {
+    MESHING: [
+        ("              mesh.create_25dmesh(tree.filtered_point_cloud, tree.odm_25dmesh,\n",
+         "              # Atea: 2.5D tinklas – nepavykus (dem2mesh lūžta) bandoma su retesniu DSM, apdorojimas nenutraukiamas\n"
+         "              for atea_try in range(3):\n"
+         "                try:\n"
+         "                  mesh.create_25dmesh(tree.filtered_point_cloud, tree.odm_25dmesh,\n"),
+        ("                    max_tiles=None if reconstruction.has_geotagged_photos() else math.ceil(len(reconstruction.photos) / 2))\n",
+         "                    max_tiles=None if reconstruction.has_geotagged_photos() else math.ceil(len(reconstruction.photos) / 2))\n"
+         "                  break\n"
+         "                except Exception as e:\n"
+         "                  if atea_try == 2:\n"
+         "                      raise\n"
+         "                  dsm_resolution *= 2.0\n"
+         "                  radius_steps = [type(r)(float(r) * 2.0) for r in radius_steps]\n"
+         "                  log.ODM_WARNING('Atea: 2.5D tinklas nepavyko (%s) - kartojama su retesniu DSM (%s m)' % (str(e), dsm_resolution))\n"),
     ],
   }),
   'fuse': ('pc_fuse_views', {
