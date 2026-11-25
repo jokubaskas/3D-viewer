@@ -506,7 +506,12 @@ def _splat_status(uuid):
         st = json.load(open(os.path.join(DATA, uuid, "status.json")))
     except (OSError, ValueError):
         return None
-    if st.get("state") in ("preparing", "training", "exporting") and not JOBS.running(uuid, "splat"):
+    if st.get("state") == "waiting":
+        with WAITERS_LOCK:
+            if uuid not in WAITERS:  # paslauga perkrauta – laukimas nutrūko
+                st["state"] = "cancelled"
+                st["message"] = "Laukimas nutrūko (paslauga perkrauta)"
+    elif st.get("state") in ("preparing", "training", "exporting") and not JOBS.running(uuid, "splat"):
         if JOBS.queued(uuid, "splat"):
             st["state"] = "queued"
         else:
@@ -585,11 +590,81 @@ def jobs():
 class TrainReq(BaseModel):
     uuid: str
     steps: int = SPLAT_STEPS_HIGH
+    wait_odm: bool = False  # ODM dar dirba: pradėti, kai tik baigtas 3D tinklas (toliau ODM GPU nenaudoja)
+
+
+# Ankstyvas mokymo pradėjimas: ODM po 3D tinklo dar ~10 min. tekstūruoja, georeferencijuoja, kuria DEM ir
+# ortofotografiją – tik procesoriumi. Kameros (opensfm/undistorted) ir taškai (odm_filterpoints) tuo metu jau
+# galutiniai, todėl realistiškas vaizdas mokomas lygiagrečiai, o ne po viso ODM apdorojimo.
+WAIT_POLL = 15        # s
+WAIT_MAX = 8 * 3600   # s – ODM taip ir nepasiekė 3D tinklo (nutrūko) – laukimas nutraukiamas
+WAITERS = {}          # uuid → threading.Event (nustačius – laukimas nutraukiamas)
+WAITERS_LOCK = threading.Lock()
+
+
+def _odm_ready(task, since):
+    """ODM baigė 3D tinklo etapą šiame paleidime (2.5D tinklas – paskutinis to etapo failas)."""
+    need = (os.path.join(task, "opensfm", "undistorted", "reconstruction.json"),
+            os.path.join(task, "odm_filterpoints", "point_cloud.ply"))
+    mark = os.path.join(task, "odm_meshing", "odm_25dmesh.ply")
+    try:
+        return all(os.path.isfile(f) for f in need) and os.path.getmtime(mark) >= since
+    except OSError:
+        return False
+
+
+def _wait_odm(uuid, steps, since, stop):
+    task = _source_dir(uuid)
+    while not stop.wait(WAIT_POLL):
+        if os.path.exists(os.path.join(DATA, uuid, "cancel")):
+            break
+        if _odm_ready(task, since):
+            with WAITERS_LOCK:
+                if WAITERS.get(uuid) is not stop:
+                    return
+                WAITERS.pop(uuid, None)
+            _write_splat_status(uuid, state="preparing", message="Eilėje (ODM baigė 3D tinklą)")
+            JOBS.add("splat", uuid, {"steps": steps, "auto": True})
+            return
+        if time.time() - since > WAIT_MAX:
+            _write_splat_status(uuid, state="cancelled", message="ODM nepasiekė 3D tinklo etapo")
+            break
+    with WAITERS_LOCK:
+        if WAITERS.get(uuid) is stop:
+            WAITERS.pop(uuid, None)
+
+
+def _stop_waiter(uuid):
+    with WAITERS_LOCK:
+        ev = WAITERS.pop(uuid, None)
+    if ev is not None:
+        ev.set()
+    return ev is not None
 
 
 @app.post("/train")
 def train(r: TrainReq):
     _check(r.uuid)
+    if r.wait_odm:
+        with WAITERS_LOCK:
+            pending = r.uuid in WAITERS
+        if pending or JOBS.running(r.uuid, "splat") or JOBS.queued(r.uuid, "splat"):
+            return _splat_status(r.uuid)
+        if not os.path.isdir(_source_dir(r.uuid)):
+            raise HTTPException(404, "Projektas nerastas")
+        since = time.time()
+        try:  # ankstesnis rezultatas lieka matomas, kol bus naujas; tik ankstesnio atšaukimo žymė pašalinama
+            os.remove(os.path.join(DATA, r.uuid, "cancel"))
+        except OSError:
+            pass
+        _write_splat_status(r.uuid, state="waiting", step=0, steps=r.steps, message="Laukiama, kol ODM baigs 3D tinklą",
+                            started=since, auto=True)
+        stop = threading.Event()
+        with WAITERS_LOCK:
+            WAITERS[r.uuid] = stop
+        threading.Thread(target=_wait_odm, args=(r.uuid, r.steps, since, stop), daemon=True).start()
+        return _splat_status(r.uuid)
+    _stop_waiter(r.uuid)  # ODM baigė – laukiantis ankstyvas paleidimas nebereikalingas
     task = _source_dir(r.uuid)
     if not os.path.isfile(os.path.join(task, "opensfm", "undistorted", "reconstruction.json")):
         raise HTTPException(400, "Projekte nėra ištiesintų nuotraukų ir kamerų (ar projektas baigtas?)")
@@ -612,6 +687,7 @@ def cancel(r: UuidReq):
     out = os.path.join(DATA, r.uuid)
     if os.path.isdir(out):
         open(os.path.join(out, "cancel"), "w").close()
+    _stop_waiter(r.uuid)
     JOBS.drop(r.uuid, "splat")
     JOBS.stop(r.uuid, "splat")
     if os.path.isfile(os.path.join(out, "status.json")):
@@ -626,6 +702,7 @@ def delete(r: UuidReq):
     _check(r.uuid)
     if JOBS.running(r.uuid, "splat"):
         raise HTTPException(409, "Pirma atšaukite mokymą")
+    _stop_waiter(r.uuid)
     JOBS.drop(r.uuid, "splat")
     shutil.rmtree(os.path.join(DATA, r.uuid), ignore_errors=True)
     return {"ok": True}

@@ -32,15 +32,23 @@ def write_status(out_dir, **kw):
     os.replace(tmp, p)
 
 
+_SSIM_W = {}
+
+
 def ssim(img1, img2, window=11, sigma=1.5):
-    """SSIM (H×W×3, 0..1) – kaip 3DGS nuostolių funkcijoje."""
+    """SSIM (H×W×3, 0..1) – kaip 3DGS nuostolių funkcijoje. Gauso langas atskiriamas (eilutės, tada stulpeliai) ir visi
+    penki vidurkiai skaičiuojami vienu kartu – rezultatas tas pats kaip su 11×11 branduoliu, tik ~5× mažiau skaičiavimų."""
     x, y = img1.permute(2, 0, 1)[None], img2.permute(2, 0, 1)[None]
-    g = torch.exp(-((torch.arange(window, device=x.device) - window // 2) ** 2) / (2 * sigma ** 2))
-    g = (g / g.sum())[:, None] @ (g / g.sum())[None, :]
-    w = g.expand(3, 1, window, window).contiguous()
-    f = lambda t: F.conv2d(t, w, padding=window // 2, groups=3)
-    mx, my = f(x), f(y)
-    sx, sy, sxy = f(x * x) - mx ** 2, f(y * y) - my ** 2, f(x * y) - mx * my
+    key = (x.device, x.dtype, window, sigma)
+    if key not in _SSIM_W:
+        g = torch.exp(-((torch.arange(window, device=x.device, dtype=x.dtype) - window // 2) ** 2) / (2 * sigma ** 2))
+        g = g / g.sum()
+        _SSIM_W[key] = (g.view(1, 1, 1, window).repeat(15, 1, 1, 1), g.view(1, 1, window, 1).repeat(15, 1, 1, 1))
+    wh, wv = _SSIM_W[key]
+    t = torch.cat([x, y, x * x, y * y, x * y], 1)
+    t = F.conv2d(F.conv2d(t, wh, padding=(0, window // 2), groups=15), wv, padding=(window // 2, 0), groups=15)
+    mx, my, exx, eyy, exy = t.split(3, 1)
+    sx, sy, sxy = exx - mx ** 2, eyy - my ** 2, exy - mx * my
     c1, c2 = 0.01 ** 2, 0.03 ** 2
     return (((2 * mx * my + c1) * (2 * sxy + c2)) / ((mx ** 2 + my ** 2 + c1) * (sx + sy + c2))).mean()
 
@@ -64,6 +72,9 @@ class Images:
             K[1] *= sy
             self.cache[i] = (torch.from_numpy(np.asarray(im).copy()), K)
         return self.cache[i]
+
+
+GPU_IMAGES_SHARE = 0.15  # nuotraukos laikomos GPU, jei užima mažiau nei tokią GPU atminties dalį
 
 
 def main():
@@ -135,6 +146,17 @@ def main():
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 4)) as ex:
         list(ex.map(imgs.get, range(len(cams))))
+    # Nuotraukos – vaizdo plokštės atmintyje, jei jos pakanka (nereikia kiekviename žingsnyje kopijuoti ~13 MB per
+    # PCIe); kitaip – fiksuotoje (pinned) RAM, kad kopijavimas vyktų lygiagrečiai su skaičiavimu
+    if dev.type == "cuda":
+        img_bytes = sum(v[0].numel() for v in imgs.cache.values())
+        total = torch.cuda.get_device_properties(dev).total_memory
+        on_gpu = img_bytes < GPU_IMAGES_SHARE * total
+        for k, (t, Kc) in list(imgs.cache.items()):
+            imgs.cache[k] = (t.to(dev) if on_gpu else t.pin_memory(), Kc)
+        print("Nuotraukos (%.1f GB) laikomos %s; GPU atmintis %.1f GB" % (img_bytes / 1e9, "GPU" if on_gpu else "RAM",
+              total / 1e9), flush=True)
+    viewmats = torch.tensor(np.stack([c["viewmat"] for c in cams]), device=dev, dtype=torch.float32)
 
     # Gylio priežiūra: ODM tankus taškų debesis projektuojamas į kiekvieną nuotrauką; langelyje (DEPTH_CELL px)
     # paliekamas artimiausias taškas. Splatai baudžiami, jei jų gylis neatitinka – nebelieka „debesėlių“ ore ir
@@ -179,7 +201,7 @@ def main():
             Kc[:2] *= 0.5
             Kc[:2, 2] -= 0.25  # pikselio centras: (c + 0.5) / 2 − 0.5
         H, W = gt.shape[:2]
-        viewmat = torch.tensor(cams[i]["viewmat"], device=dev, dtype=torch.float32)[None]
+        viewmat = viewmats[i][None]
         Kt = torch.tensor(Kc, device=dev, dtype=torch.float32)[None]
         colors = torch.cat([params["sh0"], params["shN"]], 1)
         renders, alphas, info = rasterization(

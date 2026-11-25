@@ -100,7 +100,7 @@ export function createOdmUI(app) {
       splat.jobs = {};
     }
   }
-  const splatRunning = (j) => j && ['queued', 'preparing', 'training', 'exporting'].includes(j.state);
+  const splatRunning = (j) => j && ['waiting', 'queued', 'preparing', 'training', 'exporting'].includes(j.state);
   const splatBusy = (j) => splatRunning(j);
   function splatRow(p) {
     if (!splat.available || p.statusCode !== STATUS.COMPLETED || p.preset === 'orthoOnly') return '';
@@ -108,11 +108,15 @@ export function createOdmUI(app) {
     if (splatRunning(j)) {
       const pct = j.steps ? Math.round((100 * (j.step || 0)) / j.steps) : 0;
       const eta = j.eta ? ` · ${t('liko ~{m} min.', { m: Math.max(1, Math.round(j.eta / 60)) })}` : '';
-      return `<div class="odm-splat small"><span>${t('Realistiškas vaizdas: {s}', { s: esc(t(j.state === 'training' ? 'mokoma' : j.state === 'exporting' ? 'įrašoma' : j.state === 'queued' ? 'eilėje' : 'ruošiama')) })} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
+      return `<div class="odm-splat small"><span>${t('Realistiškas vaizdas: {s}', { s: esc(t(j.state === 'training' ? 'mokoma' : j.state === 'exporting' ? 'įrašoma' : j.state === 'queued' ? 'eilėje' : j.state === 'waiting' ? 'laukiama ODM' : 'ruošiama')) })} ${pct} %${eta}</span><div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div><button class="btn btn-sm btn-ghost" data-pact="splat-cancel">${t('Atšaukti')}</button></div>`;
     }
     if (j?.state === 'error') return `<div class="odm-splat small bad">${t('Realistiškas vaizdas nepavyko: {e}', { e: esc(j.message || '') })} <button class="btn btn-sm btn-ghost" data-pact="splat-train">${t('Bandyti dar kartą')}</button></div>`;
     if (j?.has_result) return `<div class="odm-splat small muted">${t('Realistiškas vaizdas paruoštas – rodomas kartu su 3D modeliu')}${j.splats ? ` (${t('{n} splatų', { n: nf(j.splats, 0) })})` : ''}</div>`;
     return '';
+  }
+  /** Automatinis paleidimas (be klausimo). wait – ODM dar dirba: serveris pradės, kai tik bus baigtas 3D tinklas. */
+  async function splatStart(p, wait = false) {
+    splat.jobs[p.uuid] = await splatApi('train', wait ? { uuid: p.uuid, wait_odm: true } : { uuid: p.uuid });
   }
   async function splatTrain(p) {
     if (!confirm(t('Apmokyti realistišką vaizdą projektui „{n}“ dar kartą? Užtrunka apie 30–90 min., vaizdo plokštė tuo metu užimta.', { n: p.name }))) return;
@@ -930,11 +934,26 @@ export function createOdmUI(app) {
           p._polledFailed = true;
           p.diag = await diagnose(new NodeODM(serverFor(p), server.token), p.uuid, i.options);
         }
+        // ODM aukščiausia kokybė – realistiškas vaizdas (Gaussian Splatting) iš tų pačių kamerų. Užsakomas jau
+        // apdorojant: serveris pradeda mokyti, kai tik ODM baigia 3D tinklą (likę ODM etapai GPU nenaudoja) –
+        // ~10 min. anksčiau nei po viso apdorojimo
+        if (p.preset === 'odm' && splat.available && p.statusCode === STATUS.RUNNING && !p._splatEarly) {
+          p._splatEarly = true;
+          splatStart(p, true).catch(() => {});
+        }
         if (prev !== STATUS.COMPLETED && p.statusCode === STATUS.COMPLETED) {
           app.toast(t('Modelis „{n}“ paruoštas!', { n: p.name }), 'info', 8000);
           notify(t('Modelis „{n}“ paruoštas', { n: p.name }));
-          // ODM aukščiausia kokybė – realistiškas vaizdas (Gaussian Splatting) iš tų pačių kamerų paleidžiamas iškart
-          if (p.preset === 'odm' && splat.available && !splat.jobs[p.uuid]) splatTrain(p).catch((e) => app.toast(t('Realistiškas vaizdas nepaleistas: {e}', { e: e.message }), 'error', 7000));
+          // Jei šiame paleidime mokymas dar neužsakytas (ar laukimas nutrūko) – dabar
+          const j = splat.jobs[p.uuid];
+          const runStart = Date.now() / 1000 - (p.processingTime || 0) / 1000 - 120;
+          const fresh = j && (j.started || 0) >= runStart && (splatRunning(j) || j.state === 'done');
+          if (p.preset === 'odm' && splat.available && !fresh) splatStart(p).catch((e) => app.toast(t('Realistiškas vaizdas nepaleistas: {e}', { e: e.message }), 'error', 7000));
+        }
+        if (p.statusCode !== STATUS.RUNNING && p.statusCode !== STATUS.QUEUED) {
+          p._splatEarly = false;
+          // ODM nepavyko / atšaukta – laukiantis realistiško vaizdo užsakymas nebereikalingas
+          if ((p.statusCode === STATUS.FAILED || p.statusCode === STATUS.CANCELED) && splat.jobs[p.uuid]?.state === 'waiting') splatApi('cancel', { uuid: p.uuid }).catch(() => {});
         }
         if (p.statusCode === STATUS.QUEUED || p.statusCode === STATUS.RUNNING) active = true;
         p.pollError = null;

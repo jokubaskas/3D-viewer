@@ -1654,6 +1654,7 @@ export const EN = {
   '3D variklis: {g}': '3D engine: {g}',
   'eilėje: {n}': 'queued: {n}',
   'eilėje': 'queued',
+  'laukiama ODM': 'waiting for ODM',
   '3D variklis nepasiekiamas – „Greitas“ ir „Aukšta kokybė“ veikia tik kompiuteryje su NVIDIA vaizdo plokšte': '3D engine unavailable – “Fast” and “High quality” only work on a computer with an NVIDIA graphics card',
   '3D režimams reikia šios programos serverio (adresas …/odm/). Kitam NodeODM serveriui galima tik „Tik ortofoto“.': '3D modes need this application’s server (address …/odm/). With another NodeODM server only “Orthophoto only” is available.',
   '3D variklis nepasiekiamas – jis veikia tik kompiuteryje su NVIDIA vaizdo plokšte. Patikrinkite aplanke deploy: docker compose ps engine ir docker compose logs --tail 50 engine': '3D engine unavailable – it only runs on a computer with an NVIDIA graphics card. In the deploy folder check: docker compose ps engine and docker compose logs --tail 50 engine',
