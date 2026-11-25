@@ -732,6 +732,86 @@ async def vehicle(images: list[UploadFile] = File(...), kind: str = Form("car"))
     return await run_in_threadpool(vh.describe, imgs, kind)
 
 
+# ---------------------------------------------------------------------------
+# Automobilių pavyzdžių galerija (tik administratoriui – /ai/gallery tikrinamas portale, ADMIN_ONLY)
+# ---------------------------------------------------------------------------
+GALLERY_ID = __import__("re").compile(r"^[0-9a-f]{16}$")
+
+
+@app.get("/gallery")
+def gallery_list():
+    import vehicle as vh
+
+    vh.GALLERY.load()
+    items = list(reversed(vh.GALLERY.items or []))
+    counts: dict = {}
+    for it in items:
+        k = f"{it.get('make') or '?'} {it.get('model') or ''}".strip()
+        counts[k] = counts.get(k, 0) + 1
+    return {"total": len(items), "counts": counts, "items": items[:500]}
+
+
+@app.get("/gallery/options")
+def gallery_options():
+    """Markės, modeliai, spalvos ir kėbulai patvirtinimo formai."""
+    import vehicle as vh
+
+    return {"cars": vh.MAKES, "heavy": vh.HEAVY, "colors": vh.COLORS, "bodies": vh.BODIES, "source": os.path.basename(vh.DB_SOURCE)}
+
+
+@app.post("/gallery")
+async def gallery_add(
+    images: list[UploadFile] = File(...),
+    make: str = Form(""),
+    model: str = Form(""),
+    color: str = Form(""),
+    body: str = Form(""),
+    kind: str = Form("car"),
+    plate: str = Form(""),
+):
+    """Patvirtintas automobilis → pavyzdžiai (kelios to paties automobilio iškarpos)."""
+    import uuid
+
+    import vehicle as vh
+
+    clean = lambda v, n=60: " ".join(str(v).split())[:n] or None
+    meta = {"make": clean(make), "model": clean(model), "color": clean(color, 30), "body": clean(body, 30),
+            "kind": kind if kind in ("car", "truck", "bus", "motorcycle") else "car", "plate": clean(plate, 12), "group": uuid.uuid4().hex[:16]}
+    if meta["color"] and meta["color"] not in vh.COLORS:
+        raise HTTPException(400, "Nežinoma spalva")
+    if meta["body"] and meta["body"] not in vh.BODIES:
+        raise HTTPException(400, "Nežinomas kėbulas")
+    if not any(meta[k] for k in vh.FIELDS):
+        raise HTTPException(400, "Nurodykite bent markę, spalvą ar kėbulą")
+    imgs = [read_image(await f.read()) for f in images[:6]]
+    if not imgs:
+        raise HTTPException(400, "Nėra vaizdų")
+    ids = await run_in_threadpool(vh.GALLERY.add, imgs, meta)
+    return {"ok": True, "group": meta["group"], "ids": ids, "total": len(vh.GALLERY.items)}
+
+
+@app.post("/gallery/delete")
+async def gallery_delete(ids: str = Form(...)):
+    """Pavyzdžių (arba visų grupės – vieno patvirtinimo) pašalinimas; ids – kableliais."""
+    import vehicle as vh
+
+    want = {i for i in ids.split(",") if GALLERY_ID.match(i)}
+    n = await run_in_threadpool(vh.GALLERY.delete, want)
+    return {"ok": True, "deleted": n}
+
+
+@app.get("/gallery/img/{gid}.jpg")
+def gallery_img(gid: str):
+    import vehicle as vh
+
+    if not GALLERY_ID.match(gid):
+        raise HTTPException(404)
+    path = os.path.join(vh.GALLERY.root, f"{gid}.jpg")
+    if not os.path.isfile(path):
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.post("/plates")
 async def plates(request: Request, images: list[UploadFile] = File(...)):
     """Valstybinių numerių atpažinimas transporto priemonių iškarpose (naršyklė siunčia iškarpas iš kadro).

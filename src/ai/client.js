@@ -94,6 +94,33 @@ export class AiClient {
     return this._req('vehicle', { method: 'POST', body: fd, signal });
   }
 
+  // --- Automobilių pavyzdžių galerija (tik administratoriui; serveryje – /ai/gallery ADMIN_ONLY)
+  galleryList() {
+    return this._req('gallery');
+  }
+
+  galleryOptions() {
+    return this._req('gallery/options');
+  }
+
+  /** @param {Blob[]} blobs – to paties automobilio iškarpos; meta – {make, model, color, body, kind, plate} */
+  galleryAdd(blobs, meta) {
+    const fd = new FormData();
+    blobs.forEach((b, i) => fd.append('images', b, `auto_${i}.jpg`));
+    for (const [k, v] of Object.entries(meta)) if (v) fd.append(k, v);
+    return this._req('gallery', { method: 'POST', body: fd });
+  }
+
+  galleryDelete(ids) {
+    const fd = new FormData();
+    fd.append('ids', ids.join(','));
+    return this._req('gallery/delete', { method: 'POST', body: fd });
+  }
+
+  galleryImg(id) {
+    return this.url(`gallery/img/${id}.jpg`);
+  }
+
   /**
    * GeoTIFF perskaičiavimas į LKS-94 (EPSG:3346) AI paslaugoje (GDAL).
    * @returns {Promise<Blob>}
