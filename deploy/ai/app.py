@@ -5,6 +5,7 @@ Veikia jūsų serveryje / kompiuteryje, be interneto ir be mokamų paslaugų:
                Modelis: RF-DETR (Roboflow, Apache 2.0), apmokytas su COCO.
   * /plates  – valstybinių numerių atpažinimas transporto iškarpose (fast-alpr, MIT);
                /plates/fuse – kelių kadrų sujungimas į ryškesnį numerio vaizdą.
+  * /vehicle – automobilio spalva, kėbulas, markė, modelis (SigLIP 2, Apache 2.0).
   * /segment – objekto kontūras vienu spustelėjimu (pvz. krūvos kraštas).
                Modelis: MobileSAM (Apache 2.0) – lengva Segment Anything versija.
 
@@ -717,6 +718,18 @@ async def plates_fuse(images: list[UploadFile] = File(...), inner: str = Form("[
     if not imgs:
         raise HTTPException(400, "Nėra vaizdų")
     return await run_in_threadpool(_fuse_plates, imgs, inners)
+
+
+@app.post("/vehicle")
+async def vehicle(images: list[UploadFile] = File(...), kind: str = Form("car")):
+    """Automobilio požymiai (spalva, kėbulas, markė, modelis) iš kelių to paties automobilio iškarpų.
+    Neužtikrinti požymiai grąžinami kaip value=null („neatpažinta“)."""
+    import vehicle as vh
+
+    imgs = [read_image(await f.read()) for f in images[:8]]
+    if not imgs:
+        raise HTTPException(400, "Nėra vaizdų")
+    return await run_in_threadpool(vh.describe, imgs, kind)
 
 
 @app.post("/plates")

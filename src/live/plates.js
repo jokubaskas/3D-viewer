@@ -2,12 +2,42 @@
 // vietinė AI paslauga (/plates, fast-alpr) → numerių balsavimas per kelis kadrus → priartintas numeris ant vaizdo
 // ir sąrašas ataskaitai. Duomenys laikomi tik naršyklės atmintyje ir įrašo ataskaitoje (asmens duomenys – BDAR).
 
+import { t, locale } from '../i18n.js';
+
 export const PLATE_VEHICLES = ['car', 'truck', 'bus', 'motorcycle'];
+
+/**
+ * Automobilio požymis tekstu: atpažintas – reikšmė, neatpažintas – null.
+ * @param {object} a – {value, lt?, p, small?}
+ */
+export const attrValue = (a) => (a?.value ? (locale().startsWith('lt') && a.lt ? a.lt : a.value) : null);
+
+/** Trumpas aprašas ekrane: tik atpažinti požymiai („balta · Volkswagen Golf“). */
+export function vehicleShort(v) {
+  if (!v) return '';
+  const mk = attrValue(v.make), md = attrValue(v.model);
+  return [attrValue(v.color), mk ? `${mk}${md ? ` ${md}` : ''}` : attrValue(v.body)].filter(Boolean).join(' · ');
+}
+
+/** Ataskaitai: kiekvienas požymis arba „neatpažinta“ (su priežastimi), kad neklaidintų. */
+export function vehicleRows(v) {
+  const nr = (a) => (a?.small ? t('neatpažinta (per mažas vaizdas)') : t('neatpažinta'));
+  const row = (label, a) => ({ label, value: attrValue(a), p: a?.value ? a.p : null, note: a?.value ? '' : nr(a) });
+  return [
+    row(t('Spalva'), v?.color),
+    row(t('Kėbulas'), v?.body),
+    row(t('Markė'), v?.make),
+    row(t('Modelis'), v?.model),
+    { label: t('Metai'), value: null, p: null, note: t('iš vaizdo nenustatoma') },
+  ];
+}
 const MIN_SIDE = 40; // mažesnės (pilnos raiškos px) transporto priemonės – numeris neįskaitomas, nesiunčiama
 const MAX_CROPS = 6; // vienoje užklausoje – didžiausios transporto priemonės
 const PAD = 0.15; // iškarpa – rėmelis + 15 %
 const INTERVAL = 900; // ms tarp užklausų
 const INTERVAL_HOT = 450; // kai matomas numeris – dažniau (daugiau kadrų sujungimui)
+const VEH_CROPS = 4; // automobilio iškarpos požymiams
+const VEH_GAP = 2000; // ms tarp požymių užklausų
 const MAX_READS = 40; // kiek paskutinių perskaitymų laikoma balsavimui
 const MAX_SHOTS = 10; // kiek paskutinių numerio kadrų laikoma sujungimui
 const FUSE_MIN = 3; // sujungiama, kai yra bent tiek kadrų
@@ -82,6 +112,8 @@ export class PlateBook {
     this.error = '';
     this.fuseBusy = false;
     this.lastFuse = -Infinity;
+    this.vehBusy = false;
+    this.lastVeh = -Infinity;
   }
 
   due(now = performance.now()) {
@@ -123,10 +155,12 @@ export class PlateBook {
         const best = (list || []).filter((r) => TEXT_RE.test(r.text || '') && r.score >= MIN_SCORE).sort((a, b) => b.det * b.score - a.det * a.score)[0];
         if (!best) return;
         const box = best.box.map((v, n) => (n % 2 ? p.y : p.x) + v / p.k);
-        this.add(best.text, best.score, box, p.d, native, at, best.chars);
+        const rec = this.add(best.text, best.score, box, p.d, native, at, best.chars);
+        this.keepVehicle(rec, p);
       });
       this.error = '';
       this.fuse(ai);
+      this.describe(ai);
       return true;
     } catch (e) {
       this.error = e.message;
@@ -140,6 +174,38 @@ export class PlateBook {
    * Kelių kadrų sujungimas: to paties numerio iškarpos iš skirtingų vaizdo kadrų sulygiuojamos ir suvidurkinamos
    * AI paslaugoje – mažiau triukšmo ir suspaudimo artefaktų, numeris įskaitomesnis (tik tikri pikseliai).
    */
+  /** Automobilio iškarpos požymiams (spalva, markė…): laikomos kelios didžiausios. */
+  keepVehicle(rec, p) {
+    const side = Math.min(p.d.box[2] - p.d.box[0], p.d.box[3] - p.d.box[1]);
+    const v = (rec.vcrops ||= []);
+    v.push({ c: p.c, side });
+    v.sort((a, b) => b.side - a.side);
+    v.length = Math.min(v.length, VEH_CROPS);
+    rec.vside = v[0].side;
+  }
+
+  /**
+   * Automobilio požymiai (AI paslauga /vehicle): užklausiama, kai automobilis pirmą kartą perskaitytas ir vėl,
+   * kai jis matomas gerokai didesnis (arčiau) – tada atpažinimas patikimesnis.
+   */
+  async describe(ai) {
+    const now = performance.now();
+    if (this.vehBusy || now - this.lastVeh < VEH_GAP || !ai.vehicle) return;
+    const rec = this.recs.find((r) => r.vcrops?.length && now - r.lastAt < 10000 && (!r.veh || r.vside >= (r.vehSide || 0) * 1.4));
+    if (!rec) return;
+    this.vehBusy = true;
+    this.lastVeh = now;
+    const side = rec.vside;
+    try {
+      rec.veh = await ai.vehicle(await Promise.all(rec.vcrops.map((x) => blobOf(x.c, 0.92))), { kind: rec.cls });
+      rec.vehSide = side;
+    } catch {
+      /* papildoma informacija – nepavykus lieka be jos */
+    } finally {
+      this.vehBusy = false;
+    }
+  }
+
   async fuse(ai) {
     const now = performance.now();
     if (this.fuseBusy || now - this.lastFuse < FUSE_GAP || !ai.plateFuse) return;
@@ -223,6 +289,7 @@ export class PlateBook {
       rec.img = shot;
       rec.score = score;
     }
+    return rec;
   }
 
   /** Šiuo metu rodomi (neseniai perskaityti) numeriai. */
@@ -252,12 +319,13 @@ export function drawPlates(g, book, last, m) {
     const im = r.fused || r.img; // sujungtas iš kelių kadrų (ryškesnis), kol nėra – geriausias pavienis
     const ih = Math.max(70 * s, ph * 2 * 1.7), iw = (ih * im.width) / im.height;
     const th = Math.round(20 * s);
+    const desc = vehicleShort(r.veh), dh = desc ? Math.round(16 * s) : 0; // automobilio požymiai po numeriu
     // Virš automobilio (kad jo neuždengtų); per arti viršaus – po juo
     const vt = m.oy + (r.vbox[1] + dy) * m.k, vb = m.oy + (r.vbox[3] + dy) * m.k;
-    let ix = px + pw / 2 - iw / 2, iy = vt - ih - th - 12 * s;
+    let ix = px + pw / 2 - iw / 2, iy = vt - ih - th - dh - 12 * s;
     if (iy < 4 * s) iy = vb + 12 * s;
     ix = Math.max(4 * s, Math.min(m.W - iw - 4 * s, ix));
-    iy = Math.max(4 * s, Math.min(m.H - ih - th - 4 * s, iy));
+    iy = Math.max(4 * s, Math.min(m.H - ih - th - dh - 4 * s, iy));
     const color = r.sure ? '#ffd23f' : '#ffffff';
     g.save();
     g.globalAlpha = 1;
@@ -266,13 +334,19 @@ export function drawPlates(g, book, last, m) {
     g.strokeRect(px, py, pw, ph);
     g.beginPath();
     g.moveTo(px + pw / 2, iy > py ? py + ph : py);
-    g.lineTo(ix + iw / 2, iy > py ? iy : iy + ih + th);
+    g.lineTo(ix + iw / 2, iy > py ? iy : iy + ih + th + dh);
     g.stroke();
     g.fillStyle = '#000';
-    g.fillRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + 4 * s);
+    g.fillRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + dh + 4 * s);
     g.imageSmoothingQuality = 'high';
     g.drawImage(im, ix, iy, iw, ih);
-    g.strokeRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + 4 * s);
+    g.strokeRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + dh + 4 * s);
+    if (desc) {
+      g.fillStyle = '#fff';
+      g.font = `600 ${Math.round(11 * s)}px Inter, Segoe UI, sans-serif`;
+      g.textAlign = 'center';
+      g.fillText(desc, ix + iw / 2, iy + ih + th + dh - 4 * s, iw - 4 * s);
+    }
     g.fillStyle = color;
     g.fillRect(ix, iy + ih, iw, th);
     g.fillStyle = '#111';
