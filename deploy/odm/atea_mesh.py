@@ -47,24 +47,36 @@ def _refine_level(args, low_mem=False):
 
 # ---------------------------------------------------------------- atmintis
 # ReconstructMesh (Delaunay + grafų pjūvis) RAM poreikis ~ įterptų taškų skaičius. Matyta: 38 mln. taškų įterpiant –
-# ~11 GB, grafų pjūviui – daugiau. Imama atsargiai 500 B taškui ir naudojama tik dalis laisvos RAM, kad Docker
-# (WSL) nepradėtų keisti atminties disku ir „nesustingtų“.
+# ~11 GB, grafų pjūviui – daugiau. Imama atsargiai 500 B taškui ir naudojama tik dalis RAM, kad Docker (WSL)
+# nepradėtų keisti atminties disku ir „nesustingtų“.
+# Retinimas skaičiuojamas pagal VISĄ kompiuterio RAM, ne pagal tuo metu laisvą: laisva RAM kiekvieną kartą kita
+# (50,4 / 49,3 GB…), todėl ir retinimas (3,3 / 3,5 px), ir tinklas tame pačiame projekte išeidavo vis kitoks.
+# Atstumas suapvalinamas aukštyn iki DIST_STEP – nedideli tankaus debesies skirtumai jo nekeičia.
 BYTES_PER_POINT = 500
 BYTES_PER_POINT_FSS = 700  # su laisvos erdvės palaikymu (papildomi svoriai kiekvienam tetraedrui)
-FSS_MIN_MEM = 24e9         # mažiau laisvos RAM – be laisvos erdvės palaikymo
-MEM_SHARE = 0.55
-BASE_DIST = 2.5  # px – OpenMVS numatytasis --min-point-distance
+FSS_MIN_MEM = 24e9         # mažiau RAM tinklui – be laisvos erdvės palaikymo
+MEM_SHARE = 0.5   # visos RAM dalis tinklui
+BASE_DIST = 2.5   # px – OpenMVS numatytasis --min-point-distance
+DIST_STEP = 0.25  # px
 
 
-def _mem_available():
+def _meminfo(key):
     try:
         with open("/proc/meminfo") as f:
             for line in f:
-                if line.startswith("MemAvailable:"):
+                if line.startswith(key + ":"):
                     return int(line.split()[1]) * 1024
     except Exception:
         pass
     return None
+
+
+def _mem_total():
+    return _meminfo("MemTotal")
+
+
+def _mem_available():
+    return _meminfo("MemAvailable")
 
 
 def _ply_count(path, element):
@@ -87,17 +99,27 @@ def _min_point_distance(tree):
     """(--min-point-distance, ar mažai RAM, laisvos erdvės palaikymas). Laisvos erdvės palaikymas – stiklo fasadams
     būtinas (be jo stiklinis pirmas aukštas ir fasadų dalys dingsta, pastatas „kabo“), todėl jis įjungiamas visada,
     kai RAM pakanka, o taškai retinami tiek, kad su juo tilptų į laisvą atmintį."""
-    mem = _mem_available()
+    total, avail = _mem_total(), _mem_available()
     n = _ply_vertices(os.path.join(tree.openmvs, "scene_dense_dense_filtered.ply")) or _ply_vertices(tree.filtered_point_cloud)
-    if not mem or not n:
+    if not total or not n:
         return BASE_DIST, False, False
-    fss = mem >= FSS_MIN_MEM
-    target = mem * MEM_SHARE / (BYTES_PER_POINT_FSS if fss else BYTES_PER_POINT)
-    log.ODM_INFO("Atea: tankus debesis %s mln. taškų, laisva RAM %.1f GB (telpa ~%s mln.)" % (round(n / 1e6, 1), mem / 1e9, round(target / 1e6, 1)))
+    budget = total * MEM_SHARE
+    fss = budget >= FSS_MIN_MEM * MEM_SHARE / 0.55  # kaip anksčiau: ≥ 24 GB laisvos RAM – dabar ≥ ~44 GB visos
+    # Saugiklis: jei tuo metu kiti procesai užėmė tiek, kad biudžetas netelpa į laisvą RAM, – retinama daugiau (rezultatas
+    # tada skirsis, todėl pranešama)
+    if avail and budget > 0.9 * avail:
+        log.ODM_WARNING("Atea: laisvos RAM tik %.1f GB (iš %.1f GB) – kiti procesai užima atmintį, taškai retinami daugiau "
+                        "nei įprastai (tinklas gali skirtis nuo ankstesnių paleidimų)" % (avail / 1e9, total / 1e9))
+        budget = 0.9 * avail
+        fss = fss and avail >= FSS_MIN_MEM
+    target = budget / (BYTES_PER_POINT_FSS if fss else BYTES_PER_POINT)
+    log.ODM_INFO("Atea: tankus debesis %s mln. taškų, RAM %.1f GB, tinklui %.1f GB (telpa ~%s mln.)"
+                 % (round(n / 1e6, 1), total / 1e9, budget / 1e9, round(target / 1e6, 1)))
     if n <= target:
         return BASE_DIST, not fss, fss
-    # Įterpiamų taškų skaičius mažėja ~ atstumo kvadratu
-    return min(12.0, round(BASE_DIST * math.sqrt(n / target), 1)), True, fss
+    # Įterpiamų taškų skaičius mažėja ~ atstumo kvadratu; suapvalinama aukštyn iki DIST_STEP (pastovus rezultatas)
+    d = BASE_DIST * math.sqrt(n / target)
+    return min(12.0, math.ceil(d / DIST_STEP - 1e-9) * DIST_STEP), True, fss
 
 
 # Skylių diagnostika: kuriame etape (ReconstructMesh / RefineMesh / apkarpymas / valymas) atsiranda kiaurymės.
