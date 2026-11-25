@@ -36,6 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
 
 ENV ATEA_AI_MODELS=/models ATEA_AI_DETECTOR=${DETECTOR} HF_HUB_OFFLINE=1 CC=gcc
 WORKDIR /app
-COPY app.py train.py vehicle.py /app/
+COPY app.py train.py vehicle.py vehicle_models.json regitra_models.py /app/
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
