@@ -5,3 +5,4 @@ dist-single
 *.whl
 __pycache__/
 deploy/certs/
+deploy/sfm-ataskaita.txt
