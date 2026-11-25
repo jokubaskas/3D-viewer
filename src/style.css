@@ -1062,3 +1062,16 @@ body.portal .portal-card { display: block; }
 .plan-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 6px; }
 .plan-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .plan-legend i { width: 18px; height: 4px; border-radius: 2px; display: inline-block; }
+
+/* Automobilių pavyzdžių galerija (tik administratoriui) */
+.gal-dialog { max-width: min(860px, 96vw); }
+.gal-rec { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+.gal-rec > img { width: 420px; max-width: 100%; border-radius: 8px; }
+.gal-rec > div { flex: 1; min-width: 240px; }
+.gal-rec input[list] { width: 200px; }
+.plate-chip { display: inline-block; font: 700 15px/1.2 Consolas, 'DejaVu Sans Mono', monospace; background: #fff; color: #111; border: 2px solid #1f2326; border-radius: 4px; padding: 1px 7px; }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; max-height: 60vh; overflow: auto; }
+.gal-grid figure { margin: 0; position: relative; }
+.gal-grid img { width: 100%; border-radius: 6px; display: block; }
+.gal-grid figcaption { font-size: 13px; margin-top: 4px; }
+.gal-grid [data-gdel] { position: absolute; top: 4px; right: 4px; background: rgba(0, 0, 0, 0.55); }

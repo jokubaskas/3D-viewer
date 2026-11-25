@@ -7,6 +7,7 @@ import { LiveDetector, AI_DETAIL, AI_GROUPS, datasetZip, activeGroups, TRACK_MEM
 import { trackGpx } from './telemetry.js';
 import { AiComposer, FlightLog, drawComposite, flightReportZip, reportZip } from './report.js';
 import { createTelemetryUI, telemetryChips } from './telemetry-ui.js';
+import { createGalleryUI } from './gallery-ui.js';
 import { api, uploadFile } from '../portal/api.js';
 
 const LS_STREAMS = 'atea3d.live.streams';
@@ -200,6 +201,15 @@ export function createLiveUI(app) {
       </menu>
     </form>`;
   page.append(dlgTrain);
+  // Automobilių pavyzdžių galerija (numerių filtras) – tik administratoriui
+  const gal = createGalleryUI({
+    after: page.querySelector('[data-card="ai"]'),
+    getAi: app.getAi,
+    plates: () => [...tiles.values()].filter((x) => x.ai?.platesOn).map((x) => x.ai.plates),
+    toast: app.toast,
+    isAdmin: () => role !== 'client',
+  });
+  setInterval(() => !page.hidden && gal.tick(), 3000);
   $('#live-push-name').value = ls.get(LS_PUSH, 'drone');
 
   // ------------------------------------------------------------------ Nauja nuoroda
@@ -1031,6 +1041,7 @@ export function createLiveUI(app) {
     page.hidden = false;
     renderMine();
     renderList();
+    gal.refresh();
     renderPushUrls();
     refreshGateway();
     clearInterval(gwTimer);
@@ -1119,6 +1130,7 @@ export function createLiveUI(app) {
       role = o.role;
       portal = o.portal;
       page.classList.toggle('live-client', role === 'client');
+      gal.refresh();
       // Pavadinimas – kaip pradžios ekrano mygtuko
       page.querySelector('.odm-head h2').textContent = t(role === 'client' ? 'Mano gyvos transliacijos' : 'Gyvos transliacijos');
       renderMine();

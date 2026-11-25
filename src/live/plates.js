@@ -22,7 +22,7 @@ export function vehicleShort(v) {
 /** Ataskaitai: kiekvienas požymis arba „neatpažinta“ (su priežastimi), kad neklaidintų. */
 export function vehicleRows(v) {
   const nr = (a) => (a?.small ? t('neatpažinta (per mažas vaizdas)') : t('neatpažinta'));
-  const row = (label, a) => ({ label, value: attrValue(a), p: a?.value ? a.p : null, note: a?.value ? '' : nr(a) });
+  const row = (label, a) => ({ label, value: attrValue(a), p: a?.value ? a.p : null, confirmed: !!a?.confirmed, note: a?.value ? '' : nr(a) });
   return [
     row(t('Spalva'), v?.color),
     row(t('Kėbulas'), v?.body),

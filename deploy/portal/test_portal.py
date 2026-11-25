@@ -94,7 +94,7 @@ def test_auth_check_rules(env):
     def chk(c, uri):
         return c.get("/api/auth/check", headers={"X-Original-URI": uri}).status_code
 
-    for uri in ["/odm/info", "/splat/train", "/splat/files/aaaaaaaa-1111-2222-3333-444444444444/scene.spz", "/engine/task/list", "/engine/files/aaaaaaaa-1111-2222-3333-444444444444/odm_texturing/odm_textured_model_geo.glb", "/live/api/v3/paths/list", "/ai/train", "/ai/models/delete", "/ext/diab/atea.diab.app/x"]:
+    for uri in ["/odm/info", "/splat/train", "/splat/files/aaaaaaaa-1111-2222-3333-444444444444/scene.spz", "/engine/task/list", "/engine/files/aaaaaaaa-1111-2222-3333-444444444444/odm_texturing/odm_textured_model_geo.glb", "/live/api/v3/paths/list", "/ai/train", "/ai/models/delete", "/ai/gallery", "/ai/gallery/delete", "/ai/gallery/img/0123456789abcdef.jpg", "/ai/gallery/options", "/ext/diab/atea.diab.app/x"]:
         assert chk(ca, uri) == 403, uri
         assert chk(adm, uri) == 204, uri
     assert chk(ca, f"/live/webrtc/item-{s['id']}/whep") == 204
@@ -102,6 +102,9 @@ def test_auth_check_rules(env):
     assert chk(ca, "/live/hls/drone/index.m3u8") == 403  # nepriskirta
     assert chk(ca, f"/live/hls/item-{p['id']}/index.m3u8") == 403
     assert chk(ca, "/ai/detect") == 204
+    assert chk(ca, "/ai/vehicle") == 204  # požymių atpažinimas – ir klientui; galerija – tik administratoriui
+    for uri in ["/ai/gallery?x=1", "/ai/galleryx", "/ai/gallery/../vehicle"]:
+        assert chk(ca, uri) == 403, uri
     # Keliai, kuriuos nginx normalizuoja kitaip nei jie atrodo – visada atmetami
     for uri in ["/ai/../odm/info", "/ai//train", "/ai/%74rain", "/ai/./train", "/ai/models/../models/delete",
                 f"/live/hls/item-{s['id']}/../drone/index.m3u8", f"/live/hls/item-{s['id']}/%2e%2e/drone/x", "/ai/../live/api/v3/paths/list"]:
