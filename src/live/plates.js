@@ -7,6 +7,11 @@ const MIN_SIDE = 40; // mažesnės (pilnos raiškos px) transporto priemonės �
 const MAX_CROPS = 6; // vienoje užklausoje – didžiausios transporto priemonės
 const PAD = 0.15; // iškarpa – rėmelis + 15 %
 const INTERVAL = 900; // ms tarp užklausų
+const INTERVAL_HOT = 450; // kai matomas numeris – dažniau (daugiau kadrų sujungimui)
+const MAX_SHOTS = 10; // kiek paskutinių numerio kadrų laikoma sujungimui
+const FUSE_MIN = 3; // sujungiama, kai yra bent tiek kadrų
+const FUSE_GAP = 1200; // ms tarp sujungimų
+const FUSE_WEIGHT = 2; // sujungto vaizdo perskaitymas – patikimesnis už vieną kadrą
 const SHOW_MS = 3500; // kiek laiko rodomas priartintas numeris po paskutinio perskaitymo
 const TEXT_RE = /^[A-Z0-9]{4,10}$/;
 const MIN_SCORE = 0.5;
@@ -26,7 +31,8 @@ function near(a, b) {
   return prev[n];
 }
 
-const blobOf = (c, q = 0.92) => new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+const blobOf = (c, q = 0.97) => new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+const pngOf = (c) => new Promise((r) => c.toBlob(r, 'image/png'));
 
 function crop(src, x, y, w, h, maxSide = 1024) {
   const k = Math.min(1, maxSide / Math.max(w, h));
@@ -47,13 +53,16 @@ export class PlateBook {
   reset() {
     this.recs = []; // {key, id, votes:Map, text, score, reads, firstAt, lastAt, box, vbox, img}
     this.busy = false;
-    this.lastReq = 0;
+    this.lastReq = -Infinity;
     this.seq = 0;
     this.error = '';
+    this.fuseBusy = false;
+    this.lastFuse = -Infinity;
   }
 
   due(now = performance.now()) {
-    return !this.busy && now - this.lastReq >= INTERVAL;
+    const hot = this.recs.some((r) => now - r.lastAt < 3000);
+    return !this.busy && now - this.lastReq >= (hot ? INTERVAL_HOT : INTERVAL);
   }
 
   /** Patvirtinti numeriai (ne vieno neaiškaus perskaitymo). */
@@ -93,6 +102,7 @@ export class PlateBook {
         this.add(best.text, best.score, box, p.d, native, at);
       });
       this.error = '';
+      this.fuse(ai);
       return true;
     } catch (e) {
       this.error = e.message;
@@ -100,6 +110,55 @@ export class PlateBook {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Kelių kadrų sujungimas: to paties numerio iškarpos iš skirtingų vaizdo kadrų sulygiuojamos ir suvidurkinamos
+   * AI paslaugoje – mažiau triukšmo ir suspaudimo artefaktų, numeris įskaitomesnis (tik tikri pikseliai).
+   */
+  async fuse(ai) {
+    const now = performance.now();
+    if (this.fuseBusy || now - this.lastFuse < FUSE_GAP || !ai.plateFuse) return;
+    const rec = this.recs
+      .filter((r) => r.shots?.length >= FUSE_MIN && r.shotSeq > (r.fusedSeq || 0) && now - r.lastAt < 10000)
+      .sort((a, b) => b.shotSeq - (b.fusedSeq || 0) - (a.shotSeq - (a.fusedSeq || 0)))[0];
+    if (!rec) return;
+    this.fuseBusy = true;
+    this.lastFuse = now;
+    const seq = rec.shotSeq;
+    try {
+      const shots = rec.shots.slice();
+      const res = await ai.plateFuse(await Promise.all(shots.map((x) => pngOf(x.c))), shots.map((x) => x.inner));
+      if (res.image) {
+        const bmp = await createImageBitmap(await (await fetch(`data:image/jpeg;base64,${res.image}`)).blob());
+        const c = document.createElement('canvas');
+        c.width = bmp.width;
+        c.height = bmp.height;
+        c.getContext('2d').drawImage(bmp, 0, 0);
+        bmp.close?.();
+        rec.fused = c;
+      }
+      rec.fusedN = res.frames || 0;
+      rec.fusedText = TEXT_RE.test(res.text || '') && res.score >= MIN_SCORE ? res.text : '';
+      rec.fusedScore = res.score || 0;
+      rec.fusedSeq = seq;
+      this.tally(rec);
+    } catch {
+      /* sujungimas – papildomas; nepavykus lieka pavienių kadrų rezultatas */
+    } finally {
+      this.fuseBusy = false;
+    }
+  }
+
+  /** Rodomas tekstas – daugiausia balsų (pavieniai kadrai + sujungtas vaizdas su didesniu svoriu). */
+  tally(rec) {
+    const votes = new Map(rec.votes);
+    if (rec.fusedText) votes.set(rec.fusedText, (votes.get(rec.fusedText) || 0) + FUSE_WEIGHT * rec.fusedScore);
+    const [top, sum] = [...votes].sort((a, b) => b[1] - a[1])[0];
+    rec.text = top;
+    // Patvirtintas: bent du perskaitymai sutampa, vienas labai tikras arba sujungtas vaizdas tikras
+    rec.sure = sum >= 2 * MIN_SCORE || (rec.votes.get(top) || 0) >= SURE || (rec.fusedText === top && rec.fusedScore >= SURE);
+    return top;
   }
 
   add(text, score, box, veh, native, at) {
@@ -116,22 +175,26 @@ export class PlateBook {
     rec.vbox = veh.box;
     if (veh.id) rec.id = veh.id;
     rec.cls = veh.class;
-    // Rodomas tekstas – daugiausia balsų surinkęs variantas; iškarpa – geriausias to varianto perskaitymas
-    const top = [...rec.votes].sort((a, b) => b[1] - a[1])[0][0];
-    if (text === top && (rec.text !== top || score >= rec.score || !rec.img)) {
-      const [x1, y1, x2, y2] = box, bw = x2 - x1, bh = y2 - y1;
-      const x = Math.max(0, x1 - bw * 0.2), y = Math.max(0, y1 - bh * 0.35);
-      rec.img = crop(native, x, y, Math.min(native.width - x, bw * 1.4), Math.min(native.height - y, bh * 1.7), 640).c;
+    // Numerio iškarpa (pilna raiška, su paraštėmis) – rodymui ir kelių kadrų sujungimui
+    const [x1, y1, x2, y2] = box, bw = x2 - x1, bh = y2 - y1;
+    const x = Math.max(0, x1 - bw * 0.2), y = Math.max(0, y1 - bh * 0.35);
+    const w = Math.min(native.width - x, bw * 1.4), h = Math.min(native.height - y, bh * 1.7);
+    const shot = crop(native, x, y, w, h, 640).c;
+    (rec.shots ||= []).push({ c: shot, inner: [(x1 - x) / w, (y1 - y) / h, (x2 - x) / w, (y2 - y) / h] });
+    if (rec.shots.length > MAX_SHOTS) rec.shots.shift();
+    rec.shotSeq = (rec.shotSeq || 0) + 1;
+    const prev = rec.text;
+    const top = this.tally(rec);
+    // Originalus kadras – geriausias rodomo varianto perskaitymas
+    if (text === top && (prev !== top || score >= rec.score || !rec.img)) {
+      rec.img = shot;
       rec.score = score;
     }
-    rec.text = top;
-    // Patvirtintas: bent du perskaitymai sutampa arba vienas labai tikras
-    rec.sure = rec.votes.get(top) >= 2 * MIN_SCORE || rec.score >= SURE;
   }
 
   /** Šiuo metu rodomi (neseniai perskaityti) numeriai. */
   visible(now = performance.now()) {
-    return this.recs.filter((r) => now - r.lastAt < SHOW_MS && r.img);
+    return this.recs.filter((r) => now - r.lastAt < SHOW_MS && (r.fused || r.img));
   }
 }
 
@@ -153,7 +216,8 @@ export function drawPlates(g, book, last, m) {
     const [x1, y1, x2, y2] = r.box;
     const px = m.ox + (x1 + dx) * m.k, py = m.oy + (y1 + dy) * m.k, pw = (x2 - x1) * m.k, ph = (y2 - y1) * m.k;
     // Priartinimas: iškarpa ~70 px aukščio (bent 2× didesnė nei vaizde)
-    const ih = Math.max(70 * s, ph * 2 * 1.7), iw = (ih * r.img.width) / r.img.height;
+    const im = r.fused || r.img; // sujungtas iš kelių kadrų (ryškesnis), kol nėra – geriausias pavienis
+    const ih = Math.max(70 * s, ph * 2 * 1.7), iw = (ih * im.width) / im.height;
     const th = Math.round(20 * s);
     // Virš automobilio (kad jo neuždengtų); per arti viršaus – po juo
     const vt = m.oy + (r.vbox[1] + dy) * m.k, vb = m.oy + (r.vbox[3] + dy) * m.k;
@@ -174,7 +238,7 @@ export function drawPlates(g, book, last, m) {
     g.fillStyle = '#000';
     g.fillRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + 4 * s);
     g.imageSmoothingQuality = 'high';
-    g.drawImage(r.img, ix, iy, iw, ih);
+    g.drawImage(im, ix, iy, iw, ih);
     g.strokeRect(ix - 2 * s, iy - 2 * s, iw + 4 * s, ih + th + 4 * s);
     g.fillStyle = color;
     g.fillRect(ix, iy + ih, iw, th);
@@ -182,6 +246,13 @@ export function drawPlates(g, book, last, m) {
     g.font = `700 ${Math.round(14 * s)}px Inter, Segoe UI, sans-serif`;
     g.textAlign = 'center';
     g.fillText(r.sure ? r.text : `${r.text}?`, ix + iw / 2, iy + ih + th - 5 * s);
+    if (r.fused && r.fusedN > 1) {
+      // Kiek kadrų sujungta
+      g.font = `600 ${Math.round(10 * s)}px Inter, Segoe UI, sans-serif`;
+      g.textAlign = 'right';
+      g.fillStyle = 'rgba(0,0,0,.55)';
+      g.fillText(`×${r.fusedN}`, ix + iw - 4 * s, iy + ih + th - 6 * s);
+    }
     g.restore();
   }
 }

@@ -72,6 +72,18 @@ export class AiClient {
   }
 
   /**
+   * To paties numerio kelių kadrų sujungimas į ryškesnį vaizdą (+ atpažinimas).
+   * @param {Blob[]} blobs – numerio iškarpos; inner – numerio vieta kiekvienoje (dalimis 0–1)
+   * @returns {Promise<{text:string, score:number, frames:number, of:number, image:string}>}
+   */
+  plateFuse(blobs, inner, { signal } = {}) {
+    const fd = new FormData();
+    blobs.forEach((b, i) => fd.append('images', b, `nr_${i}.png`));
+    fd.append('inner', JSON.stringify(inner));
+    return this._req('plates/fuse', { method: 'POST', body: fd, signal });
+  }
+
+  /**
    * GeoTIFF perskaičiavimas į LKS-94 (EPSG:3346) AI paslaugoje (GDAL).
    * @returns {Promise<Blob>}
    */

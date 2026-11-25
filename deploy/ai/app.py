@@ -3,7 +3,8 @@
 Veikia jūsų serveryje / kompiuteryje, be interneto ir be mokamų paslaugų:
   * /detect  – transporto (automobilių, sunkvežimių, autobusų…) aptikimas vaizde iš viršaus.
                Modelis: RF-DETR (Roboflow, Apache 2.0), apmokytas su COCO.
-  * /plates  – valstybinių numerių atpažinimas transporto iškarpose (fast-alpr, MIT).
+  * /plates  – valstybinių numerių atpažinimas transporto iškarpose (fast-alpr, MIT);
+               /plates/fuse – kelių kadrų sujungimas į ryškesnį numerio vaizdą.
   * /segment – objekto kontūras vienu spustelėjimu (pvz. krūvos kraštas).
                Modelis: MobileSAM (Apache 2.0) – lengva Segment Anything versija.
 
@@ -12,6 +13,7 @@ kurias programa paverčia LKS-94 / modelio koordinatėmis.
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -593,6 +595,87 @@ def _read_plates(img: np.ndarray) -> list:
                 score = float(conf)
         out.append({"box": box, "text": text, "score": round(score, 3), "det": round(float(r.detection.confidence), 3)})
     return out
+
+
+def _ocr_text(img: np.ndarray):
+    """Numerio simbolių atpažinimas jau iškirptame numeryje (BGR): (tekstas, tikrumas 0–1)."""
+    alpr = get_alpr()
+    with _alpr_lock:
+        r = alpr.ocr.predict(img)
+    if r is None or not r.text:
+        return "", 0.0
+    text = "".join(ch for ch in r.text.upper() if ch.isalnum())
+    conf = r.confidence
+    if isinstance(conf, (list, tuple, np.ndarray)):
+        conf = [float(c) for c in list(conf)[: max(1, len(text))]]
+        return text, float(np.mean(conf)) if conf else 0.0
+    return text, float(conf or 0.0)
+
+
+def _sharpness(img: np.ndarray) -> float:
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    return float(cv2.Laplacian(g, cv2.CV_64F).var())
+
+
+def _display_enhance(img: np.ndarray) -> np.ndarray:
+    """Žmogui rodomas vaizdas: švelnus kontrastas (CLAHE šviesumui) ir paaštrinimas.
+    AI skaito NE šį, o sujungtą vaizdą be paaštrinimo – bandymuose paaštrinimas OCR tikslumą mažino."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    l = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(4, 4)).apply(l)
+    img = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+    blur = cv2.GaussianBlur(img, (0, 0), max(1.0, img.shape[0] / 80))
+    return cv2.addWeighted(img, 1.5, blur, -0.5, 0)
+
+
+def _fuse_plates(imgs: list, inners: list) -> dict:
+    """Keli to paties numerio kadrai (iš skirtingų vaizdo kadrų) → sulygiuojami (ECC, afininė transformacija)
+    pagal ryškiausią ir suvidurkinami (mediana). Triukšmas ir suspaudimo artefaktai mažėja, smulkios detalės
+    ryškėja – naudojami tik tikri pikseliai, nieko neišgalvojama (ne generatyvinis „super-resolution“)."""
+    hs = sorted(i.shape[0] for i in imgs)
+    ws = sorted(i.shape[1] for i in imgs)
+    h0, w0 = hs[len(hs) // 2], ws[len(ws) // 2]
+    k = min(4.0, max(1.0, 640 / max(1, w0)))
+    W, H = int(round(w0 * k)), int(round(h0 * k))
+    up = [cv2.resize(i, (W, H), interpolation=cv2.INTER_CUBIC) for i in imgs]
+    sh = [_sharpness(cv2.resize(i, (w0, h0), interpolation=cv2.INTER_AREA)) for i in imgs]
+    r = int(np.argmax(sh))
+    ref = cv2.cvtColor(up[r], cv2.COLOR_BGR2GRAY).astype(np.float32)
+    crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 1e-4)
+    acc = [up[r].astype(np.float32)]
+    for i in range(len(up)):
+        if i == r or sh[i] < 0.35 * sh[r]:  # labai neryškūs (judesys, fokusas) – tik pablogintų
+            continue
+        warp = np.eye(2, 3, dtype=np.float32)
+        try:
+            cc, warp = cv2.findTransformECC(ref, cv2.cvtColor(up[i], cv2.COLOR_BGR2GRAY).astype(np.float32), warp, cv2.MOTION_AFFINE, crit, None, 5)
+        except cv2.error:
+            continue
+        if cc < 0.6:  # nesusilygiavo (kitas kampas, uždengta) – praleidžiama
+            continue
+        acc.append(cv2.warpAffine(up[i], warp, (W, H), flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP, borderMode=cv2.BORDER_REPLICATE).astype(np.float32))
+    st = np.stack(acc)
+    fused = np.clip(np.median(st, axis=0) if len(acc) >= 5 else st.mean(axis=0), 0, 255).astype(np.uint8)
+    x1, y1, x2, y2 = inners[r] if r < len(inners) else (0.0, 0.0, 1.0, 1.0)
+    px1, py1 = max(0, int(x1 * W)), max(0, int(y1 * H))
+    px2, py2 = min(W, int(np.ceil(x2 * W)) + 1), min(H, int(np.ceil(y2 * H)) + 1)
+    text, score = _ocr_text(fused[py1:py2, px1:px2]) if px2 - px1 > 4 and py2 - py1 > 4 else ("", 0.0)
+    ok, jpg = cv2.imencode(".jpg", _display_enhance(fused), [cv2.IMWRITE_JPEG_QUALITY, 92])
+    return {"text": text, "score": round(score, 3), "frames": len(acc), "of": len(imgs), "image": base64.b64encode(jpg.tobytes()).decode() if ok else ""}
+
+
+@app.post("/plates/fuse")
+async def plates_fuse(images: list[UploadFile] = File(...), inner: str = Form("[]")):
+    """To paties numerio kelių kadrų sujungimas į vieną ryškesnį vaizdą ir jo atpažinimas.
+    inner – numerio vieta kiekvienoje iškarpoje (dalimis 0–1): [[x1, y1, x2, y2], …]."""
+    try:
+        inners = [tuple(float(v) for v in b) for b in json.loads(inner or "[]")]
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, f"Netinkamas inner: {e}") from e
+    imgs = [cv2.cvtColor(read_image(await f.read()), cv2.COLOR_RGB2BGR) for f in images[:12]]
+    if not imgs:
+        raise HTTPException(400, "Nėra vaizdų")
+    return await run_in_threadpool(_fuse_plates, imgs, inners)
 
 
 @app.post("/plates")
