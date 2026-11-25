@@ -147,10 +147,13 @@ def main():
             shutil.copy(os.path.join(gcp, f), os.path.join(work, f))
 
     p = pipeline.Pipeline(work, "high")
+    redo = []
     if a.no_time_offset:
         p._time_offset = lambda rec: 0.0
+        redo.append("georef")
+    for st_ in redo:
         try:
-            os.remove(p._done_path("georef"))
+            os.remove(p._done_path(st_))
         except OSError:
             pass
     t0 = time.time()
@@ -165,6 +168,7 @@ def main():
 
     import pycolmap
     rec = pycolmap.Reconstruction(os.path.join(work, "work", "sfm_geo"))
+    rec.update_point_3d_errors()
     frame = p._load_frame()
     off = np.array([frame.off_e, frame.off_n, 0.0]) if frame else np.zeros(3)
     col = {norm_name(im.name): np.asarray(im.projection_center()) + off for im in rec.images.values() if im.has_pose}

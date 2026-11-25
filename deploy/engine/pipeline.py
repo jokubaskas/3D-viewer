@@ -579,6 +579,7 @@ class Pipeline:
             for iid in rec.reg_image_ids():
                 cfg.add_image(iid)
             pycolmap.create_pose_prior_bundle_adjuster(bo, pycolmap.PosePriorBundleAdjustmentOptions(), cfg, pri, rec).solve()
+        rec.update_point_3d_errors()  # kitaip rodoma ankstesnė (iki derinimo) paklaida
         self.log("Derinimas su %s padėtimis (%d nuotr.): reprojekcijos paklaida %.2f → %.2f px"
                  % ("RTK" if np.median(acc) < 0.2 else "GPS", len(pri), before, rec.compute_mean_reprojection_error()))
         return True
