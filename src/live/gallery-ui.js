@@ -175,14 +175,15 @@ export function createGalleryUI(o) {
     for (const it of g.items) {
       const k = it.group || it.id;
       let x = groups.find((y) => y.k === k);
-      if (!x) groups.push((x = { k, it, n: 0 }));
+      if (!x) groups.push((x = { k, it, n: 0, ids: [] }));
       x.n++;
+      x.ids.push(it.id);
     }
     dlg.innerHTML = `<form method="dialog">
       <h2>${esc(t('Galerija ({n} pavyzdžių)', { n: g.total }))}</h2>
       <div class="gal-grid">${
         groups
-          .map(({ k, it, n }) => `<figure data-gk="${esc(k)}"><img src="${esc(ai.galleryImg(it.id))}" alt="" loading="lazy" /><figcaption><b>${esc([it.make, it.model].filter(Boolean).join(' ') || '–')}</b><br><span class="small muted">${esc([opts?.colors?.[it.color] || it.color, opts?.bodies?.[it.body] || it.body, it.plate].filter(Boolean).join(' · '))}${n > 1 ? ` · ×${n}` : ''}</span></figcaption><button type="button" class="btn btn-ghost btn-sm icon-only danger" data-gdel="${esc(k)}" title="${esc(t('Ištrinti'))}">${icon('trash')}</button></figure>`)
+          .map(({ k, it, n, ids }) => `<figure data-gk="${esc(k)}"><img src="${esc(ai.galleryImg(it.id))}" alt="" loading="lazy" />${ids.length > 1 ? `<div class="gal-strip">${ids.slice(1).map((i) => `<img src="${esc(ai.galleryImg(i))}" alt="" loading="lazy" />`).join('')}</div>` : ''}<figcaption><b>${esc([it.make, it.model].filter(Boolean).join(' ') || '–')}</b><br><span class="small muted">${esc([opts?.colors?.[it.color] || it.color, opts?.bodies?.[it.body] || it.body, it.plate].filter(Boolean).join(' · '))}${n > 1 ? ` · ×${n}` : ''}</span></figcaption><button type="button" class="btn btn-ghost btn-sm icon-only danger" data-gdel="${esc(k)}" title="${esc(t('Ištrinti'))}">${icon('trash')}</button></figure>`)
           .join('') || `<p class="small muted">${esc(t('Dar nėra pavyzdžių.'))}</p>`
       }</div>
       <menu><button value="close" class="btn btn-primary">${esc(t('Uždaryti'))}</button></menu></form>`;

@@ -1075,3 +1075,5 @@ body.portal .portal-card { display: block; }
 .gal-grid img { width: 100%; border-radius: 6px; display: block; }
 .gal-grid figcaption { font-size: 13px; margin-top: 4px; }
 .gal-grid [data-gdel] { position: absolute; top: 4px; right: 4px; background: rgba(0, 0, 0, 0.55); }
+.gal-strip { display: flex; gap: 3px; margin-top: 3px; }
+.gal-strip img { width: calc(25% - 3px); border-radius: 3px; }

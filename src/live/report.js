@@ -416,6 +416,15 @@ export class AiComposer {
       if (!p) this.plates.set(r.key, (p = { firstT: tl, firstAt: this.started + tl, pos: pos || null, reads0: r.reads - 1 }));
       Object.assign(p, { text: r.text, score: Math.max(r.score || 0, r.fusedText === r.text ? r.fusedScore : 0), reads: r.reads - p.reads0, lastT: tl, img: r.img, photo: r.photo || null, fused: r.fused || null, fusedN: r.fusedN || 0, veh: r.veh || null, cls: r.cls, id: r.id });
     }
+    // Sujungti įrašai (du perskaitymai pasirodė esą tas pats automobilis) – lieka vienas, ankstesnis laikas
+    const alive = new Set(d.plates.recs.map((r) => r.key));
+    for (const [k, p] of this.plates) {
+      if (alive.has(k)) continue;
+      const same = [...this.plates.entries()].find(([k2, q]) => k2 !== k && alive.has(k2) && q.text === p.text);
+      if (!same) continue; // AI išjungtas / įjungtas iš naujo – įrašo duomenys lieka
+      if (p.firstT < same[1].firstT) Object.assign(same[1], { firstT: p.firstT, firstAt: p.firstAt, pos: p.pos || same[1].pos });
+      this.plates.delete(k);
+    }
   }
 
   stop() {
@@ -661,7 +670,7 @@ ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${
 </section>
 ${platesOn || plateRows.length ? `<section><h2>${esc(t('Valstybiniai numeriai'))}</h2>
 ${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Automobilis'))}</th><th>${esc(t('Vieta'))}</th></tr>
-${plateRows.map((p) => `<tr class="pm"><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td style="font-size:12.5px">${p.vrows.map((v) => `${esc(v.label)}: ${v.value ? `<b>${esc(v.value)}</b> <span style="color:var(--mut)">${v.confirmed ? esc(t('patvirtinta')) : `${Math.round(v.p * 100)} %`}</span>` : `<span style="color:var(--mut)">${esc(v.note)}</span>`}`).join('<br>')}</td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td></tr>
+${plateRows.map((p) => `<tr class="pm"><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td style="font-size:12.5px">${p.vrows.map((v) => `${esc(v.label)}: ${v.value ? `<b>${esc(v.value)}</b> <span style="color:var(--mut)">${v.confirmed ? esc(t('patvirtinta')) : `${Math.round(v.p * 100)} %`}</span>` : `<span style="color:var(--mut)">${esc(v.note)}</span>`}`).join('<br>')}</td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td></tr>
 <tr class="pr"><td colspan="4"><div class="pv">${p.photo ? `<a href="${p.photo}" target="_blank"><img class="car" src="${p.photo}" alt=""></a>` : ''}<div class="pz">${p.fused ? `<a href="${p.fused}" target="_blank"><img src="${p.fused}" alt=""></a><span style="color:var(--mut);font-size:12px">${esc(t('Sujungta iš {n} kadrų', { n: p.fusedFrames }))}</span>` : ''}${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""${p.fused ? ' style="width:150px;margin-top:8px"' : ''}></a>${p.fused ? `<span style="color:var(--mut);font-size:12px">${esc(t('Originalus kadras'))}</span>` : ''}` : ''}</div></div></td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Numerių neperskaityta.'))}</p>`}
 <p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Numeriai ir automobilio požymiai atpažinti automatiškai ir gali būti netikslūs; neužtikrinti požymiai pažymėti „neatpažinta“. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.'))}</p></section>` : ''}

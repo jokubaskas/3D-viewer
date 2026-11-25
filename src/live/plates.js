@@ -44,7 +44,7 @@ const FUSE_MIN = 3; // sujungiama, kai yra bent tiek kadrų
 const FUSE_GAP = 1200; // ms tarp sujungimų
 const FUSE_WEIGHT = 3; // sujungto vaizdo perskaitymas – patikimesnis už vieną kadrą
 const SHOW_MS = 3500; // kiek laiko rodomas priartintas numeris po paskutinio perskaitymo
-const TEXT_RE = /^[A-Z0-9]{4,10}$/;
+const TEXT_RE = /^[A-Z0-9]{5,10}$/; // trumpesni – dažniausiai nepilnai perskaityti
 const MIN_SCORE = 0.5;
 const SURE = 0.85; // vienas perskaitymas su tokiu tikrumu – numeris laikomas patvirtintu
 
@@ -70,6 +70,13 @@ export function voteChars(readings) {
   }
   return { text, share };
 }
+
+const iou = (a, b) => {
+  const w = Math.min(a[2], b[2]) - Math.max(a[0], b[0]), h = Math.min(a[3], b[3]) - Math.max(a[1], b[1]);
+  if (w <= 0 || h <= 0) return 0;
+  const i = w * h;
+  return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i);
+};
 
 /** Redagavimo atstumas (iki 2 – daugiau nereikia). */
 function near(a, b) {
@@ -169,14 +176,38 @@ export class PlateBook {
       });
       const blobs = await Promise.all(parts.map((p) => blobOf(p.c)));
       const res = await ai.plates(blobs);
+      // Visi rasti numeriai kadro koordinatėmis. Iškarpos su paraštėmis persidengia, todėl tas pats numeris
+      // gali būti rastas keliose – paliekamas vienas, ir jis priskiriamas TAM automobiliui, kurio rėmelyje
+      // jis yra ir kurio centrui arčiausiai (kitaip aikštelėje gretimo automobilio numeris „prilimpa“ ne tam).
+      const found = [];
       (res.results || []).forEach((list, i) => {
         const p = parts[i];
-        const best = (list || []).filter((r) => TEXT_RE.test(r.text || '') && r.score >= MIN_SCORE).sort((a, b) => b.det * b.score - a.det * a.score)[0];
-        if (!best) return;
-        const box = best.box.map((v, n) => (n % 2 ? p.y : p.x) + v / p.k);
-        const rec = this.add(best.text, best.score, box, p.d, native, at, best.chars);
-        this.keepVehicle(rec, p, native);
+        for (const r of list || []) {
+          if (!TEXT_RE.test(r.text || '') || r.score < MIN_SCORE) continue;
+          found.push({ ...r, box: r.box.map((v, n) => (n % 2 ? p.y : p.x) + v / p.k) });
+        }
       });
+      found.sort((a, b) => b.det * b.score - a.det * a.score);
+      const plates = [];
+      for (const f of found) if (!plates.some((q) => iou(q.box, f.box) > 0.3)) plates.push(f);
+      const taken = new Map(); // automobilis → numeris
+      for (const f of plates) {
+        const cx = (f.box[0] + f.box[2]) / 2, cy = (f.box[1] + f.box[3]) / 2;
+        let best = null, bd = Infinity;
+        for (const p of parts) {
+          const [x1, y1, x2, y2] = p.d.box;
+          if (cx < x1 || cx > x2 || cy < y1 || cy > y2) continue; // numerio centras – automobilio rėmelyje
+          const d = Math.abs(cx - (x1 + x2) / 2) / (x2 - x1);
+          if (d < bd) [best, bd] = [p, d];
+        }
+        if (!best || bd > 0.42) continue; // numeris visai šone – greičiausiai kito automobilio
+        const was = taken.get(best);
+        if (!was || bd < was.bd) taken.set(best, { f, bd });
+      }
+      for (const [p, { f }] of taken) {
+        const rec = this.add(f.text, f.score, f.box, p.d, native, at, f.chars);
+        if (rec?.agree) this.keepVehicle(rec, p, native);
+      }
       this.error = '';
       this.fuse(ai);
       this.describe(ai);
@@ -282,12 +313,18 @@ export class PlateBook {
   }
 
   add(text, score, box, veh, native, at, chars = null) {
-    const recent = (r, ms) => at - r.lastAt < ms;
-    const rec =
-      (veh.id && this.recs.find((r) => r.id === veh.id && recent(r, 30000))) ||
-      this.recs.find((r) => r.votes.has(text)) ||
-      this.recs.find((r) => recent(r, 60000) && near(r.text, text) <= 1) ||
-      this.recs[this.recs.push({ key: ++this.seq, id: veh.id || null, votes: new Map(), text, score: 0, reads: 0, firstAt: at, lastAt: at }) - 1];
+    // Įrašas (vienas automobilis) atpažįstamas pagal NUMERĮ, ne pagal sekimo numerį (#): sekimo numeris,
+    // judant dronui, gali peršokti ant kito automobilio – tada būtų sumaišyti skirtingų automobilių duomenys.
+    // 1) tas pats tekstas – tas pats automobilis; 2) panašus tekstas (OCR klaida) – tik jei ką tik matytas
+    // toje pačioje vietoje; 3) kitaip – naujas automobilis.
+    const pw = box[2] - box[0], cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
+    const dist = (r) => Math.hypot((r.box[0] + r.box[2]) / 2 - cx, (r.box[1] + r.box[3]) / 2 - cy);
+    let rec = this.recs.find((r) => r.text === text) || this.recs.find((r) => r.votes.get(text) >= MIN_SCORE * 2);
+    if (!rec)
+      rec = this.recs
+        .filter((r) => at - r.lastAt < 4000 && near(r.text, text) <= 2 && dist(r) < Math.max(3 * pw, 40))
+        .sort((a, b) => dist(a) - dist(b))[0];
+    if (!rec) rec = this.recs[this.recs.push({ key: ++this.seq, id: null, votes: new Map(), text, score: 0, reads: 0, firstAt: at, lastAt: at }) - 1];
     rec.votes.set(text, (rec.votes.get(text) || 0) + score);
     (rec.readings ||= []).push({ text, chars: chars?.length ? chars : [...text].map((c) => [c, score]), w: 1 });
     if (rec.readings.length > MAX_READS) rec.readings.shift();
@@ -295,25 +332,52 @@ export class PlateBook {
     rec.lastAt = at;
     rec.box = box;
     rec.vbox = veh.box;
-    if (veh.id) rec.id = veh.id;
+    rec.id = veh.id || null;
     rec.cls = veh.class;
-    // Numerio iškarpa (pilna raiška, su paraštėmis) – rodymui ir kelių kadrų sujungimui
-    const [x1, y1, x2, y2] = box, bw = x2 - x1, bh = y2 - y1;
-    const x = Math.max(0, x1 - bw * 0.2), y = Math.max(0, y1 - bh * 0.35);
-    const w = Math.min(native.width - x, bw * 1.4), h = Math.min(native.height - y, bh * 1.7);
-    const shot = crop(native, x, y, w, h, 640).c;
-    (rec.shots ||= []).push({ c: shot, inner: [(x1 - x) / w, (y1 - y) / h, (x2 - x) / w, (y2 - y) / h] });
-    if (rec.shots.length > MAX_SHOTS) rec.shots.shift();
-    rec.shotSeq = (rec.shotSeq || 0) + 1;
     const prev = rec.text;
     const top = this.tally(rec);
-    // Originalus kadras – geriausias rodomo varianto perskaitymas
-    if (text === top && (prev !== top || score >= rec.score || !rec.img)) {
-      rec.img = shot;
-      rec.score = score;
+    // Vaizdai (numerio kadrai sujungimui, automobilio nuotrauka) – tik kai šis perskaitymas sutampa su įrašo
+    // numeriu: net jei kas nors būtų priskirta klaidingai, svetimo automobilio vaizdai nepateks
+    rec.agree = near(text, top) <= 1;
+    if (rec.agree) {
+      const [x1, y1, x2, y2] = box, bw = x2 - x1, bh = y2 - y1;
+      const x = Math.max(0, x1 - bw * 0.2), y = Math.max(0, y1 - bh * 0.35);
+      const w = Math.min(native.width - x, bw * 1.4), h = Math.min(native.height - y, bh * 1.7);
+      const shot = crop(native, x, y, w, h, 640).c;
+      (rec.shots ||= []).push({ c: shot, inner: [(x1 - x) / w, (y1 - y) / h, (x2 - x) / w, (y2 - y) / h] });
+      if (rec.shots.length > MAX_SHOTS) rec.shots.shift();
+      rec.shotSeq = (rec.shotSeq || 0) + 1;
+      // Originalus kadras – geriausias rodomo varianto perskaitymas
+      if (text === top && (prev !== top || score >= rec.score || !rec.img)) {
+        rec.img = shot;
+        rec.score = score;
+      }
     }
-    return rec;
+    return this.merge(rec);
   }
+
+  /** Jei balsavimas du įrašus atvedė prie to paties numerio – tai tas pats automobilis, sujungiami. */
+  merge(rec) {
+    const other = this.recs.find((r) => r !== rec && r.text === rec.text);
+    if (!other) return rec;
+    const [keep, gone] = other.firstAt <= rec.firstAt ? [other, rec] : [rec, other];
+    for (const [t, v] of gone.votes) keep.votes.set(t, (keep.votes.get(t) || 0) + v);
+    keep.readings = [...(keep.readings || []), ...(gone.readings || [])].slice(-MAX_READS);
+    keep.shots = [...(keep.shots || []), ...(gone.shots || [])].slice(-MAX_SHOTS);
+    keep.shotSeq = (keep.shotSeq || 0) + (gone.shotSeq || 0);
+    keep.vcrops = [...(keep.vcrops || []), ...(gone.vcrops || [])].sort((a, b) => b.side - a.side).slice(0, VEH_CROPS);
+    if (keep.vcrops.length) keep.vside = keep.vcrops[0].side;
+    if ((gone.photoSide || 0) > (keep.photoSide || 0)) [keep.photo, keep.photoSide] = [gone.photo, gone.photoSide];
+    if (gone.score > keep.score) [keep.img, keep.score] = [gone.img, gone.score];
+    keep.reads += gone.reads;
+    keep.firstAt = Math.min(keep.firstAt, gone.firstAt);
+    if (gone.lastAt > keep.lastAt) Object.assign(keep, { lastAt: gone.lastAt, box: gone.box, vbox: gone.vbox, id: gone.id, cls: gone.cls, agree: gone.agree });
+    keep.veh ||= gone.veh;
+    this.recs.splice(this.recs.indexOf(gone), 1);
+    this.tally(keep);
+    return keep;
+  }
+
 
   /** Šiuo metu rodomi (neseniai perskaityti) numeriai. */
   visible(now = performance.now()) {
@@ -333,7 +397,8 @@ export function drawPlates(g, book, last, m) {
   const s = m.s || 1;
   for (const r of book.visible()) {
     // Automobilis pajudėjo nuo perskaitymo – numerio vieta pastumiama kartu (pagal sekimo numerį)
-    const cur = r.id && last?.dets.find((d) => d.id === r.id);
+    const cur0 = r.id && last?.dets.find((d) => d.id === r.id);
+    const cur = cur0 && iou(cur0.box, r.vbox) > 0.2 ? cur0 : null; // sekimo numeris galėjo peršokti ant kito
     const dx = cur ? (cur.box[0] + cur.box[2] - r.vbox[0] - r.vbox[2]) / 2 : 0;
     const dy = cur ? (cur.box[1] + cur.box[3] - r.vbox[1] - r.vbox[3]) / 2 : 0;
     const [x1, y1, x2, y2] = r.box;
