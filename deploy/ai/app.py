@@ -570,46 +570,85 @@ def get_alpr():
         return _alpr
 
 
-def _read_plates(img: np.ndarray) -> list:
-    h, w = img.shape[:2]
-    k = max(1.0, PLATE_MIN_SIDE / max(1, min(h, w)))
-    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    if k > 1:
-        bgr = cv2.resize(bgr, (round(w * k), round(h * k)), interpolation=cv2.INTER_CUBIC)
-    alpr = get_alpr()
-    with _alpr_lock:
-        results = alpr.predict(bgr)
-    out = []
-    for r in results:
-        b = r.detection.bounding_box
-        box = [round(b.x1 / k, 1), round(b.y1 / k, 1), round(b.x2 / k, 1), round(b.y2 / k, 1)]
-        text = ""
-        score = 0.0
-        if r.ocr is not None and r.ocr.text:
-            text = "".join(ch for ch in r.ocr.text.upper() if ch.isalnum())
-            conf = r.ocr.confidence
-            if isinstance(conf, (list, tuple, np.ndarray)):
-                conf = [float(c) for c in list(conf)[: max(1, len(text))]]
-                score = float(np.mean(conf)) if conf else 0.0
-            elif conf is not None:
-                score = float(conf)
-        out.append({"box": box, "text": text, "score": round(score, 3), "det": round(float(r.detection.confidence), 3)})
-    return out
-
-
-def _ocr_text(img: np.ndarray):
-    """Numerio simbolių atpažinimas jau iškirptame numeryje (BGR): (tekstas, tikrumas 0–1)."""
+def _ocr_chars(img: np.ndarray) -> list:
+    """Numerio simbolių atpažinimas jau iškirptame numeryje (BGR): [[simbolis, tikrumas], …]."""
+    if img is None or img.shape[0] < 4 or img.shape[1] < 4:
+        return []
     alpr = get_alpr()
     with _alpr_lock:
         r = alpr.ocr.predict(img)
     if r is None or not r.text:
-        return "", 0.0
-    text = "".join(ch for ch in r.text.upper() if ch.isalnum())
-    conf = r.confidence
-    if isinstance(conf, (list, tuple, np.ndarray)):
-        conf = [float(c) for c in list(conf)[: max(1, len(text))]]
-        return text, float(np.mean(conf)) if conf else 0.0
-    return text, float(conf or 0.0)
+        return []
+    conf = r.confidence if isinstance(r.confidence, (list, tuple, np.ndarray)) else [float(r.confidence or 0.0)] * len(r.text)
+    conf = list(conf) + [0.0] * max(0, len(r.text) - len(conf))
+    return [[ch.upper(), round(float(p), 3)] for ch, p in zip(r.text, conf) if ch.isalnum()]
+
+
+def vote_chars(readings: list, weights: Optional[list] = None) -> list:
+    """Balsavimas pagal simbolio vietą (MVCP – „Majority Vote by Character Position“, Nascimento ir kt. 2025):
+    dažniausias ilgis, tada kiekvienoje vietoje – simbolis su didžiausia tikrumų suma. Klaida viename kadre
+    ar variante (pvz. 3↔8) nugalima kitų, net jei nė vienas skaitymas nebuvo visiškai teisingas.
+    Grąžina [[simbolis, dalis 0–1 (kiek balsų už jį toje vietoje)], …]."""
+    weights = weights or [1.0] * len(readings)
+    by_len: dict = {}
+    for r, w in zip(readings, weights):
+        if r:
+            by_len[len(r)] = by_len.get(len(r), 0.0) + w * float(np.mean([p for _, p in r]))
+    if not by_len:
+        return []
+    L = max(by_len, key=by_len.get)
+    acc = [dict() for _ in range(L)]
+    for r, w in zip(readings, weights):
+        if len(r) == L:
+            for i, (c, p) in enumerate(r):
+                acc[i][c] = acc[i].get(c, 0.0) + w * p
+    out = []
+    for a in acc:
+        c = max(a, key=a.get)
+        out.append([c, round(a[c] / max(1e-6, sum(a.values())) * min(1.0, max(a.values())), 3)])
+    return out
+
+
+def _plate_variants(src: np.ndarray, box, up: float) -> list:
+    """Kelių variantų skaitymas (TTA): skirtingi didinimo būdai ir paraštės – OCR klaidos skirtinguose
+    variantuose skiriasi, todėl balsavimas jas panaikina (bandymuose 44 px numeriai: 28 % vietoj 17 %)."""
+    x1, y1, x2, y2 = box
+    H, W = src.shape[:2]
+    outs = []
+    for pad in (0.0, 0.06):
+        px, py = pad * (x2 - x1), pad * (y2 - y1)
+        c = src[max(0, int(y1 - py)) : min(H, int(np.ceil(y2 + py)) + 1), max(0, int(x1 - px)) : min(W, int(np.ceil(x2 + px)) + 1)]
+        if c.shape[0] < 3 or c.shape[1] < 3:
+            continue
+        for interp in (cv2.INTER_CUBIC, cv2.INTER_LANCZOS4, cv2.INTER_LINEAR) if up > 1 else (None,):
+            v = cv2.resize(c, None, fx=up, fy=up, interpolation=interp) if interp is not None else c
+            outs.append(_ocr_chars(v))
+    return [o for o in outs if o]
+
+
+def _summary(chars: list) -> tuple:
+    text = "".join(c for c, _ in chars)
+    return text, (float(np.mean([p for _, p in chars])) if chars else 0.0)
+
+
+def _read_plates(img: np.ndarray) -> list:
+    h, w = img.shape[:2]
+    k = max(1.0, PLATE_MIN_SIDE / max(1, min(h, w)))
+    src = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    bgr = cv2.resize(src, (round(w * k), round(h * k)), interpolation=cv2.INTER_CUBIC) if k > 1 else src
+    alpr = get_alpr()
+    with _alpr_lock:
+        dets = alpr.detector.predict(bgr)
+    out = []
+    for d in dets:
+        b = d.bounding_box
+        box = [max(0.0, b.x1 / k), max(0.0, b.y1 / k), min(float(w), b.x2 / k), min(float(h), b.y2 / k)]
+        # Numeris skaitomas iš ORIGINALIOS iškarpos (ne iš jau padidintos), padidinant iki ~4×
+        up = min(4.0, max(1.0, 96 / max(1.0, box[3] - box[1])))
+        chars = vote_chars(_plate_variants(src, box, up))
+        text, score = _summary(chars)
+        out.append({"box": [round(v, 1) for v in box], "text": text, "score": round(score, 3), "chars": chars, "det": round(float(d.confidence), 3)})
+    return out
 
 
 def _sharpness(img: np.ndarray) -> float:
@@ -659,9 +698,11 @@ def _fuse_plates(imgs: list, inners: list) -> dict:
     x1, y1, x2, y2 = inners[r] if r < len(inners) else (0.0, 0.0, 1.0, 1.0)
     px1, py1 = max(0, int(x1 * W)), max(0, int(y1 * H))
     px2, py2 = min(W, int(np.ceil(x2 * W)) + 1), min(H, int(np.ceil(y2 * H)) + 1)
-    text, score = _ocr_text(fused[py1:py2, px1:px2]) if px2 - px1 > 4 and py2 - py1 > 4 else ("", 0.0)
+    pw, ph = px2 - px1, py2 - py1
+    chars = vote_chars(_plate_variants(fused, (px1, py1, px2, py2), 1.0)) if pw > 4 and ph > 4 else []
+    text, score = _summary(chars)
     ok, jpg = cv2.imencode(".jpg", _display_enhance(fused), [cv2.IMWRITE_JPEG_QUALITY, 92])
-    return {"text": text, "score": round(score, 3), "frames": len(acc), "of": len(imgs), "image": base64.b64encode(jpg.tobytes()).decode() if ok else ""}
+    return {"text": text, "score": round(score, 3), "chars": chars, "frames": len(acc), "of": len(imgs), "image": base64.b64encode(jpg.tobytes()).decode() if ok else ""}
 
 
 @app.post("/plates/fuse")

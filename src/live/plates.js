@@ -8,14 +8,38 @@ const MAX_CROPS = 6; // vienoje užklausoje – didžiausios transporto priemon�
 const PAD = 0.15; // iškarpa – rėmelis + 15 %
 const INTERVAL = 900; // ms tarp užklausų
 const INTERVAL_HOT = 450; // kai matomas numeris – dažniau (daugiau kadrų sujungimui)
+const MAX_READS = 40; // kiek paskutinių perskaitymų laikoma balsavimui
 const MAX_SHOTS = 10; // kiek paskutinių numerio kadrų laikoma sujungimui
 const FUSE_MIN = 3; // sujungiama, kai yra bent tiek kadrų
 const FUSE_GAP = 1200; // ms tarp sujungimų
-const FUSE_WEIGHT = 2; // sujungto vaizdo perskaitymas – patikimesnis už vieną kadrą
+const FUSE_WEIGHT = 3; // sujungto vaizdo perskaitymas – patikimesnis už vieną kadrą
 const SHOW_MS = 3500; // kiek laiko rodomas priartintas numeris po paskutinio perskaitymo
 const TEXT_RE = /^[A-Z0-9]{4,10}$/;
 const MIN_SCORE = 0.5;
 const SURE = 0.85; // vienas perskaitymas su tokiu tikrumu – numeris laikomas patvirtintu
+
+/**
+ * Balsavimas pagal simbolio vietą (MVCP, Nascimento ir kt. 2025; taip pat ICPR 2026 žemos raiškos numerių
+ * varžybų lyderių praktika): dažniausias ilgis, tada kiekvienoje vietoje – simbolis su didžiausia tikrumų suma.
+ * @param {{chars:[string, number][], w:number}[]} readings
+ * @returns {{text:string, share:number}} share – silpniausios vietos balsų dalis (0–1)
+ */
+export function voteChars(readings) {
+  const byLen = new Map();
+  for (const r of readings) if (r.chars.length) byLen.set(r.chars.length, (byLen.get(r.chars.length) || 0) + r.w * (r.chars.reduce((a, [, p]) => a + p, 0) / r.chars.length));
+  if (!byLen.size) return { text: '', share: 0 };
+  const L = [...byLen].sort((a, b) => b[1] - a[1])[0][0];
+  const acc = Array.from({ length: L }, () => new Map());
+  for (const r of readings) if (r.chars.length === L) r.chars.forEach(([c, p], i) => acc[i].set(c, (acc[i].get(c) || 0) + r.w * p));
+  let text = '', share = 1;
+  for (const m of acc) {
+    const [c, v] = [...m].sort((a, b) => b[1] - a[1])[0];
+    const tot = [...m.values()].reduce((a, b) => a + b, 0);
+    text += c;
+    share = Math.min(share, v / Math.max(1e-6, tot));
+  }
+  return { text, share };
+}
 
 /** Redagavimo atstumas (iki 2 – daugiau nereikia). */
 function near(a, b) {
@@ -99,7 +123,7 @@ export class PlateBook {
         const best = (list || []).filter((r) => TEXT_RE.test(r.text || '') && r.score >= MIN_SCORE).sort((a, b) => b.det * b.score - a.det * a.score)[0];
         if (!best) return;
         const box = best.box.map((v, n) => (n % 2 ? p.y : p.x) + v / p.k);
-        this.add(best.text, best.score, box, p.d, native, at);
+        this.add(best.text, best.score, box, p.d, native, at, best.chars);
       });
       this.error = '';
       this.fuse(ai);
@@ -140,6 +164,7 @@ export class PlateBook {
       }
       rec.fusedN = res.frames || 0;
       rec.fusedText = TEXT_RE.test(res.text || '') && res.score >= MIN_SCORE ? res.text : '';
+      rec.fusedChars = rec.fusedText ? res.chars || [...res.text].map((c) => [c, res.score]) : null;
       rec.fusedScore = res.score || 0;
       rec.fusedSeq = seq;
       this.tally(rec);
@@ -150,18 +175,24 @@ export class PlateBook {
     }
   }
 
-  /** Rodomas tekstas – daugiausia balsų (pavieniai kadrai + sujungtas vaizdas su didesniu svoriu). */
+  /**
+   * Rodomas tekstas – balsavimas pagal simbolių vietas per visus kadrus (sujungtas vaizdas – didesnis svoris).
+   * Teisingas numeris gaunamas net tada, kai nė vienas kadras nebuvo perskaitytas be klaidų.
+   */
   tally(rec) {
-    const votes = new Map(rec.votes);
-    if (rec.fusedText) votes.set(rec.fusedText, (votes.get(rec.fusedText) || 0) + FUSE_WEIGHT * rec.fusedScore);
-    const [top, sum] = [...votes].sort((a, b) => b[1] - a[1])[0];
-    rec.text = top;
-    // Patvirtintas: bent du perskaitymai sutampa, vienas labai tikras arba sujungtas vaizdas tikras
-    rec.sure = sum >= 2 * MIN_SCORE || (rec.votes.get(top) || 0) >= SURE || (rec.fusedText === top && rec.fusedScore >= SURE);
-    return top;
+    const reads = [...(rec.readings || [])];
+    if (rec.fusedChars) reads.push({ chars: rec.fusedChars, w: FUSE_WEIGHT });
+    const { text, share } = voteChars(reads);
+    rec.text = TEXT_RE.test(text) ? text : rec.text;
+    rec.share = share;
+    const same = (rec.readings || []).filter((r) => r.text === rec.text).length;
+    // Patvirtintas: du perskaitymai sutampa, vienas labai tikras, sujungtas vaizdas tikras,
+    // arba ≥3 perskaitymai ir kiekvienoje vietoje aiški dauguma
+    rec.sure = same >= 2 || (rec.votes.get(rec.text) || 0) >= SURE || (rec.fusedText === rec.text && rec.fusedScore >= SURE) || ((rec.readings?.length || 0) >= 3 && share >= 0.6);
+    return rec.text;
   }
 
-  add(text, score, box, veh, native, at) {
+  add(text, score, box, veh, native, at, chars = null) {
     const recent = (r, ms) => at - r.lastAt < ms;
     const rec =
       (veh.id && this.recs.find((r) => r.id === veh.id && recent(r, 30000))) ||
@@ -169,6 +200,8 @@ export class PlateBook {
       this.recs.find((r) => recent(r, 60000) && near(r.text, text) <= 1) ||
       this.recs[this.recs.push({ key: ++this.seq, id: veh.id || null, votes: new Map(), text, score: 0, reads: 0, firstAt: at, lastAt: at }) - 1];
     rec.votes.set(text, (rec.votes.get(text) || 0) + score);
+    (rec.readings ||= []).push({ text, chars: chars?.length ? chars : [...text].map((c) => [c, score]), w: 1 });
+    if (rec.readings.length > MAX_READS) rec.readings.shift();
     rec.reads++;
     rec.lastAt = at;
     rec.box = box;
