@@ -96,3 +96,16 @@ def test_norm_name():
     assert compare_sfm.norm_name("CAM_0001_V.JPG.tif") == "cam_0001_v.jpg"
     assert compare_sfm.norm_name("images/CAM_0001_V.JPG") == "cam_0001_v.jpg"
     assert compare_sfm.norm_name("ortho.tif") == "ortho.tif"
+
+
+def test_time_offset_est():
+    """Skrydžio linijos pirmyn / atgal (8 m/s): kameros pasislinkusios 0,1 s kryptimi – įvertinama 0,1 s, 0,8 m."""
+    centers, gps, vel = {}, {}, {}
+    for k in range(40):
+        v = np.array([8.0 if (k // 10) % 2 == 0 else -8.0, 0.0, 0.0])
+        g = np.array([k * 5.0, (k // 10) * 30.0, 60.0])
+        n = "img%02d.jpg" % k
+        gps[n], vel[n], centers[n] = g, v, g + v * 0.1
+    dt, along = compare_sfm.time_offset_est(centers, gps, vel)
+    assert abs(dt - 0.1) < 1e-9 and abs(along - 0.8) < 1e-9
+    assert compare_sfm.time_offset_est({}, gps, vel) is None
