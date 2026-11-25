@@ -104,10 +104,25 @@ def residuals(centers, gps):
             "v_med": float(np.median(np.abs(d[:, 2]))), "v_bias": float(np.median(d[:, 2]))}
 
 
+def time_offset_est(centers, gps, vel):
+    """Laiko poslinkis (s) tarp kadro ir GPS padėties, kurį rodo kamerų centrai: išilgai skrydžio krypties
+    pasislinkimas = Δt · greitis (mažiausi kvadratai). Grąžina (Δt, išilginio poslinkio mediana m) arba None."""
+    rows = [(centers[n] - gps[n], vel[n]) for n in centers if n in gps and n in vel and np.linalg.norm(vel[n][:2]) > 2.0]
+    if len(rows) < 10:
+        return None
+    D = np.array([r[0] for r in rows])
+    V = np.array([r[1] for r in rows])
+    sp = np.linalg.norm(V[:, :2], axis=1)
+    along = (D[:, :2] * V[:, :2]).sum(1) / sp
+    return float((along * sp).sum() / (sp * sp).sum()), float(np.median(np.abs(along)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("uuid", nargs="?", help="ODM projekto ID (be jo – naujausias baigtas)")
     ap.add_argument("--keep", action="store_true", help="nenaikinti ankstesnių skaičiavimų (tik ataskaita)")
+    ap.add_argument("--no-time-offset", action="store_true",
+                    help="georeferencija be laiko poslinkio tarp kadro ir GPS pataisos (perskaičiuojamas tik šis etapas)")
     a = ap.parse_args()
     uuid = a.uuid or latest_odm_project()
     if not uuid:
@@ -132,6 +147,12 @@ def main():
             shutil.copy(os.path.join(gcp, f), os.path.join(work, f))
 
     p = pipeline.Pipeline(work, "high")
+    if a.no_time_offset:
+        p._time_offset = lambda rec: 0.0
+        try:
+            os.remove(p._done_path("georef"))
+        except OSError:
+            pass
     t0 = time.time()
     p.run(until="georef")
     minutes = (time.time() - t0) / 60
@@ -173,6 +194,8 @@ def main():
         return "–" if v is None else fmt % v
 
     rg_odm, rg_col = residuals(odm, gps), residuals(col, gps)
+    vel = {norm_name(k): v + 0 for k, v in p._gps_velocities().items()}
+    to_odm, to_col = time_offset_est(odm, gps, vel), time_offset_est(col, gps, vel)
     L = []
     L.append("KAMERŲ PADĖČIŲ PALYGINIMAS – projektas %s (%d nuotr., %s)" % (uuid, n_photos, zone))
     L.append("")
@@ -186,6 +209,11 @@ def main():
     if rg_odm or rg_col:
         L.append("%-38s %18s %18s" % ("Nuo GPS: horizont. mediana, m", f(rg_odm and rg_odm["h_med"]), f(rg_col and rg_col["h_med"])))
         L.append("%-38s %18s %18s" % ("Nuo GPS: vertik. mediana, m", f(rg_odm and rg_odm["v_med"]), f(rg_col and rg_col["v_med"])))
+    if to_odm or to_col:
+        L.append("%-38s %18s %18s" % ("Laiko poslinkis kadras–GPS, s", f(to_odm and to_odm[0], "%.3f"), f(to_col and to_col[0], "%.3f")))
+        L.append("%-38s %18s %18s" % ("Išilginis poslinkis nuo GPS, m", f(to_odm and to_odm[1]), f(to_col and to_col[1])))
+    if a.no_time_offset:
+        L.append("(COLMAP georeferencija – be laiko poslinkio pataisos)")
     L.append("")
     L.append("COLMAP etapai, min.: " + ", ".join("%s %.1f" % (k, v) for k, v in stage_t.items()))
     if shape:
