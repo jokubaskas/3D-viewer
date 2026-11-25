@@ -74,6 +74,24 @@ class Images:
         return self.cache[i]
 
 
+RES_LEVELS = (0.25, 1 / 3, 0.5, 2 / 3, 0.8, 1.0)  # raiškos lygiai (nuotraukų mastelis), kad gylio talpykla būtų nedidelė
+
+
+def res_scale(step, steps, r0=0.25, full=0.5):
+    """Nuotraukų mastelis žingsniui: auga eksponentiškai nuo r0 iki 1 per pirmą full žingsnių dalį, suapvalinamas žemyn
+    iki RES_LEVELS lygio (ne mažiau kaip r0)."""
+    end = full * steps
+    if r0 >= 1 or step >= end:
+        return 1.0
+    s = r0 * (1.0 / r0) ** (step / end)
+    return max([l for l in RES_LEVELS if l <= s + 1e-9] or [r0])
+
+
+def step_cost(s):
+    """Santykinė žingsnio trukmė pagal mastelį (pastovi dalis + pikselių skaičius) – likusio laiko įvertinimui."""
+    return 0.2 + 0.8 * s * s
+
+
 GPU_IMAGES_SHARE = 0.15  # nuotraukos laikomos GPU, jei užima mažiau nei tokią GPU atminties dalį
 
 
@@ -88,8 +106,10 @@ def main():
     ap.add_argument("--max-points", type=int, default=1_500_000)
     ap.add_argument("--depth-weight", type=float, default=0.3, help="gylio priežiūros iš ODM taškų svoris (pradžioje)")
     ap.add_argument("--max-ratio", type=float, default=10.0, help="didžiausias splato ilgio ir pločio santykis (adatos)")
-    ap.add_argument("--coarse", type=float, default=0.4,
-                    help="tokia dalis pradžios žingsnių mokoma perpus mažesnėmis nuotraukomis (~3× greičiau, kokybė ta pati)")
+    # Raiškos ir splatų kiekio tvarkaraštis (DashGaussian, CVPR 2025): pradžioje mokoma mažos raiškos nuotraukomis ir su
+    # mažiau splatų (forma, spalvos), raiška ir splatų riba auga kartu, pilna raiška – nuo res_full žingsnių dalies
+    ap.add_argument("--res-min", type=float, default=0.25, help="pradinė nuotraukų raiška (dalis nuo --max-size)")
+    ap.add_argument("--res-full", type=float, default=0.5, help="nuo tokios žingsnių dalies mokoma pilna raiška")
     ap.add_argument("--sh-reg", type=float, default=0.01, help="atspindžių (SH) koeficientų bauda – iš naujų kampų mažiau triukšmo")
     ap.add_argument("--device", default="cuda", help=argparse.SUPPRESS)  # testams: cpu
     a = ap.parse_args()
@@ -184,8 +204,12 @@ def main():
     t0 = time.time()
     cancel = os.path.join(a.out_dir, "cancel")
     order = []
-    coarse_end = int(a.steps * a.coarse)
-    t_warm, s_warm = None, 0  # laikas po įšilimo (pirmi žingsniai – CUDA kompiliavimas, nuotraukų skaitymas)
+    scales_sched = np.array([res_scale(k, a.steps, a.res_min, a.res_full) for k in range(a.steps)])
+    cost_left = np.cumsum([step_cost(x) for x in scales_sched][::-1])[::-1]  # cost_left[k] – žingsnių k..pabaigos kaina
+    n0 = n
+    t_warm, w_warm = None, 0.0  # laikas po įšilimo (pirmi žingsniai – CUDA kompiliavimas, nuotraukų skaitymas)
+    w_acc = 0.0
+    t_block, s_block = time.time(), 0
     write_status(a.out_dir, state="training", message="Mokoma", cameras=len(cams))
     for step in range(a.steps):
         if not order:
@@ -194,12 +218,21 @@ def main():
         i = order.pop()
         gt_u8, Kc = imgs.get(i)
         gt = gt_u8.to(dev, non_blocking=True).float() / 255.0
-        if step < coarse_end:
-            # Grubus etapas: forma ir spalvos mokomos perpus mažesne raiška, smulkios detalės – vėliau pilna
-            gt = F.avg_pool2d(gt.permute(2, 0, 1)[None], 2)[0].permute(1, 2, 0)
+        rs = float(scales_sched[step])
+        if rs < 1.0:
+            # Mažesnė raiška: forma ir spalvos mokomos greičiau, smulkios detalės – vėliau pilna raiška
+            H0, W0 = gt.shape[:2]
+            Hs, Ws = max(8, round(H0 * rs)), max(8, round(W0 * rs))
+            gt = F.interpolate(gt.permute(2, 0, 1)[None], size=(Hs, Ws), mode="area")[0].permute(1, 2, 0)
             Kc = Kc.copy()
-            Kc[:2] *= 0.5
-            Kc[:2, 2] -= 0.25  # pikselio centras: (c + 0.5) / 2 − 0.5
+            sx, sy = Ws / W0, Hs / H0
+            Kc[0, 0] *= sx
+            Kc[1, 1] *= sy
+            Kc[0, 2] = (Kc[0, 2] + 0.5) * sx - 0.5  # pikselio centras
+            Kc[1, 2] = (Kc[1, 2] + 0.5) * sy - 0.5
+        # Splatų riba auga kartu su raiška (mažai raiškai daug splatų nereikia – tik lėtina)
+        if a.cap > n0:
+            strategy.cap_max = int(n0 + (a.cap - n0) * min(1.0, (rs - a.res_min) / max(1e-6, 1.0 - a.res_min)))
         H, W = gt.shape[:2]
         viewmat = viewmats[i][None]
         Kt = torch.tensor(Kc, device=dev, dtype=torch.float32)[None]
@@ -233,20 +266,20 @@ def main():
             opt.zero_grad(set_to_none=True)
         sched.step()
         strategy.step_post_backward(params, optimizers, state, step, info, lr=sched.get_last_lr()[0])
+        w_acc += step_cost(rs)
         if step % 100 == 0 or step == a.steps - 1:
-            el = time.time() - t0
             if t_warm is None and step >= 100:
-                t_warm, s_warm = time.time(), step
+                t_warm, w_warm = time.time(), w_acc
             eta = None
-            if t_warm is not None and step - s_warm >= 100:
-                rate = (time.time() - t_warm) / (step - s_warm)
-                left_c = max(0, coarse_end - step - 1)
-                left_f = a.steps - step - 1 - left_c
-                # grubaus etapo metu pilnos raiškos žingsniai įvertinami ~3× lėtesni
-                eta = rate * (left_c + left_f * (3.0 if step < coarse_end else 1.0))
+            if t_warm is not None and w_acc - w_warm > 20:
+                # sekundės vienam „kainos“ vienetui (pilnos raiškos žingsniui) × likusių žingsnių kaina
+                eta = (time.time() - t_warm) / (w_acc - w_warm) * (float(cost_left[step + 1]) if step + 1 < a.steps else 0.0)
             write_status(a.out_dir, step=step + 1, eta=round(eta) if eta is not None else None, splats=int(params["means"].shape[0]), loss=round(float(l1.detach()), 4))
             if step % 1000 == 0:
-                print("žingsnis %d/%d, l1 %.4f, splatų %d, liko ~%s min." % (step, a.steps, float(l1.detach()), params["means"].shape[0],
+                per = (time.time() - t_block) / max(1, step - s_block)
+                t_block, s_block = time.time(), step
+                print("žingsnis %d/%d, raiška %d×%d, l1 %.4f, splatų %d, %.0f ms/žingsn., liko ~%s min." % (
+                      step, a.steps, W, H, float(l1.detach()), params["means"].shape[0], per * 1000,
                       "?" if eta is None else int(eta / 60)), flush=True)
             if os.path.exists(cancel):
                 write_status(a.out_dir, state="cancelled", message="Atšaukta")
