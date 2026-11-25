@@ -94,6 +94,9 @@ export class NodeODM {
       name,
       options: JSON.stringify(options),
       outputs: outputs ? JSON.stringify(outputs) : null,
+      // Taškų debesies plytelės (Entwine/EPT – WebODM peržiūrai) šioje programoje nenaudojamos: be jų užduotis
+      // baigiasi ~3 min. greičiau (all.zip vis tiek sukuriamas)
+      skipPostProcessing: outputs ? 'true' : null,
     }, uuid ? { 'set-uuid': uuid } : undefined);
     if (!r.uuid) throw new Error(t('Serveris negrąžino užduoties ID'));
     return r.uuid;

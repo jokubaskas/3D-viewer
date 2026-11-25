@@ -174,3 +174,38 @@ def test_recover_requeues_running(tmp_path, monkeypatch):
     (tmp_path / u / "task.json").write_text(json.dumps({"status": 20, "committed": True}))
     appmod.recover()
     assert jobs.queue[0][:2] == ("pipeline", u) and appmod._task(u)["status"] == 10
+
+
+def test_train_wait_odm_starts_after_meshing(client, monkeypatch):
+    """ODM dar dirba: mokymas laukia, kol šiame paleidime atsiras 2.5D tinklas (3D tinklo etapo pabaiga), tada paleidžiamas."""
+    c = client
+    monkeypatch.setattr(appmod, "WAIT_POLL", 0.05)
+    u = "12345678-1234-1234-1234-1234567890ab"
+    task = os.path.join(appmod.ODM_DATA, u)
+    for f in ("opensfm/undistorted/reconstruction.json", "odm_filterpoints/point_cloud.ply", "odm_meshing/odm_25dmesh.ply"):
+        os.makedirs(os.path.dirname(os.path.join(task, f)), exist_ok=True)
+        open(os.path.join(task, f), "w").write("x")
+    old = time.time() - 3600
+    os.utime(os.path.join(task, "odm_meshing/odm_25dmesh.ply"), (old, old))  # ankstesnio paleidimo failas
+    r = c.post("/train", json={"uuid": u, "wait_odm": True})
+    assert r.status_code == 200 and r.json()["state"] == "waiting"
+    assert c.post("/train", json={"uuid": u, "wait_odm": True}).json()["state"] == "waiting"  # pakartotinis – tas pats
+    time.sleep(0.4)
+    assert not c.splats  # senas 2.5D tinklas – dar laukiama
+    os.utime(os.path.join(task, "odm_meshing/odm_25dmesh.ply"))  # ODM baigė 3D tinklą
+    t0 = time.time()
+    while not c.splats and time.time() - t0 < 5:
+        time.sleep(0.05)
+    assert c.splats == [(u, {"steps": 30000, "auto": True})]
+
+
+def test_train_wait_odm_cancel(client, monkeypatch):
+    c = client
+    monkeypatch.setattr(appmod, "WAIT_POLL", 0.05)
+    u = "12345678-1234-1234-1234-1234567890ac"
+    os.makedirs(os.path.join(appmod.ODM_DATA, u))
+    assert c.post("/train", json={"uuid": u, "wait_odm": True}).json()["state"] == "waiting"
+    assert c.post("/cancel", json={"uuid": u}).json()["ok"]
+    j = {x["uuid"]: x for x in c.get("/jobs").json()}
+    assert j[u]["state"] == "cancelled"
+    assert u not in appmod.WAITERS
