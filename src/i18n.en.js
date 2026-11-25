@@ -1703,4 +1703,9 @@ export const EN = {
   "tikrumas": "confidence",
   "tipas": "type",
   "Realistiškas vaizdas nepaleistas: {e}": "Realistic view not started: {e}",
+  "Sujungta iš {n} kadrų": "Fused from {n} frames",
+  "Originalus kadras": "Original frame",
+  "originalas": "original",
+  "sujungta_kadru": "fused_frames",
+  "Numeriai atpažinti automatiškai ir gali būti netikslūs. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.": "Plates are recognised automatically and may be inaccurate. The fused image is an average of several real video frames (nothing is synthesised); the original frame is shown alongside. They are personal data – store and share them only in line with GDPR.",
 };
