@@ -1,7 +1,7 @@
 // AI įrašas klientui: vaizdas su įrašytais rėmeliais, skaičiais ir laiku + ataskaita (HTML, CSV, JSON, įvykių kadrai).
 // Įrašoma ne pats grotuvas, o drobė, ant kurios kiekvieną kadrą piešiamas vaizdas ir paskutiniai AI rezultatai.
 import { classColor, classLabel, detLabel, stateFamily } from './ai.js';
-import { drawPlates } from './plates.js';
+import { drawPlates, vehicleRows } from './plates.js';
 import { t, locale } from '../i18n.js';
 import { drawLogo, logoSvg } from '../logo.js';
 import { telemetryLine } from './telemetry-ui.js';
@@ -414,7 +414,7 @@ export class AiComposer {
       const tl = Math.max(0, Math.round(r.lastAt - this.t0));
       let p = this.plates.get(r.key);
       if (!p) this.plates.set(r.key, (p = { firstT: tl, firstAt: this.started + tl, pos: pos || null, reads0: r.reads - 1 }));
-      Object.assign(p, { text: r.text, score: Math.max(r.score || 0, r.fusedText === r.text ? r.fusedScore : 0), reads: r.reads - p.reads0, lastT: tl, img: r.img, fused: r.fused || null, fusedN: r.fusedN || 0, cls: r.cls, id: r.id });
+      Object.assign(p, { text: r.text, score: Math.max(r.score || 0, r.fusedText === r.text ? r.fusedScore : 0), reads: r.reads - p.reads0, lastT: tl, img: r.img, fused: r.fused || null, fusedN: r.fusedN || 0, veh: r.veh || null, cls: r.cls, id: r.id });
     }
   }
 
@@ -604,11 +604,11 @@ export async function reportZip({ name, video, comp, settings }) {
     // Sujungtas iš kelių kadrų (ryškesnis) ir originalus pavienis kadras – įrodymui
     const fused = p.fused && p.fusedN > 1 ? await plateImg(p.fused, `kadrai/numeris_${nr}.jpg`) : '';
     const img = await plateImg(p.img, fused ? `kadrai/numeris_${nr}_originalas.jpg` : `kadrai/numeris_${nr}.jpg`);
-    plateRows.push({ text: p.text, firstT: p.firstT, lastT: p.lastT, at: p.firstAt, reads: p.reads, score: +p.score.toFixed(2), class: p.cls, id: p.id, pos: p.pos, img, fused, fusedFrames: fused ? p.fusedN : 0 });
+    plateRows.push({ text: p.text, firstT: p.firstT, lastT: p.lastT, at: p.firstAt, reads: p.reads, score: +p.score.toFixed(2), class: p.cls, id: p.id, pos: p.pos, img, fused, fusedFrames: fused ? p.fusedN : 0, vehicle: p.veh || null, vrows: vehicleRows(p.veh) });
   }
   const platesOn = !!settings.plates && !settings.model;
   if (platesOn || plateRows.length)
-    files['numeriai.csv'] = strToU8('\ufeff' + [t('numeris'), t('pirma_s'), t('paskutine_s'), t('data_laikas'), t('perskaityta_kartu'), t('tikrumas'), t('tipas'), t('platuma'), t('ilguma'), t('kadras'), t('originalas'), t('sujungta_kadru')].join(';') + '\n' + plateRows.map((p) => [p.text, (p.firstT / 1000).toFixed(1), (p.lastT / 1000).toFixed(1), fmtClock(new Date(p.at)), p.reads, p.score, classLabel(p.class), p.pos?.[0] ?? '', p.pos?.[1] ?? '', p.fused || p.img, p.fused ? p.img : '', p.fusedFrames || ''].join(';')).join('\n') + '\n');
+    files['numeriai.csv'] = strToU8('\ufeff' + [t('numeris'), t('pirma_s'), t('paskutine_s'), t('data_laikas'), t('perskaityta_kartu'), t('tikrumas'), t('tipas'), t('platuma'), t('ilguma'), t('kadras'), t('originalas'), t('sujungta_kadru'), t('spalva'), t('kebulas'), t('marke'), t('modelis'), t('metai')].join(';') + '\n' + plateRows.map((p) => [p.text, (p.firstT / 1000).toFixed(1), (p.lastT / 1000).toFixed(1), fmtClock(new Date(p.at)), p.reads, p.score, classLabel(p.class), p.pos?.[0] ?? '', p.pos?.[1] ?? '', p.fused || p.img, p.fused ? p.img : '', p.fusedFrames || '', ...p.vrows.map((v) => v.value || v.note)].join(';')).join('\n') + '\n');
 
   // CSV: kiekvienas AI rezultatas
   const groups = st.map((s) => s.key);
@@ -619,7 +619,7 @@ export async function reportZip({ name, video, comp, settings }) {
   files['ivykiai.csv'] = strToU8('﻿' + [t('laikas_s'), t('data_laikas'), t('pabaiga_s'), t('ivykis'), t('kadras'), t('platuma'), t('ilguma')].join(';') + '\n' + evRows.map((e) => [(e.t / 1000).toFixed(1), fmtClock(new Date(e.at)), e.end != null ? (e.end / 1000).toFixed(1) : '', evText(e), e.img, e.pos?.[0] ?? '', e.pos?.[1] ?? ''].join(';')).join('\n') + '\n');
   files['skaiciai.csv'] = strToU8('﻿' + csv.join('\n') + '\n');
   files['duomenys.json'] = strToU8(
-    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, flight: fs ? { dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S } : null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), ...(platesOn || plateRows.length ? { plates: plateRows } : {}), track: comp.track }, null, 0),
+    JSON.stringify({ name, start: start.toISOString(), durationMs: dur, settings, classes: Object.fromEntries(Object.entries(GROUPS).map(([k, g]) => [k, g.classes])), stats: st, unique: comp.unique || null, flight: fs ? { dock: fs.dock, distM: Math.round(fs.dist), telemetry: fs.S } : null, events: evRows.map(({ img: _i, q: _q, shotT: _s, token: _k, ...e }) => e), ...(platesOn || plateRows.length ? { plates: plateRows.map(({ vrows: _v, ...p }) => p) } : {}), track: comp.track }, null, 0),
   );
 
   const nf = (v, d = 0) => new Intl.NumberFormat(locale(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
@@ -648,10 +648,10 @@ ${evRows.map((e, i) => `<tr><td>${e.pos && fs?.route.length ? `<b class="evn">${
 </table>` : `<p>${esc(t('Įvykių nebuvo.'))}</p>`}
 </section>
 ${platesOn || plateRows.length ? `<section><h2>${esc(t('Valstybiniai numeriai'))}</h2>
-${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Vieta'))}</th><th>${esc(t('Priartinta'))}</th></tr>
-${plateRows.map((p) => `<tr><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td><td>${p.fused ? `<a href="${p.fused}" target="_blank"><img src="${p.fused}" alt=""></a><span style="color:var(--mut);font-size:12px">${esc(t('Sujungta iš {n} kadrų', { n: p.fusedFrames }))}</span>` : ''}${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""${p.fused ? ' style="width:110px;margin-top:6px"' : ''}></a>${p.fused ? `<span style="color:var(--mut);font-size:12px">${esc(t('Originalus kadras'))}</span>` : ''}` : ''}</td></tr>`).join('\n')}
+${plateRows.length ? `<table><tr><th>${esc(t('Numeris'))}</th><th>${esc(t('Matėsi'))}</th><th>${esc(t('Automobilis'))}</th><th>${esc(t('Vieta'))}</th><th>${esc(t('Priartinta'))}</th></tr>
+${plateRows.map((p) => `<tr><td><span class="plate">${esc(p.text)}</span><br><span style="color:var(--mut);font-size:12px">${esc(classLabel(p.class))}${p.id ? ` #${p.id}` : ''} · ${esc(t('perskaityta {n} k.', { n: p.reads }))} · ${esc(t('tikrumas {p} %', { p: Math.round(p.score * 100) }))}</span></td><td><a class="t" data-t="${Math.max(0, p.firstT - 1000) / 1000}">${fmtDur(p.firstT)}</a>${p.lastT - p.firstT >= 1000 ? `–${fmtDur(p.lastT)}` : ''}<br><span style="color:var(--mut);font-size:12px">${esc(fmtClock(new Date(p.at)))}</span></td><td style="font-size:12.5px">${p.vrows.map((v) => `${esc(v.label)}: ${v.value ? `<b>${esc(v.value)}</b> <span style="color:var(--mut)">${Math.round(v.p * 100)} %</span>` : `<span style="color:var(--mut)">${esc(v.note)}</span>`}`).join('<br>')}</td><td>${p.pos ? `<a class="geo" href="https://maps.google.com/?q=${p.pos[0]},${p.pos[1]}" target="_blank">${p.pos[0].toFixed(6)}, ${p.pos[1].toFixed(6)}</a>${p.pos[2] != null ? `<br><span style="color:var(--mut);font-size:12px">${esc(t('drono aukštis {h} m', { h: Math.round(p.pos[2]) }))}</span>` : ''}` : '–'}</td><td>${p.fused ? `<a href="${p.fused}" target="_blank"><img src="${p.fused}" alt=""></a><span style="color:var(--mut);font-size:12px">${esc(t('Sujungta iš {n} kadrų', { n: p.fusedFrames }))}</span>` : ''}${p.img ? `<a href="${p.img}" target="_blank"><img src="${p.img}" alt=""${p.fused ? ' style="width:110px;margin-top:6px"' : ''}></a>${p.fused ? `<span style="color:var(--mut);font-size:12px">${esc(t('Originalus kadras'))}</span>` : ''}` : ''}</td></tr>`).join('\n')}
 </table>` : `<p>${esc(t('Numerių neperskaityta.'))}</p>`}
-<p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Numeriai atpažinti automatiškai ir gali būti netikslūs. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.'))}</p></section>` : ''}
+<p style="color:var(--mut);font-size:12.5px;margin:6px 0 0">${esc(t('Numeriai ir automobilio požymiai atpažinti automatiškai ir gali būti netikslūs; neužtikrinti požymiai pažymėti „neatpažinta“. Sujungtas vaizdas – kelių tikrų vaizdo kadrų vidurkis (niekas nepiešiama dirbtinai), šalia – originalus kadras. Tai asmens duomenys – saugokite ir perduokite tik pagal BDAR.'))}</p></section>` : ''}
 <section><h2>${esc(t('Duomenys'))}</h2><table class="meta">
 <tr><td>${esc(t('Šaltinis'))}</td><td>${esc(name)}</td></tr>
 <tr><td>${esc(t('Pradžia'))}</td><td>${esc(fmtClock(start))}</td></tr>

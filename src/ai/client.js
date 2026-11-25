@@ -84,6 +84,17 @@ export class AiClient {
   }
 
   /**
+   * Automobilio požymiai (spalva, kėbulas, markė, modelis) iš kelių to paties automobilio iškarpų.
+   * Neatpažinti požymiai – value: null.
+   */
+  vehicle(blobs, { kind = 'car', signal } = {}) {
+    const fd = new FormData();
+    fd.append('kind', kind);
+    blobs.forEach((b, i) => fd.append('images', b, `auto_${i}.jpg`));
+    return this._req('vehicle', { method: 'POST', body: fd, signal });
+  }
+
+  /**
    * GeoTIFF perskaičiavimas į LKS-94 (EPSG:3346) AI paslaugoje (GDAL).
    * @returns {Promise<Blob>}
    */

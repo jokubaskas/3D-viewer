@@ -24,6 +24,10 @@ RUN mkdir -p /models \
 # Valstybinių numerių atpažinimas (fast-alpr, MIT; ONNX CPU). Modeliai (~10 MB) atsisiunčiami kuriant vaizdą.
 RUN pip install --no-cache-dir "fast-alpr[onnx]==0.4.0" \
   && python -c "from fast_alpr import ALPR; ALPR()"
+# Automobilio požymiai (SigLIP 2, Apache 2.0, ~0,8 GB): spalva, kėbulas, markė, modelis
+RUN pip freeze | grep -iE '^(torch|torchvision)==' > /tmp/torch.txt \
+  && pip install --no-cache-dir -c /tmp/torch.txt --extra-index-url ${TORCH_INDEX} open_clip_torch==4.2.2 transformers sentencepiece \
+  && python -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-16-SigLIP2-256', pretrained='webli'); open_clip.get_tokenizer('ViT-B-16-SigLIP2-256')"
 
 # C kompiliatorius: mokant GPU, PyTorch (Triton) vietoje kompiliuoja pagalbinius modulius – be jo
 # „RuntimeError: Failed to find C compiler“. Atskiras sluoksnis gale – kad nereikėtų iš naujo siųstis PyTorch.
@@ -32,6 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev \
 
 ENV ATEA_AI_MODELS=/models ATEA_AI_DETECTOR=${DETECTOR} HF_HUB_OFFLINE=1 CC=gcc
 WORKDIR /app
-COPY app.py train.py /app/
+COPY app.py train.py vehicle.py /app/
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
