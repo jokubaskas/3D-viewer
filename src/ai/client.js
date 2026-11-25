@@ -62,6 +62,16 @@ export class AiClient {
   }
 
   /**
+   * Valstybinių numerių atpažinimas transporto priemonių iškarpose (fast-alpr).
+   * @returns {Promise<{results:{box:number[],text:string,score:number,det:number}[][]}>}
+   */
+  plates(blobs, { signal } = {}) {
+    const fd = new FormData();
+    blobs.forEach((b, i) => fd.append('images', b, `tp_${i}.jpg`));
+    return this._req('plates', { method: 'POST', body: fd, signal });
+  }
+
+  /**
    * GeoTIFF perskaičiavimas į LKS-94 (EPSG:3346) AI paslaugoje (GDAL).
    * @returns {Promise<Blob>}
    */

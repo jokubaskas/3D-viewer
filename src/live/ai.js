@@ -3,6 +3,7 @@
 import { AI_CLASSES } from '../ai/client.js';
 import { t, locale } from '../i18n.js';
 import { Tracker } from './tracker.js';
+import { PlateBook, PLATE_VEHICLES, drawPlates } from './plates.js';
 
 /** Detalumas: kadro dydis siunčiant ir plytelės (maži objektai iš aukštai matomi tik skaidant kadrą). */
 export const AI_DETAIL = {
@@ -63,15 +64,23 @@ const MAX_SAMPLES = 400;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Kadras iš &lt;video&gt; / &lt;img&gt; kaip JPEG (sumažintas iki maxSide). */
-async function grab(el, maxSide) {
+async function grab(el, maxSide, native = null) {
   const w0 = el.videoWidth || el.naturalWidth, h0 = el.videoHeight || el.naturalHeight;
   if (!w0 || !h0) return null;
   const k = Math.min(1, maxSide / Math.max(w0, h0));
   const w = Math.round(w0 * k), h = Math.round(h0 * k);
+  // native – pilnos raiškos kadras (numeriams); sumažintas kadras daromas iš jo – tas pats momentas
+  if (native) {
+    if (native.width !== w0 || native.height !== h0) {
+      native.width = w0;
+      native.height = h0;
+    }
+    native.getContext('2d').drawImage(el, 0, 0);
+  }
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
-  c.getContext('2d').drawImage(el, 0, 0, w, h);
+  c.getContext('2d').drawImage(native || el, 0, 0, w, h);
   const blob = await new Promise((res, rej) => {
     try {
       c.toBlob((b) => (b ? res(b) : rej(new Error('JPEG'))), 'image/jpeg', 0.88);
@@ -79,7 +88,7 @@ async function grab(el, maxSide) {
       rej(new Error(t('Šaltinis neleidžia kopijuoti vaizdo – pasirinkite „Per serverį“')));
     }
   });
-  return { blob, w, h, k, w0, h0, canvas: c };
+  return { blob, w, h, k, w0, h0, canvas: c, native };
 }
 
 export class LiveDetector {
@@ -107,6 +116,8 @@ export class LiveDetector {
     this.tracker = new Tracker();
     this.unique = {}; // grupė → skirtingų objektų skaičius (kai sekama)
     this._seen = {};
+    this.plates = new PlateBook(); // valstybiniai numeriai (kai įjungtas filtras)
+    this._native = document.createElement('canvas');
   }
 
   start() {
@@ -116,6 +127,7 @@ export class LiveDetector {
     this.tracker.reset();
     this.unique = {};
     this._seen = {};
+    this.plates.reset();
     this.loop();
   }
 
@@ -150,20 +162,24 @@ export class LiveDetector {
       const det = AI_DETAIL[s.detail] || AI_DETAIL.normal;
       const groups = activeGroups(s);
       const classes = Object.values(groups).flatMap((g) => g.classes);
-      if (!classes.length) {
+      // Numerių filtras (tik standartinis modelis): transporto priemonės aptinkamos, net jei jų grupė nerodoma
+      this.platesOn = !!s.plates && !s.model;
+      const hidden = new Set(this.platesOn ? PLATE_VEHICLES.filter((c) => !classes.includes(c)) : []);
+      const wantPlates = this.platesOn && this.plates.due();
+      if (!classes.length && !hidden.size) {
         await sleep(700);
         continue;
       }
       const t0 = performance.now();
       try {
-        const fr = await grab(el, det.maxSide);
+        const fr = await grab(el, det.maxSide, wantPlates ? this._native : null);
         if (!fr) {
           await sleep(300);
           continue;
         }
         const ai = await this.opts.getAi();
         this.ctl = new AbortController();
-        const res = await ai.detect(fr.blob, { classes, threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, outline: s.outline !== false, model: s.model || '', signal: this.ctl.signal });
+        const res = await ai.detect(fr.blob, { classes: [...classes, ...hidden], threshold: s.threshold, tile: Math.min(det.tile, Math.max(fr.w, fr.h)), overlap: det.overlap, refine: false, outline: s.outline !== false, model: s.model || '', signal: this.ctl.signal });
         if (!this.on) break;
         if (res.cancelled) continue;
         let dets = (res.detections || []).map((d) => ({ ...d, box: d.box.map((v) => v / fr.k), outline: d.outline?.map(([x, y]) => [x / fr.k, y / fr.k]) }));
@@ -174,12 +190,23 @@ export class LiveDetector {
           // Būsenų stabilizavimas: „Žmogus“, „Su šalmu“ ir „Be šalmo“ sekami kaip vienas žmogus
           const stab = s.stabilize !== false && hasStates(classes);
           const helmet = classes.some((c) => stateFamily(c) === 'helmet');
-          const keyOf = (c) => (!byClass[c] ? null : stab && stateFamily(c) ? `~${stateFamily(c)}` : stab && helmet && /^(person|žmogus|zmogus|worker)$/i.test(c) ? '~helmet' : byClass[c]);
+          const keyOf = (c) => (hidden.has(c) ? '~plates' : !byClass[c] ? null : stab && stateFamily(c) ? `~${stateFamily(c)}` : stab && helmet && /^(person|žmogus|zmogus|worker)$/i.test(c) ? '~helmet' : byClass[c]);
           this.tracker.memoryMs = (+s.trackMemory || 15) * 60000;
           dets = this.tracker.update(dets, keyOf, fr.canvas, fr.k, t0, stab ? { lock: +s.lockScore || 0.7, isAttr: (c) => !!stateFamily(c), unknown: classes.find((c) => /^person$/i.test(c)) || 'person' } : null);
           // Skirtingi objektai kiekvienoje grupėje (pagal rodomą būseną; būsena skaičiuojama tik užfiksuota)
           for (const d of dets) if (d.id && byClass[d.class] && !(d.locked === false && stateFamily(d.class))) (this._seen[byClass[d.class]] ||= new Set()).add(d.id);
           this.unique = Object.fromEntries(Object.entries(this._seen).map(([k, v]) => [k, v.size]));
+        }
+        if (this.platesOn) {
+          const veh = dets.filter((d) => PLATE_VEHICLES.includes(d.class));
+          if (hidden.size) dets = dets.filter((d) => !hidden.has(d.class)); // nerodomos grupės – tik numeriams
+          if (fr.native && veh.length)
+            this.plates.read(ai, fr.native, veh, t0).then((ok) => {
+              if (ok && this.on) {
+                this.draw();
+                this.opts.onUpdate(this);
+              }
+            });
         }
         this.last = { dets, w: fr.w0, h: fr.h0, at: performance.now(), ms: performance.now() - t0, frame: fr.canvas }; // frame – būtent analizuotas kadras
         this.error = '';
@@ -272,6 +299,7 @@ export class LiveDetector {
       }
     }
     g.globalAlpha = 1;
+    if (this.platesOn) drawPlates(g, this.plates, L, { k, ox, oy, W, H });
   }
 
   /** Trumpas aprašas juostai: „Žmonės 3 · Automobiliai 12 · 0,8 s“. */
@@ -279,6 +307,10 @@ export class LiveDetector {
     if (this.error) return this.error;
     if (!this.last) return t('AI: laukiama pirmo rezultato…');
     const parts = Object.entries(this.counts).map(([k, n]) => `${this.groups?.[k]?.label || k} ${n}${this.tracking && this.unique[k] ? ` (${t('iš viso {n}', { n: this.unique[k] })})` : ''}`);
+    if (this.platesOn) {
+      const pl = this.plates.confirmed;
+      parts.push(this.plates.error ? t('Numeriai: {e}', { e: this.plates.error }) : pl.length ? `${t('Numeriai')} ${pl.length}: ${pl.slice(-3).map((r) => r.text).join(', ')}${pl.length > 3 ? '…' : ''}` : t('Numeriai: dar nėra'));
+    }
     parts.push(t('AI kas {s} s', { s: new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 }).format(Math.max(this.last.ms, 330) / 1000) }));
     return parts.join(' · ');
   }
