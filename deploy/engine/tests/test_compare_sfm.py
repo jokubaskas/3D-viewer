@@ -43,7 +43,7 @@ def test_odm_centers(tmp_path):
     json.dump(rec, open(task / "opensfm" / "undistorted" / "reconstruction.json", "w"))
     (task / "odm_georeferencing" / "coords.txt").write_text("WGS84 UTM 34N\n684268 6087837\n")
     c, zone = compare_sfm.odm_centers(str(task))
-    assert zone == "WGS84 UTM 34N" and np.allclose(c["a.JPG"], [684269, 6087839, 50])
+    assert zone == "WGS84 UTM 34N" and np.allclose(c["a.jpg"], [684269, 6087839, 50])
 
 
 def test_latest_odm_project(tmp_path):
@@ -90,3 +90,9 @@ def test_compare_end_to_end(tmp_path, monkeypatch, capsys):
     line = next(l for l in rep.split("\n") if l.startswith("Tarpusavio"))
     rms = float(line.split("RMS ")[1].split(" m")[0])
     assert rms < 0.5, line
+
+
+def test_norm_name():
+    assert compare_sfm.norm_name("CAM_0001_V.JPG.tif") == "cam_0001_v.jpg"
+    assert compare_sfm.norm_name("images/CAM_0001_V.JPG") == "cam_0001_v.jpg"
+    assert compare_sfm.norm_name("ortho.tif") == "ortho.tif"

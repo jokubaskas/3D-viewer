@@ -7,10 +7,14 @@ rem   palyginti-sfm.bat <projekto ID> - konkretus projektas
 setlocal
 cd /d "%~dp0"
 set "COMPOSE_FILE=docker-compose.yml;docker-compose.gpu.yml"
+rem   palyginti-sfm.bat --keep        - tik ataskaita is jau atliktu skaiciavimu (greitai)
 docker compose exec -T engine python3 compare_sfm.py %*
 if errorlevel 1 (
   echo.
-  echo [KLAIDA] Palyginimas nepavyko. Ar serveris paleistas su NVIDIA vaizdo plokste (start-windows.bat)?
+  echo [KLAIDA] Palyginimas nepavyko. Ar serveris paleistas su NVIDIA vaizdo plokste - start-windows.bat?
+) else (
+  docker compose exec -T engine sh -c "cat $(ls -t /engine-data/sfm-palyginimas/*/ataskaita.txt | head -1)" > sfm-ataskaita.txt
+  echo Ataskaita issaugota: %CD%\sfm-ataskaita.txt
 )
 echo.
 pause

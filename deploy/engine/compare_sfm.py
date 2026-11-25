@@ -58,6 +58,15 @@ def umeyama(src, dst):
     return s, R, md - s * R @ ms
 
 
+def norm_name(n):
+    """Nuotraukos vardas palyginimui: be kelio, be ištiesintos kopijos priesagos (.tif), mažosiomis raidėmis."""
+    n = os.path.basename(str(n))
+    for ext in (".tif", ".tiff"):
+        if n.lower().endswith(ext) and os.path.splitext(n[: -len(ext)])[1]:
+            n = n[: -len(ext)]
+    return n.lower()
+
+
 def odm_centers(task):
     """ODM kamerų centrai absoliučiomis UTM koordinatėmis {vardas: (E, N, h)} ir zona."""
     rec = json.load(open(os.path.join(task, "opensfm", "undistorted", "reconstruction.json")))
@@ -71,7 +80,7 @@ def odm_centers(task):
         for name, shot in r.get("shots", {}).items():
             R = splat_io._rotation_matrix(shot["rotation"])
             c = -R.T @ np.asarray(shot["translation"], float)
-            out[name] = np.array([c[0] + off[0], c[1] + off[1], c[2]])
+            out[norm_name(name)] = np.array([c[0] + off[0], c[1] + off[1], c[2]])
     return out, zone
 
 
@@ -137,17 +146,20 @@ def main():
     rec = pycolmap.Reconstruction(os.path.join(work, "work", "sfm_geo"))
     frame = p._load_frame()
     off = np.array([frame.off_e, frame.off_n, 0.0]) if frame else np.zeros(3)
-    col = {im.name: np.asarray(im.projection_center()) + off for im in rec.images.values() if im.has_pose}
+    col = {norm_name(im.name): np.asarray(im.projection_center()) + off for im in rec.images.values() if im.has_pose}
     gps = {}
     if frame:
         for ph in p._photos():
             if ph.get("gps"):
-                gps[ph["name"]] = frame.to_local(*ph["gps"]) + off
+                gps[norm_name(ph["name"])] = frame.to_local(*ph["gps"]) + off
     odm, zone = odm_centers(task)
     st = odm_stats(task)
     n_photos = len(p._photos())
 
     common = sorted(set(odm) & set(col))
+    if len(common) < 3:
+        print("Dėmesio: ODM ir COLMAP kamerų vardai nesutampa (ODM: %s; COLMAP: %s)"
+              % (", ".join(sorted(odm)[:3]), ", ".join(sorted(col)[:3])), flush=True)
     shape = None
     if len(common) >= 3:
         A, B = np.array([col[n] for n in common]), np.array([odm[n] for n in common])
