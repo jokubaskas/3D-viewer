@@ -320,7 +320,6 @@ class Pipeline:
             opts = pycolmap.GlobalPipelineOptions()
             opts.mapper.bundle_adjustment.refine_focal_length = not fixed
             opts.mapper.bundle_adjustment.refine_extra_params = not self._calibrated()
-            opts.mapper.bundle_adjustment.refine_principal_point = bool(self.q.get("refine_pp"))
             recs = pycolmap.global_mapping(self.db, self.images, self.sparse, opts)
             if not recs or max(r.num_reg_images() for r in recs.values()) < 0.8 * len(self._photos()):
                 self.log("Globalus derinimas nepavyko visoms nuotraukoms – naudojamas nuoseklus")
@@ -365,7 +364,6 @@ class Pipeline:
         o.ba_refine_extra_params = not self._calibrated()
         o.mapper.abs_pose_refine_extra_params = not self._calibrated()
         # Kol iškraipymas dar neįvertintas (pirmos nuotraukos) – leidžiama didesnė reprojekcijos paklaida
-        o.ba_refine_principal_point = bool(self.q.get("refine_pp"))
         o.mapper.abs_pose_max_error = 24.0
         o.mapper.filter_max_reproj_error = 8.0
         return o
@@ -577,9 +575,6 @@ class Pipeline:
             bo = pycolmap.BundleAdjustmentOptions()
             bo.refine_focal_length = False
             bo.refine_extra_params = not self._calibrated()
-            # Optinės ašies taškas: su RTK padėtimis nustatomas (linijos skrendamos pirmyn / atgal – jo paklaida
-            # kamerose pasireiškia priešingos krypties išilginiu poslinkiu)
-            bo.refine_principal_point = bool(self.q.get("refine_pp"))
             cfg = pycolmap.BundleAdjustmentConfig()
             for iid in rec.reg_image_ids():
                 cfg.add_image(iid)

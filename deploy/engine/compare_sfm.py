@@ -123,8 +123,6 @@ def main():
     ap.add_argument("--keep", action="store_true", help="nenaikinti ankstesnių skaičiavimų (tik ataskaita)")
     ap.add_argument("--no-time-offset", action="store_true",
                     help="georeferencija be laiko poslinkio tarp kadro ir GPS pataisos (perskaičiuojamas tik šis etapas)")
-    ap.add_argument("--refine-pp", action="store_true",
-                    help="tikslinti optinės ašies tašką (kamerų etapas ir georeferencija perskaičiuojami)")
     a = ap.parse_args()
     uuid = a.uuid or latest_odm_project()
     if not uuid:
@@ -153,9 +151,6 @@ def main():
     if a.no_time_offset:
         p._time_offset = lambda rec: 0.0
         redo.append("georef")
-    if a.refine_pp:
-        p.q["refine_pp"] = True
-        redo += ["sfm", "georef"]
     for st_ in redo:
         try:
             os.remove(p._done_path(st_))
@@ -223,12 +218,6 @@ def main():
         L.append("%-38s %18s %18s" % ("Išilginis poslinkis nuo GPS, m", f(to_odm and to_odm[1]), f(to_col and to_col[1])))
     if a.no_time_offset:
         L.append("(COLMAP georeferencija – be laiko poslinkio pataisos)")
-    if a.refine_pp:
-        cams = list(rec.cameras.values())
-        if cams:
-            c = cams[0]
-            L.append("(COLMAP – tikslinamas optinės ašies taškas: %.1f; %.1f px, vaizdas %d×%d)"
-                     % (c.principal_point_x, c.principal_point_y, c.width, c.height))
     L.append("")
     L.append("COLMAP etapai, min.: " + ", ".join("%s %.1f" % (k, v) for k, v in stage_t.items()))
     if shape:
