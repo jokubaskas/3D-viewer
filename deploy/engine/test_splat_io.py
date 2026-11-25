@@ -203,3 +203,13 @@ def test_near_points_mask():
     pts = np.random.default_rng(0).uniform(0, 10, (1000, 3))
     m = splat_io.near_points_mask(np.array([[5, 5, 5], [5, 5, 30], [50, 0, 0]]), cKDTree(pts), 1.0)
     assert m.tolist() == [True, False, False]
+
+
+def test_res_schedule():
+    """Raiška auga nuo 0,25 iki pilnos per pirmą žingsnių pusę, tik iš nustatytų lygių; vėliau – pilna."""
+    import train
+    sc = [train.res_scale(k, 30000) for k in range(30000)]
+    assert sc[0] == 0.25 and sc[14999] < 1.0 and all(x == 1.0 for x in sc[15000:])
+    assert all(b >= a for a, b in zip(sc, sc[1:]))
+    assert set(sc) <= set(train.RES_LEVELS)
+    assert train.res_scale(0, 100, r0=1.0) == 1.0  # tvarkaraštis išjungtas
