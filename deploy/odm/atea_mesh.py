@@ -95,14 +95,109 @@ def _ply_vertices(path):
     return _ply_count(path, "vertex")
 
 
-def _min_point_distance(tree):
+PLY_TYPES = {"char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1", "short": "i2", "int16": "i2", "ushort": "u2",
+             "uint16": "u2", "int": "i4", "int32": "i4", "uint": "u4", "uint32": "u4", "float": "f4", "float32": "f4",
+             "double": "f8", "float64": "f8"}
+
+
+def _ply_xyz(path, max_points=2000000):
+    """Iki max_points tolygiai paimtų viršūnių XYZ iš dvejetainio PLY (be viso failo skaitymo į atmintį)."""
+    import numpy as np
+
+    with open(path, "rb") as f:
+        head = b""
+        while not head.endswith(b"end_header\n"):
+            line = f.readline()
+            if not line:
+                return None
+            head += line
+        offset = f.tell()
+    lines = head.decode("latin-1").split("\n")
+    fmt = next((l.split()[1] for l in lines if l.startswith("format ")), "")
+    if fmt not in ("binary_little_endian", "binary_big_endian"):
+        return None
+    end = "<" if fmt == "binary_little_endian" else ">"
+    props, n, cur = [], 0, None
+    for l in lines:
+        w = l.split()
+        if not w:
+            continue
+        if w[0] == "element":
+            cur = w[1]
+            if cur == "vertex":
+                n = int(w[2])
+            elif not props:
+                return None  # vertex – ne pirmas elementas
+        elif w[0] == "property" and cur == "vertex":
+            if w[1] == "list" or w[1] not in PLY_TYPES:
+                return None
+            props.append((w[2], end + PLY_TYPES[w[1]]))
+    if not n or not all(k in dict(props) for k in "xyz"):
+        return None
+    dt = np.dtype(props)
+    mm = np.memmap(path, dtype=dt, mode="r", offset=offset, shape=(n,))
+    step = max(1, n // max_points)
+    sub = mm[::step]
+    return np.stack([sub["x"], sub["y"], sub["z"]], axis=1).astype(np.float64), n
+
+
+ROI_MARGIN = 5.0  # m – atsarga aplink apkarpytą taškų debesį
+
+
+def _roi(tree, work):
+    """Dominanti sritis (OpenMVS OBB failas) iš ODM išfiltruoto (pagal ribą apkarpyto) taškų debesies. Įstrižos
+    nuotraukos mato iki horizonto – be jos tankiame debesyje didžioji dalis taškų būna už ribos, dėl jų tenka retinti
+    visus taškus, o tinklo detalumas atitenka apylinkei, kuri vėliau vis tiek nupjaunama.
+    Grąžina (failas, [min xyz], [max xyz]) arba None."""
+    import numpy as np
+
+    try:
+        r = _ply_xyz(tree.filtered_point_cloud) if io.file_exists(tree.filtered_point_cloud) else None
+        if not r:
+            return None
+        xyz, _ = r
+        lo = np.percentile(xyz, 0.05, axis=0) - ROI_MARGIN
+        hi = np.percentile(xyz, 99.95, axis=0) + ROI_MARGIN
+        c, e = (lo + hi) / 2, (hi - lo) / 2
+        path = os.path.join(work, "roi.txt")
+        with open(path, "w") as f:
+            f.write("1 0 0\n0 1 0\n0 0 1\n%.4f %.4f %.4f\n%.4f %.4f %.4f\n" % (*c, *e))
+        return path, lo, hi
+    except Exception as ex:
+        log.ODM_WARNING("Atea: dominančios srities nustatyti nepavyko (%s) – naudojami visi taškai" % ex)
+        return None
+
+
+def _count_in_roi(path, lo, hi):
+    """Kiek tankaus debesies taškų patenka į sritį (įvertinta iš tolygios imties)."""
+    import numpy as np
+
+    r = _ply_xyz(path)
+    if not r:
+        return None
+    xyz, n = r
+    inside = np.all((xyz >= lo) & (xyz <= hi), axis=1)
+    return int(round(n * float(inside.mean())))
+
+
+def _min_point_distance(tree, roi=None):
     """(--min-point-distance, ar mažai RAM, laisvos erdvės palaikymas). Laisvos erdvės palaikymas – stiklo fasadams
     būtinas (be jo stiklinis pirmas aukštas ir fasadų dalys dingsta, pastatas „kabo“), todėl jis įjungiamas visada,
     kai RAM pakanka, o taškai retinami tiek, kad su juo tilptų į laisvą atmintį."""
     total, avail = _mem_total(), _mem_available()
-    n = _ply_vertices(os.path.join(tree.openmvs, "scene_dense_dense_filtered.ply")) or _ply_vertices(tree.filtered_point_cloud)
+    dense = os.path.join(tree.openmvs, "scene_dense_dense_filtered.ply")
+    n = _ply_vertices(dense) or _ply_vertices(tree.filtered_point_cloud)
     if not total or not n:
         return BASE_DIST, False, False
+    if roi:
+        try:
+            n_roi = _count_in_roi(dense, roi[1], roi[2]) if io.file_exists(dense) else None
+        except Exception:
+            n_roi = None
+        if n_roi:
+            log.ODM_INFO("Atea: dominančioje srityje (%.0f × %.0f × %.0f m) – %s mln. taškų iš %s mln."
+                         % (*(roi[2] - roi[1]), round(n_roi / 1e6, 1), round(n / 1e6, 1)))
+            n = n_roi
     budget = total * MEM_SHARE
     fss = budget >= FSS_MIN_MEM * MEM_SHARE / 0.55  # kaip anksčiau: ≥ 24 GB laisvos RAM – dabar ≥ ~44 GB visos
     # Saugiklis: jei tuo metu kiti procesai užėmė tiek, kad biudžetas netelpa į laisvą RAM, – retinama daugiau (rezultatas
@@ -234,7 +329,9 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
 
         # 1) Tinklas iš taškų su matomumu (taškai retinami pagal laisvą RAM; tinklas iš karto sumažinamas, kad
         #    tikslinimui reikėtų mažiau atminties)
-        dist, low_mem, fss = _min_point_distance(tree)
+        roi = _roi(tree, work)
+        dist, low_mem, fss = _min_point_distance(tree, roi)
+        roi_opt = ' --import-roi-file "%s" --integrate-only-roi 1 --crop-to-roi 1' % roi[0] if roi else ""
         faces = max(int(max_vertex) * 4, 1000000)
         # Laisvos erdvės palaikymas: paviršiai, kuriuose mažai taškų (stiklas, atspindžiai, vienspalvės sienos),
         # atkuriami pagal tai, kur matymo spinduliai praeina laisvai – mažiau skylių ir „ištirpusių“ fasadų.
@@ -245,8 +342,8 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         recon = os.path.join(work, "mesh.mvs")
         def reconstruct(dev, fss):
             system.run('"%s" -i "%s" -o "%s" -w "%s" --archive-type 3 --export-type ply --max-threads %s %s '
-                       '--min-point-distance %s --free-space-support %s --target-face-num %s --remove-spurious 20 --close-holes 100 --smooth 1 -v 0'
-                       % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, fss, faces))
+                       '--min-point-distance %s --free-space-support %s --target-face-num %s --remove-spurious 20 --close-holes 100 --smooth 1%s -v 0'
+                       % (_bin("ReconstructMesh"), scene, recon, wdir, threads, dev, dist, fss, faces, roi_opt))
         def reconstruct_any(fss):
             try:
                 reconstruct(dev_gpu, fss)
@@ -259,7 +356,14 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
                 except system.SubprocessException:
                     reconstruct("", fss)
         try:
-            reconstruct_any(fss)
+            try:
+                reconstruct_any(fss)
+            except system.SubprocessException:
+                if not roi_opt:
+                    raise
+                log.ODM_WARNING("Atea: ReconstructMesh su dominančia sritimi nepavyko – kartojama su visais taškais")
+                roi_opt = ""
+                reconstruct_any(fss)
         except system.SubprocessException:
             if not fss:
                 raise
