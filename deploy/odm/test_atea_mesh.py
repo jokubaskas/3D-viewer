@@ -656,3 +656,72 @@ def test_drop_fragments_in_front_of_filled_hole():
     F3, k, area = atea_mesh._drop_covered_fragments(V2, F2, len(V))
     assert k == 1 and abs(area - frag.area) < 1e-6
     assert len(F3) == len(F2) - len(frag.faces)
+
+
+def test_roi_limits_points_to_area_of_interest(tmp_path, monkeypatch):
+    """Įstrižos nuotraukos: tankiame debesyje daug taškų už ribos. Dominanti sritis – pagal apkarpytą debesį,
+    biudžetas skaičiuojamas tik jos taškams (mažiau retinama), ReconstructMesh gauna ROI failą."""
+    rng = np.random.default_rng(0)
+    near = rng.uniform([-50, -50, 0], [50, 50, 35], size=(200_000, 3))      # pastatas ir aikštelė
+    far = rng.uniform([-600, -600, -5], [600, 600, 20], size=(800_000, 3))   # apylinkė iki horizonto
+    far = far[np.any(np.abs(far[:, :2]) > 60, axis=1)]
+    dense = np.vstack([near, far]).astype(np.float32)
+    z = np.zeros((len(dense), 3), np.float32)
+    c = np.zeros((len(dense), 3), np.uint8)
+    os.makedirs(tmp_path / "openmvs", exist_ok=True)
+    _write_ply_points(str(tmp_path / "openmvs" / "scene_dense_dense_filtered.ply"), dense, c, z)
+    _write_ply_points(str(tmp_path / "filtered.ply"), near.astype(np.float32), c[: len(near)], z[: len(near)])
+    tree = types.SimpleNamespace(openmvs=str(tmp_path / "openmvs"), filtered_point_cloud=str(tmp_path / "filtered.ply"))
+    roi = atea_mesh._roi(tree, str(tmp_path))
+    assert roi is not None
+    txt = open(roi[0]).read().split()
+    assert len(txt) == 15 and txt[:9] == ["1", "0", "0", "0", "1", "0", "0", "0", "1"]
+    assert np.allclose(roi[1], [-55, -55, -5], atol=0.5) and np.allclose(roi[2], [55, 55, 40], atol=0.5)
+    n_roi = atea_mesh._count_in_roi(str(tmp_path / "openmvs" / "scene_dense_dense_filtered.ply"), roi[1], roi[2])
+    assert abs(n_roi - len(near)) < 0.05 * len(near) + 20000  # + apylinkės taškai ties krašto atsarga
+    # Biudžetas: be srities retinama daug labiau nei su ja
+    monkeypatch.setattr(atea_mesh, "_mem_total", lambda: 0.6e9)
+    monkeypatch.setattr(atea_mesh, "_mem_available", lambda: 0.6e9)
+    d_all = atea_mesh._min_point_distance(tree)[0]
+    d_roi = atea_mesh._min_point_distance(tree, roi)[0]
+    assert d_roi < d_all
+    # Nėra apkarpyto debesies – srities nėra (naudojami visi taškai)
+    tree2 = types.SimpleNamespace(openmvs=tree.openmvs, filtered_point_cloud=str(tmp_path / "nera.ply"))
+    assert atea_mesh._roi(tree2, str(tmp_path)) is None
+
+
+def test_ply_xyz_rejects_ascii(tmp_path):
+    p = tmp_path / "a.ply"
+    p.write_text("ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n")
+    assert atea_mesh._ply_xyz(str(p)) is None
+
+
+def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
+    """ReconstructMesh gauna --import-roi-file ir --integrate-only-roi; nepavykus su sritimi – kartojama be jos."""
+    os.makedirs(tmp_path / "openmvs" / "depthmaps")
+    (tmp_path / "openmvs" / "scene_dense.mvs").write_bytes(b"x")
+    os.makedirs(tmp_path / "meshing")
+    pts = np.random.default_rng(1).uniform([-20, -20, 0], [20, 20, 10], size=(5000, 3)).astype(np.float32)
+    z = np.zeros((len(pts), 3), np.float32)
+    _write_ply_points(str(tmp_path / "filtered.ply"), pts, np.zeros((len(pts), 3), np.uint8), z)
+    tree = types.SimpleNamespace(openmvs=str(tmp_path / "openmvs"), odm_meshing=str(tmp_path / "meshing"),
+                                 filtered_point_cloud=str(tmp_path / "filtered.ply"))
+    cmds = []
+
+    class Fail(Exception):
+        pass
+
+    monkeypatch.setattr(atea_mesh.system, "SubprocessException", Fail, raising=False)
+    monkeypatch.setattr(atea_mesh.io, "dir_exists", os.path.isdir, raising=False)
+
+    def run(cmd, *a, **k):
+        cmds.append(cmd)
+        if "ReconstructMesh" in cmd and "roi.txt" in cmd:
+            raise Fail()
+        raise Fail()  # toliau nevykdoma – tikrinamos tik komandos
+
+    monkeypatch.setattr(atea_mesh.system, "run", run)
+    args = types.SimpleNamespace(pc_quality="ultra", optimize_disk_space=False)
+    assert atea_mesh.openmvs_mesh(tree, args, str(tmp_path / "out.ply"), 1000000, 4) is False
+    assert "--import-roi-file" in cmds[0] and "--integrate-only-roi 1" in cmds[0]
+    assert "roi.txt" not in cmds[1]  # pakartota be srities
