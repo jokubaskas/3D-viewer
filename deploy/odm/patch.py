@@ -5,7 +5,8 @@
 #   mesh    – parinktis --mesh-method poisson|openmvs ir OpenMVS tinklas (opendm/atea_mesh.py)
 #   flatten – po 3D tinklo sukūrimo: plaukiojančių gabalų šalinimas, fasadų lyginimas, mažų skylių užpildymas
 #   sky     – dangaus kaukė (--sky-removal) išplečiama į pastato pusę ~2 % nuotraukos: ODM ją skaičiuoja 384×384 px
-#             vaizde ir ištempia, todėl pastatų kraštai prieš dangų (stogo parapetas) būdavo „nukandami“ – dantytas kraštas
+#             vaizde ir ištempia, todėl pastatų kraštai prieš dangų (stogo parapetas) būdavo „nukandami“ – dantytas kraštas;
+#             šalinamas tik dangus, liečiantis viršutinį nuotraukos kraštą – stikle atsispindintis dangus paliekamas
 #   unseen  – po texrecon: sienelės, kurių nematė nė viena nuotrauka (vienoda pilka), nudažomos pagal taškų debesį
 #   mesh25d – ODM 2.5D tinklas (ortofotografijai): dem2mesh kartais nulūžta (Segmentation fault) sujungdamas dalis – tada
 #             bandoma dar 2 kartus su 2× ir 4× retesniu DSM, o ne nutraukiamas visas apdorojimas
@@ -140,7 +141,20 @@ GROUPS = {
          "\n"
          "        # Atea: dangaus kaukė išplečiama į pastato pusę (~2 % nuotraukos) – pastatų kraštai prieš dangų lieka\n"
          "        k = max(3, int(0.02 * max(res.shape[:2])) | 1)\n"
-         "        res = cv2.dilate(res, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))\n"),
+         "        res = cv2.dilate(res, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))\n"
+         "\n"
+         "        # Atea: šalinamas tik TIKRAS dangus – dangaus sritys, prisiliečiančios prie viršutinio nuotraukos krašto\n"
+         "        # (arba šoninių kraštų viršutiniame trečdalyje). Dangus, atsispindintis stikliniame fasade, languose ar\n"
+         "        # automobilių stoguose, yra „apsuptas“ pastato – jis paliekamas, kitaip stiklas lieka be taškų ir\n"
+         "        # tinkle fasadas „ištirpsta“ juostomis\n"
+         "        sky = (res == 0).astype(np.uint8)\n"
+         "        n, lab, st, _ = cv2.connectedComponentsWithStats(sky, connectivity=8)\n"
+         "        H, W = res.shape[:2]\n"
+         "        real = np.zeros(n, dtype=bool)\n"
+         "        for i in range(1, n):\n"
+         "            x, y, w, h = st[i][:4]\n"
+         "            real[i] = y == 0 or ((x == 0 or x + w >= W) and y < H // 3)\n"
+         "        res = np.where(real[lab], 0, 255).astype(np.uint8)\n"),
     ],
   }),
 }
