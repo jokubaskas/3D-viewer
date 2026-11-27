@@ -785,7 +785,8 @@ export function createOdmUI(app) {
    */
   async function redo(p, c) {
     const engine = isEngineProject(p);
-    if (!engine && p.preset !== 'orthoOnly') {
+    // Seni ODM 3D režimai (standard, objects3d, max) – nebeturimi; „ODM – aukščiausia kokybė“ ir „Tik ortofoto“ perdaromi
+    if (!engine && !PRESETS[p.preset]) {
       alert(t('Šis projektas sukurtas senuoju ODM 3D režimu. 3D modelius dabar kuria Atea variklis – įkelkite nuotraukas iš naujo ir pasirinkite „Greitas“ arba „Aukšta kokybė“.'));
       return;
     }
