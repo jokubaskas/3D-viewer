@@ -146,6 +146,10 @@ ROI_MARGIN = 5.0  # m – atsarga aplink apkarpytą taškų debesį (XY ir apač
 # krašte palieka uždarantį paviršių, kuris uždengia žemę nuo kamerų: tekstūruojant žemė lieka nematyta (spalvotos
 # dėmės), o kraštas matosi kaip plona linija.
 ROI_TOP_MARGIN = 1000.0
+# Išjungta: tinklą kuriant tik iš srities taškų (--integrate-only-roi) virš aikštelės atsirado pasvirę „lakštai“, o žemė
+# liko spalvotomis dėmėmis – be apylinkės taškų OpenMVS neteisingai nustato, kur laisva erdvė srities pakraščiuose.
+# Tinklas vėl kuriamas iš visų taškų ir apkarpomas pagal ribą XY plokštumoje (_crop), kaip iki šios funkcijos.
+MESH_ROI = False
 
 
 def _roi(tree, work):
@@ -334,7 +338,7 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
 
         # 1) Tinklas iš taškų su matomumu (taškai retinami pagal laisvą RAM; tinklas iš karto sumažinamas, kad
         #    tikslinimui reikėtų mažiau atminties)
-        roi = _roi(tree, work)
+        roi = _roi(tree, work) if MESH_ROI else None
         dist, low_mem, fss = _min_point_distance(tree, roi)
         # Tinklas nekarpomas pagal srities dėžę (--crop-to-roi 0) – jį vėliau apkarpo _crop pagal ribą XY plokštumoje
         roi_opt = ' --import-roi-file "%s" --integrate-only-roi 1 --crop-to-roi 0' % roi[0] if roi else ""
@@ -1437,6 +1441,11 @@ def improve_mesh(mesh_path, args=None):
     import numpy as np
     import trimesh
     if not io.file_exists(mesh_path):
+        return
+    # Grynas ODM (Poisson): tinklas paliekamas toks, kokį sukūrė ODM – fasadų lyginimas ir skylių „membranos“ virš
+    # aikštelių kurdavo pasvirusius lakštus. Valymas – tik Atea OpenMVS tinklui.
+    if args is not None and getattr(args, "mesh_method", "poisson") != "openmvs":
+        log.ODM_INFO("Atea: tinklo valymas praleidžiamas – grynas ODM tinklas")
         return
     # Originalas palyginimui (programoje galima atidaryti abu PLY ir palyginti)
     if not getattr(args, "optimize_disk_space", False):

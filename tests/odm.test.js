@@ -1,7 +1,7 @@
 // Grynųjų funkcijų testai (node --test): režimai (Atea variklis / ODM „Tik ortofoto“), RAM įvertinimas, koordinatės.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PRESETS, buildOdmOptions, estimateRamGB, estimateEngineRamGB, diagnoseFailure, lowerMemoryOptions, ODM_STAGES, analyzePhotos, engineBase, isEngineUrl, engineOptions, isEnginePreset, presetLabel } from '../src/odm/project.js';
+import { PRESETS, buildOdmOptions, estimateRamGB, estimateEngineRamGB, diagnoseFailure, lowerMemoryOptions, ODM_STAGES, analyzePhotos, engineBase, isEngineUrl, engineOptions, isEnginePreset, presetLabel, ODM_LEGACY_OPTIONS, dropLegacyOdmOptions } from '../src/odm/project.js';
 import { LKS94 } from '../src/geo/tm.js';
 
 const opts = (list) => Object.fromEntries(list.map((o) => [o.name, o.value]));
@@ -9,9 +9,10 @@ const opts = (list) => Object.fromEntries(list.map((o) => [o.name, o.value]));
 test('režimai: ODM aukščiausia kokybė ir Tik ortofoto – ODM, Greitas ir Aukšta kokybė – Atea variklis', () => {
   assert.deepEqual(Object.keys(PRESETS), ['odm', 'fast', 'high', 'orthoOnly']);
   assert.ok(isEnginePreset('fast') && isEnginePreset('high') && !isEnginePreset('orthoOnly') && !isEnginePreset('odm'));
-  const o = opts(buildOdmOptions('odm', { mvsMesh: true }));
+  const o = opts(buildOdmOptions('odm'));
   assert.equal(o['pc-quality'], 'ultra');
-  assert.equal(o['mesh-method'], 'openmvs');
+  // grynas ODM: be Atea tinklo, dangaus kaukių, nematytų sienelių ir be siūlių lyginimo išjungimo
+  for (const k of ODM_LEGACY_OPTIONS) assert.equal(o[k], undefined, k);
   assert.equal(o['ignore-gsd'], true);
   assert.deepEqual(engineOptions('fast'), [{ name: 'quality', value: 'fast' }]);
   assert.deepEqual(engineOptions('high'), [{ name: 'quality', value: 'high' }]);
@@ -73,8 +74,7 @@ test('rolling shutter: įjungiama tik eilutinio užrakto kameroms', () => {
   assert.equal(analyzePhotos(m3e).rollingShutter, false);
   assert.equal(opts(buildOdmOptions('orthoOnly', { rollingShutter: true }))['rolling-shutter'], true);
   assert.equal(opts(buildOdmOptions('orthoOnly'))['rolling-shutter'], undefined);
-  // dangaus kaukės – tik įstrižoms nuotraukoms (statmenose jos uždengia dangų atspindintį stiklą)
-  assert.equal(opts(buildOdmOptions('odm'))['sky-removal'], undefined);
-  assert.equal(opts(buildOdmOptions('odm', { oblique: true }))['sky-removal'], true);
-  assert.equal(opts(buildOdmOptions('orthoOnly', { oblique: true }))['sky-removal'], undefined);
+  // senos Atea parinktys pašalinamos kartojant „viską iš naujo“
+  const old = [{ name: 'mesh-method', value: 'openmvs' }, { name: 'sky-removal', value: true }, { name: 'texturing-keep-unseen-faces', value: true }, { name: 'boundary', value: '"/b"' }];
+  assert.deepEqual(dropLegacyOdmOptions(old), [{ name: 'boundary', value: '"/b"' }]);
 });

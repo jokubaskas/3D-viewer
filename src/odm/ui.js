@@ -2,7 +2,7 @@
 import { findLocalServer } from '../local-server.js';
 import { icon } from '../icons.js';
 import { readAllMeta, rtkLabel } from './exif.js';
-import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, estimateEngineRamGB, PRESETS, presetLabel, isEnginePreset, engineBase, isEngineUrl, engineOptions, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
+import { analyzePhotos, uniqueUploadNames, buildGeoTxt, buildOdmOptions, photoHeight, boundaryPath, hasInlineBoundary, diagnoseFailure, lowerMemoryOptions, estimateRamGB, estimateEngineRamGB, PRESETS, presetLabel, isEnginePreset, engineBase, isEngineUrl, engineOptions, ODM_LEGACY_OPTIONS, dropLegacyOdmOptions, HEIGHT_MODES, ODM_OUTPUTS } from './project.js';
 import { NodeODM, STATUS } from './nodeodm.js';
 import { splatBase } from '../splat/ui.js';
 import { PhotoPreview } from './preview.js';
@@ -505,11 +505,9 @@ export function createOdmUI(app) {
     const entries = uniqueUploadNames(photos);
     const geoTxt = buildGeoTxt(entries, $('#odm-hmode').value, geoidFn());
     // Variklis sritį ir aukščius ima iš kartu įkeliamų failų (boundary.geojson, geo.txt), kontrolinius taškus – iš gcp_list.txt
-    // Tikslus 3D tinklas (OpenMVS ReconstructMesh + RefineMesh) – tik jei serveris turi Atea ODM atvaizdą (deploy/odm)
-    const mvsMesh = !engine && preset !== 'orthoOnly' && (await client.supports('mesh-method'));
     const options = engine
       ? engineOptions(preset)
-      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter, oblique: (analysis?.oblique || 0) / Math.max(1, analysis?.used?.length || 0) >= 0.05, mvsMesh });
+      : buildOdmOptions(preset, { boundary: boundary ? boundaryPath(presetUuid) : null, photos: photos.length, rollingShutter: !!analysis?.rollingShutter });
     const items = entries.map((e) => ({ name: e.name, file: e.file }));
     items.push({ name: 'geo.txt', file: new Blob([geoTxt], { type: 'text/plain' }) });
     if (boundary) items.push({ name: 'boundary.geojson', file: new Blob([JSON.stringify(boundary)], { type: 'application/geo+json' }) });
@@ -792,8 +790,8 @@ export function createOdmUI(app) {
       return;
     }
     const info = await c.taskInfo(p.uuid);
-    // sky-removal – nebe ODM režimo parinktis (tik įstrižoms nuotraukoms); senose užduotyse ji uždengdavo stiklą – neperkeliama
-    const presetKeys = new Set([...Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})), 'sky-removal']);
+    // Senos Atea parinktys (OpenMVS tinklas, dangaus kaukės ir kt.) neperkeliamos – grynas ODM
+    const presetKeys = new Set([...Object.values(PRESETS).flatMap((x) => Object.keys(x.options || {})), ...ODM_LEGACY_OPTIONS]);
     const keep = (info.options || []).filter((o) => !presetKeys.has(o.name) && !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
     const choices = Object.entries(PRESETS).filter(([k]) => (engine ? isEnginePreset(k) : !isEnginePreset(k)));
     const preset = await new Promise((resolve) => {
@@ -830,6 +828,8 @@ export function createOdmUI(app) {
     // Sukurta senesne versija: riba perduota JSON tekstu, kurį NodeODM sugadina – kartojame be jos
     if (inline) options = options.filter((o) => o.name !== 'boundary').concat({ name: 'auto-boundary', value: true });
     const base = options.filter((o) => !['rerun-from', 'rerun-all', 'rerun'].includes(o.name));
+    // „Viską iš naujo“ – grynas ODM: senos Atea parinktys (OpenMVS tinklas, dangaus kaukės ir kt.) pašalinamos
+    const clean = dropLegacyOdmOptions(base);
     const low = lowerMemoryOptions(options, diag.stage);
     const hasBoundary = options.some((o) => o.name === 'boundary');
     let ram = '';
@@ -847,7 +847,7 @@ export function createOdmUI(app) {
     if (!base.some((o) => o.name === 'no-gpu'))
       choices.push({ id: 'cpu', title: t('Be GPU (procesoriumi)'), desc: t('Tęsiama nuo nutrūkusios vietos, bet tankinimas ir 3D tinklas skaičiuojami procesoriumi visais branduoliais. Tinka, jei apdorojimas su GPU užstrigo ar labai sulėtėjo.'), options: base.concat({ name: 'no-gpu', value: true }) });
     choices.push({ id: 'same', title: t('Tais pačiais nustatymais'), desc: t('Tęsiama nuo nutrūkusios vietos. Tinka, jei klaida buvo atsitiktinė (pvz. serveris buvo perkrautas).'), options: inline ? options : undefined });
-    choices.push({ id: 'all', title: t('Viską iš naujo'), desc: t('Visi etapai kartojami nuo pradžių (ilgiausia).'), options: base.concat({ name: 'rerun-all', value: true }) });
+    choices.push({ id: 'all', title: t('Viską iš naujo'), desc: t('Visi etapai kartojami nuo pradžių (ilgiausia).'), options: clean.concat({ name: 'rerun-all', value: true }) });
     const def = diag.kind === 'memory' && low.changes.length ? 'low' : diag.kind === 'boundary' && hasBoundary ? 'nob' : 'same';
 
     dlgRestart.querySelector('.rs-name').textContent = p.name;

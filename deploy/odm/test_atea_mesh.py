@@ -696,8 +696,7 @@ def test_ply_xyz_rejects_ascii(tmp_path):
     assert atea_mesh._ply_xyz(str(p)) is None
 
 
-def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
-    """ReconstructMesh gauna --import-roi-file ir --integrate-only-roi; nepavykus su sritimi – kartojama be jos."""
+def _mesh_cmds(tmp_path, monkeypatch):
     os.makedirs(tmp_path / "openmvs" / "depthmaps")
     (tmp_path / "openmvs" / "scene_dense.mvs").write_bytes(b"x")
     os.makedirs(tmp_path / "meshing")
@@ -723,5 +722,27 @@ def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
     monkeypatch.setattr(atea_mesh.system, "run", run)
     args = types.SimpleNamespace(pc_quality="ultra", optimize_disk_space=False)
     assert atea_mesh.openmvs_mesh(tree, args, str(tmp_path / "out.ply"), 1000000, 4) is False
+    return cmds
+
+
+def test_openmvs_mesh_no_roi_by_default(tmp_path, monkeypatch):
+    """Pagal nutylėjimą tinklas kuriamas iš visų taškų (su sritimi virš aikštelės atsirasdavo „lakštai“)."""
+    cmds = _mesh_cmds(tmp_path, monkeypatch)
+    assert "ReconstructMesh" in cmds[0] and "--import-roi-file" not in cmds[0] and "integrate-only-roi" not in cmds[0]
+
+
+def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
+    """Įjungus sritį ReconstructMesh gauna --import-roi-file ir --integrate-only-roi; nepavykus – kartojama be jos."""
+    monkeypatch.setattr(atea_mesh, "MESH_ROI", True)
+    cmds = _mesh_cmds(tmp_path, monkeypatch)
     assert "--import-roi-file" in cmds[0] and "--integrate-only-roi 1" in cmds[0] and "--crop-to-roi 0" in cmds[0]
     assert "roi.txt" not in cmds[1]  # pakartota be srities
+
+
+def test_improve_mesh_skipped_for_plain_odm(tmp_path):
+    """Grynas ODM (Poisson) tinklas nekeičiamas – valymas tik OpenMVS tinklui."""
+    p = tmp_path / "m.ply"
+    p.write_bytes(b"not a mesh")
+    atea_mesh.improve_mesh(str(p), types.SimpleNamespace(mesh_method="poisson"))
+    assert p.read_bytes() == b"not a mesh"
+    assert not (tmp_path / "odm_mesh_be_valymo.ply").exists()
