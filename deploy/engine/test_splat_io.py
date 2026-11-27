@@ -142,7 +142,8 @@ def test_app_train_status(tmp_path, monkeypatch):
     assert c.get("/jobs").json() == []
 
 
-def test_train_pipeline_with_fake_rasterizer(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_mesh", [False, True])
+def test_train_pipeline_with_fake_rasterizer(tmp_path, monkeypatch, with_mesh):
     """train.py logika be GPU: gsplat pakeičiamas paprastu (diferencijuojamu) imitaciniu atvaizdavimu.
     Tikrinama: kameros, gylio taikiniai, nuostoliai, eksporto valymas (splatai ore), meta.json su pradiniu vaizdu."""
     torch = pytest.importorskip("torch")
@@ -182,6 +183,14 @@ def test_train_pipeline_with_fake_rasterizer(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "gsplat.strategy", gs)
 
     task = _fake_task(tmp_path / "task")
+    n_extra = 0
+    if with_mesh:  # ODM tinklas su „stikline siena“ be debesies taškų – jos viršūnės tampa splatais ir neišmetamos
+        wall = np.c_[np.full(200, 25.0), np.linspace(-10, 10, 200), np.linspace(5, 15, 200)].astype(np.float32)
+        z = np.zeros((len(wall), 3), np.float32)
+        os.makedirs(task / "odm_meshing")
+        splat_io.write_ply(str(task / "odm_meshing" / "odm_mesh.ply"), wall, z, np.tile([1, 0, 0, 0], (len(wall), 1)),
+                           np.zeros(len(wall)), z, np.zeros((len(wall), 0, 3)))
+        n_extra = len(wall)
     out_dir = tmp_path / "out"
     import importlib
     import train
@@ -192,10 +201,10 @@ def test_train_pipeline_with_fake_rasterizer(tmp_path, monkeypatch):
     st = json.load(open(out_dir / "status.json"))
     assert st["state"] == "done", st
     meta = json.load(open(out_dir / "meta.json"))
-    assert meta["splats"] == 500
+    assert 500 + 0.9 * n_extra <= meta["splats"] <= 500 + n_extra
     assert len(meta["view"]["position"]) == 3 and len(meta["view"]["target"]) == 3
     v = splat_io.read_ply_vertices(str(out_dir / "scene.ply"))
-    assert len(v) == 500 and (out_dir / "scene.spz").stat().st_size > 1000
+    assert len(v) == meta["splats"] and (out_dir / "scene.spz").stat().st_size > 1000
 
 
 def test_near_points_mask():
@@ -213,3 +222,21 @@ def test_res_schedule():
     assert all(b >= a for a, b in zip(sc, sc[1:]))
     assert set(sc) <= set(train.RES_LEVELS)
     assert train.res_scale(0, 100, r0=1.0) == 1.0  # tvarkaraštis išjungtas
+
+
+def test_mesh_gap_points(tmp_path):
+    """ODM tinklo viršūnės ten, kur debesyje taškų nėra (stiklinė siena), papildo splatų taškus."""
+    from scipy.spatial import cKDTree
+    rng = np.random.default_rng(0)
+    ground = np.c_[rng.uniform(0, 10, (2000, 2)), np.zeros(2000)].astype(np.float32)
+    wall = np.c_[np.full(500, 5.0), rng.uniform(0, 10, 500), rng.uniform(1, 8, 500)].astype(np.float32)
+    os.makedirs(tmp_path / "odm_meshing")
+    mesh = np.concatenate([ground[:500], wall])
+    z = np.zeros((len(mesh), 3), np.float32)
+    splat_io.write_ply(str(tmp_path / "odm_meshing" / "odm_mesh.ply"), mesh, z, np.tile([1, 0, 0, 0], (len(mesh), 1)), np.zeros(len(mesh)), z, np.zeros((len(mesh), 0, 3)))
+    mv = splat_io.load_mesh_vertices(str(tmp_path))
+    assert mv is not None and len(mv) == len(mesh)
+    gap = splat_io.mesh_gap_points(cKDTree(ground), mv, 0.5, 10_000)
+    assert len(gap) > 400 and (gap[:, 2] > 0.5).all()  # tik sienos viršūnės
+    assert len(splat_io.mesh_gap_points(cKDTree(ground), mv, 0.5, 100)) == 100
+    assert splat_io.load_mesh_vertices(str(tmp_path / "nėra")) is None
