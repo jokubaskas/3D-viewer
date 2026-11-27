@@ -676,7 +676,7 @@ def test_roi_limits_points_to_area_of_interest(tmp_path, monkeypatch):
     assert roi is not None
     txt = open(roi[0]).read().split()
     assert len(txt) == 15 and txt[:9] == ["1", "0", "0", "0", "1", "0", "0", "0", "1"]
-    assert np.allclose(roi[1], [-55, -55, -5], atol=0.5) and np.allclose(roi[2], [55, 55, 40], atol=0.5)
+    assert np.allclose(roi[1], [-55, -55, -5], atol=0.5) and np.allclose(roi[2], [55, 55, 40 + atea_mesh.ROI_TOP_MARGIN - atea_mesh.ROI_MARGIN], atol=0.5)
     n_roi = atea_mesh._count_in_roi(str(tmp_path / "openmvs" / "scene_dense_dense_filtered.ply"), roi[1], roi[2])
     assert abs(n_roi - len(near)) < 0.05 * len(near) + 20000  # + apylinkės taškai ties krašto atsarga
     # Biudžetas: be srities retinama daug labiau nei su ja
@@ -723,5 +723,5 @@ def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
     monkeypatch.setattr(atea_mesh.system, "run", run)
     args = types.SimpleNamespace(pc_quality="ultra", optimize_disk_space=False)
     assert atea_mesh.openmvs_mesh(tree, args, str(tmp_path / "out.ply"), 1000000, 4) is False
-    assert "--import-roi-file" in cmds[0] and "--integrate-only-roi 1" in cmds[0]
+    assert "--import-roi-file" in cmds[0] and "--integrate-only-roi 1" in cmds[0] and "--crop-to-roi 0" in cmds[0]
     assert "roi.txt" not in cmds[1]  # pakartota be srities
