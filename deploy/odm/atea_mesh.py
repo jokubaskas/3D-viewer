@@ -1442,6 +1442,11 @@ def improve_mesh(mesh_path, args=None):
     import trimesh
     if not io.file_exists(mesh_path):
         return
+    # Grynas ODM (Poisson): tinklas paliekamas toks, kokį sukūrė ODM – fasadų lyginimas ir skylių „membranos“ virš
+    # aikštelių kurdavo pasvirusius lakštus. Valymas – tik Atea OpenMVS tinklui.
+    if args is not None and getattr(args, "mesh_method", "poisson") != "openmvs":
+        log.ODM_INFO("Atea: tinklo valymas praleidžiamas – grynas ODM tinklas")
+        return
     # Originalas palyginimui (programoje galima atidaryti abu PLY ir palyginti)
     if not getattr(args, "optimize_disk_space", False):
         try:

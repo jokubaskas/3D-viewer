@@ -737,3 +737,12 @@ def test_openmvs_mesh_passes_roi(tmp_path, monkeypatch):
     cmds = _mesh_cmds(tmp_path, monkeypatch)
     assert "--import-roi-file" in cmds[0] and "--integrate-only-roi 1" in cmds[0] and "--crop-to-roi 0" in cmds[0]
     assert "roi.txt" not in cmds[1]  # pakartota be srities
+
+
+def test_improve_mesh_skipped_for_plain_odm(tmp_path):
+    """Grynas ODM (Poisson) tinklas nekeičiamas – valymas tik OpenMVS tinklui."""
+    p = tmp_path / "m.ply"
+    p.write_bytes(b"not a mesh")
+    atea_mesh.improve_mesh(str(p), types.SimpleNamespace(mesh_method="poisson"))
+    assert p.read_bytes() == b"not a mesh"
+    assert not (tmp_path / "odm_mesh_be_valymo.ply").exists()

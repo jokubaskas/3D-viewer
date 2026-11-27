@@ -14,16 +14,12 @@ export const HEIGHT_MODES = {
 export const PRESETS = {
   odm: {
     label: 'ODM – aukščiausia kokybė',
-    desc: 'OpenDroneMap su didžiausiu detalumu: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis, tikslus 3D tinklas (OpenMVS) ir realistiškas vaizdas – sukuriamas automatiškai baigus. Reikia NVIDIA GPU ir ~32 GB RAM.',
-    // ultra – gylio žemėlapiai ½ nuotraukos raiškos (GPU); pc-filter 3 – mažiau „plaukiojančių“ taškų (stiklo atspindžių);
-    // ignore-gsd – tekstūros ir tankinimas pilnos raiškos nuotraukomis (fasadai ryškūs); 2 mln. trikampių;
-    // sky-removal – tik įstrižoms nuotraukoms (buildOdmOptions, oblique): ODM statmenų nuotraukų neatskiria, kai kameroje
-    // nėra gimbal posvyrio, ir dangaus DI kaukė uždengia stiklą, atspindintį dangų – tankinime ten nelieka taškų ir
-    // stiklinio pastato viršus / stogas tinkle lieka kiauras (TES_ODM: 50×10 m skylė jau po ReconstructMesh);
-    // keep-unseen-faces – nuotraukose nematomos sienelės (stiklinio pirmo aukšto apačia, žemė prie sienų, po medžiais)
-    // nebeišmetamos (kitaip modelyje kiaurymės), jų spalva užpildoma iš kaimyninių; be globalaus siūlių lyginimo –
-    // jis ant aštrių pastato kampų išveda purpurines / mėlynas dėmes (vietinis lyginimas lieka)
-    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'pc-filter': 3, 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'texturing-keep-unseen-faces': true, 'texturing-skip-global-seam-leveling': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
+    desc: 'OpenDroneMap su didžiausiu detalumu: pilnos raiškos požymiai ir tekstūros, tankiausias taškų debesis, 3D modelis ir realistiškas vaizdas – sukuriamas automatiškai baigus. Reikia NVIDIA GPU ir ~32 GB RAM.',
+    // Grynas ODM: tik standartinės ODM parinktys su didžiausiu detalumu – 3D tinklas (Poisson), tekstūra ir siūlių
+    // lyginimas kaip ODM. Atea priedai (OpenMVS tinklas, fasadų lyginimas, dangaus kaukės, nematytų sienelių dažymas)
+    // modelį gadino (lakštai virš aikštelės, spalvotos dėmės žemėje), todėl nenaudojami – žr. ODM_LEGACY_OPTIONS.
+    // ultra – gylio žemėlapiai ½ nuotraukos raiškos (GPU); ignore-gsd – tekstūros ir tankinimas pilnos raiškos nuotraukomis
+    options: { 'feature-quality': 'ultra', 'min-num-features': 15000, 'pc-quality': 'ultra', 'mesh-size': 2000000, 'mesh-octree-depth': 12, 'ignore-gsd': true, 'orthophoto-resolution': 2, 'dem-resolution': 5 },
   },
   fast: {
     label: 'Greitas',
@@ -291,15 +287,17 @@ export const boundaryPath = (uuid) => `${NODEODM_DATA}/${uuid}/images/boundary.g
 /** Ar parinkčių sąraše yra sena (sugadinta) JSON riba – tokios užduotys ODM nepavyksta iškart. */
 export const hasInlineBoundary = (opts) => (opts || []).some((o) => o.name === 'boundary' && /^\s*[[{]/.test(String(o.value)));
 
-export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, mvsMesh = false, rollingShutter = false, oblique = false } = {}) {
+/**
+ * Ankstesnių versijų Atea / nestandartinės ODM parinktys, kurios 3D modelį gadino. Kartojant ar perdarant seną projektą
+ * jos pašalinamos – vėl naudojamas grynas ODM (Poisson tinklas, ODM tekstūra).
+ */
+export const ODM_LEGACY_OPTIONS = ['mesh-method', 'sky-removal', 'pc-filter', 'pc-fuse-views', 'texturing-keep-unseen-faces', 'texturing-skip-global-seam-leveling'];
+export const dropLegacyOdmOptions = (list) => (list || []).filter((o) => !ODM_LEGACY_OPTIONS.includes(o.name));
+
+export function buildOdmOptions(presetKey, { dsm = true, dtm = true, ortho = true, split = false, boundary = null, photos = 0, rollingShutter = false } = {}) {
   const o = { ...PRESETS[presetKey].options };
-  // Dangaus kaukės – tik kai yra įstrižų nuotraukų (jose matosi dangus už pastatų kraštų); 3D tinklui
-  if (oblique && !o['skip-3dmodel']) o['sky-removal'] = true;
   // Eilutinio užrakto kameros: ODM pats parenka nuskaitymo laiką pagal kameros modelį
   if (rollingShutter) o['rolling-shutter'] = true;
-  // Tikslus 3D tinklas (Atea ODM atvaizdas, deploy/odm): OpenMVS ReconstructMesh + RefineMesh vietoj Poisson –
-  // aštrios briaunos, be „pakilusio“ asfalto. Sename / kitame NodeODM parinktis praleidžiama (lieka Poisson).
-  if (mvsMesh && !o['skip-3dmodel']) o['mesh-method'] = 'openmvs';
   // Pasirinkta sritis – kelias iki kartu įkeliamo GeoJSON failo (WGS84). ODM apkarpo taškų debesį, DEM ir
   // ortofoto; kitaip – automatinė riba. GeoJSON teksto tiesiogiai perduoti negalima: NodeODM, paleisdamas
   // ODM, iš parinkčių reikšmių pašalina visas kabutes (shQuote), ir JSON sugenda. Kelias perduodamas kaip
