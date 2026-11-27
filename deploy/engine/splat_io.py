@@ -126,6 +126,32 @@ def load_points(path, max_points=2_000_000, seed=0):
     return xyz, rgb
 
 
+def load_mesh_vertices(task_dir, max_points=1_000_000, seed=0):
+    """ODM 3D tinklo (odm_meshing/odm_mesh.ply) viršūnės N×3 arba None. Tinklas uždaras ir ten, kur taškų debesyje
+    beveik nėra (tamsus / atspindintis stiklas), todėl jo viršūnės žymi tas sienas."""
+    p = os.path.join(task_dir, "odm_meshing", "odm_mesh.ply")
+    if not os.path.isfile(p):
+        return None
+    try:
+        v = read_ply_vertices(p)
+    except (ValueError, KeyError, OSError):
+        return None
+    xyz = np.stack([v["x"], v["y"], v["z"]], 1).astype(np.float32)
+    xyz = xyz[np.isfinite(xyz).all(1)]
+    if len(xyz) > max_points:
+        xyz = xyz[np.random.default_rng(seed).choice(len(xyz), max_points, replace=False)]
+    return xyz if len(xyz) else None
+
+
+def mesh_gap_points(points_kd, mesh_xyz, gap, max_points):
+    """Tinklo viršūnės, toliau nei `gap` m nuo bet kurio debesies taško (sienos be taškų), ne daugiau `max_points`."""
+    d, _ = points_kd.query(mesh_xyz, k=1, distance_upper_bound=gap * 2)
+    out = mesh_xyz[d > gap]
+    if len(out) > max_points:
+        out = out[np.random.default_rng(1).choice(len(out), max_points, replace=False)]
+    return out
+
+
 def near_points_mask(means, kdtree, far):
     """True – splatas ne toliau kaip `far` m nuo artimiausio ODM taško (kiti – „debesėliai“ ore)."""
     dist, _ = kdtree.query(np.asarray(means), k=1, distance_upper_bound=far * 2)

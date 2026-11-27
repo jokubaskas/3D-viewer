@@ -140,6 +140,20 @@ def main():
     kd = cKDTree(xyz)
     d, _ = kd.query(xyz, k=4)
     spacing = float(np.median(np.sqrt((d[:, 1:] ** 2).mean(1))))
+    # Tamsus / atspindintis stiklas taškų debesyje beveik be taškų: be jų splatų sienose nebūdavo (pradžioje), gylio
+    # priežiūra ten nieko nesakė, o eksportuojant jos būdavo išmetamos kaip „debesėliai“ – sienos permatomos.
+    # ODM 3D tinklas uždaras ir ten, todėl jo viršūnės toje vietoje papildo pradinius taškus, gylio priežiūrą ir
+    # eksporto patikrą.
+    keep_kd = kd
+    mesh_xyz = splat_io.load_mesh_vertices(a.task_dir)
+    if mesh_xyz is not None:
+        gap = splat_io.mesh_gap_points(kd, mesh_xyz, max(0.3, 3 * spacing), max(1, a.max_points // 3))
+        if len(gap):
+            xyz = np.concatenate([xyz, gap])
+            rgb = np.concatenate([rgb, np.full((len(gap), 3), 0.5, np.float32)])
+            d, _ = cKDTree(xyz).query(xyz, k=4)
+        keep_kd = cKDTree(np.concatenate([xyz, mesh_xyz]))
+        print("ODM tinklo viršūnių: %d, iš jų be debesies taškų (stiklas): %d" % (len(mesh_xyz), len(gap)), flush=True)
     dist = np.sqrt((d[:, 1:] ** 2).mean(1)).clip(1e-3, scene_scale * 0.01)
     n = len(xyz)
     deg = a.sh_degree
@@ -290,10 +304,10 @@ def main():
         sc = torch.exp(params["scales"])
         keep = (torch.sigmoid(params["opacities"]) > 0.005) & (sc.max(-1).values / sc.min(-1).values.clamp_min(1e-8) < 50)
         out = {k: v[keep].detach().cpu().numpy() for k, v in params.items()}
-    # Splatai toli nuo bet kurio ODM taško – „debesėliai“ ore (dangus, atspindžiai): pašalinami
+    # Splatai toli nuo bet kurio ODM taško ir tinklo – „debesėliai“ ore (dangus, atspindžiai): pašalinami
     far = max(1.0, 8 * spacing)
-    near = splat_io.near_points_mask(out["means"], kd, far)
-    print("Eksportas: pašalinta %d splatų ore (> %.1f m nuo ODM taškų) iš %d" % (int((~near).sum()), far, len(near)), flush=True)
+    near = splat_io.near_points_mask(out["means"], keep_kd, far)
+    print("Eksportas: pašalinta %d splatų ore (> %.1f m nuo ODM taškų ir tinklo) iš %d" % (int((~near).sum()), far, len(near)), flush=True)
     out = {k: v[near] for k, v in out.items()}
     q = out["quats"] / np.linalg.norm(out["quats"], axis=1, keepdims=True)
     args = (out["means"], out["scales"], q, out["opacities"], out["sh0"][:, 0, :], out["shN"])
