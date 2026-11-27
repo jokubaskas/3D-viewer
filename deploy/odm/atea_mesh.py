@@ -141,7 +141,11 @@ def _ply_xyz(path, max_points=2000000):
     return np.stack([sub["x"], sub["y"], sub["z"]], axis=1).astype(np.float64), n
 
 
-ROI_MARGIN = 5.0  # m – atsarga aplink apkarpytą taškų debesį
+ROI_MARGIN = 5.0  # m – atsarga aplink apkarpytą taškų debesį (XY ir apačioje)
+# Viršuje – daug didesnė atsarga, kad srities „lubos“ būtų aukščiau už visas kameras. Kitaip ReconstructMesh srities
+# krašte palieka uždarantį paviršių, kuris uždengia žemę nuo kamerų: tekstūruojant žemė lieka nematyta (spalvotos
+# dėmės), o kraštas matosi kaip plona linija.
+ROI_TOP_MARGIN = 1000.0
 
 
 def _roi(tree, work):
@@ -158,6 +162,7 @@ def _roi(tree, work):
         xyz, _ = r
         lo = np.percentile(xyz, 0.05, axis=0) - ROI_MARGIN
         hi = np.percentile(xyz, 99.95, axis=0) + ROI_MARGIN
+        hi[2] += ROI_TOP_MARGIN - ROI_MARGIN
         c, e = (lo + hi) / 2, (hi - lo) / 2
         path = os.path.join(work, "roi.txt")
         with open(path, "w") as f:
@@ -195,8 +200,8 @@ def _min_point_distance(tree, roi=None):
         except Exception:
             n_roi = None
         if n_roi:
-            log.ODM_INFO("Atea: dominančioje srityje (%.0f × %.0f × %.0f m) – %s mln. taškų iš %s mln."
-                         % (*(roi[2] - roi[1]), round(n_roi / 1e6, 1), round(n / 1e6, 1)))
+            log.ODM_INFO("Atea: dominančioje srityje (%.0f × %.0f m) – %s mln. taškų iš %s mln."
+                         % (*(roi[2] - roi[1])[:2], round(n_roi / 1e6, 1), round(n / 1e6, 1)))
             n = n_roi
     budget = total * MEM_SHARE
     fss = budget >= FSS_MIN_MEM * MEM_SHARE / 0.55  # kaip anksčiau: ≥ 24 GB laisvos RAM – dabar ≥ ~44 GB visos
@@ -331,7 +336,8 @@ def openmvs_mesh(tree, args, out_mesh, max_vertex, threads):
         #    tikslinimui reikėtų mažiau atminties)
         roi = _roi(tree, work)
         dist, low_mem, fss = _min_point_distance(tree, roi)
-        roi_opt = ' --import-roi-file "%s" --integrate-only-roi 1 --crop-to-roi 1' % roi[0] if roi else ""
+        # Tinklas nekarpomas pagal srities dėžę (--crop-to-roi 0) – jį vėliau apkarpo _crop pagal ribą XY plokštumoje
+        roi_opt = ' --import-roi-file "%s" --integrate-only-roi 1 --crop-to-roi 0' % roi[0] if roi else ""
         faces = max(int(max_vertex) * 4, 1000000)
         # Laisvos erdvės palaikymas: paviršiai, kuriuose mažai taškų (stiklas, atspindžiai, vienspalvės sienos),
         # atkuriami pagal tai, kur matymo spinduliai praeina laisvai – mažiau skylių ir „ištirpusių“ fasadų.
